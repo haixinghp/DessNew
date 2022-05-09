@@ -1,0 +1,1152 @@
+/**************************************************************************** 
+* Copyright (C), 2008-2022,德施曼机电（中国）有限公司 
+* 文件名: DRV_MIB5204.c 
+* 作者：dwh
+* 版本：V01
+* 时间：20220425
+* 内容简述：NFC模块驱动
+****************************************************************************/
+
+
+/* 标准头文件 */
+#include "stddef.h"
+#include "DRV_GPIO.h"
+#include "Public.h"
+#include "System.h"
+#include "LockConfig.h"
+#include "..\DRV\DRV_IIC\DRV_IIC.h"  
+#include "../DRV/DRV_NFC/DRV_MFRC522.h"
+
+#ifdef IC_CARD_FUNCTION_ON
+
+#define  WS1850S_IIC_ADDR        CFG_NFC_DEVICE_ADDR        //I2C=1 EA=0
+#define  IIC_MFRC522_CHANNEL     ((DRV_IIC_CHANNEL_E)CFG_NFC_IIC_CHANNEL)  //IIC驱动的通道 
+
+
+#define NFC_POWER_ON()           DRV_GpioHighOut1( M_NFC_POW_GPIO_PIN )
+#define NFC_POWER_OFF()          DRV_GpioHighOut0( M_NFC_POW_GPIO_PIN )
+
+//#define SPI_DRIVER
+#define IIC_DRIVER
+#ifdef SPI_DRIVER
+#define M_RC523_PW_OUT_PP()  nrf_gpio_cfg_output(M_RC523_PW_GPIO_PIN)
+#define M_RC523_PW_OUT_ON    nrf_gpio_pin_set(M_RC523_PW_GPIO_PIN)
+#define M_RC523_PW_OUT_OFF   nrf_gpio_pin_clear(M_RC523_PW_GPIO_PIN)
+
+#define M_CS_FLS_OUT_PP()    nrf_gpio_cfg_output(M_CS_FLS_GPIO_PIN)
+#define M_CS_FLS_IN_UP()     nrf_gpio_cfg_input(M_CS_FLS_GPIO_PIN, NRF_GPIO_PIN_PULLUP)
+#define M_CS_FLS_FUN_ON      nrf_gpio_pin_set(M_CS_FLS_GPIO_PIN)
+#define M_CS_FLS_FUN_OFF     nrf_gpio_pin_clear(M_CS_FLS_GPIO_PIN)
+
+#define M_SCK_OUT_PP()       nrf_gpio_cfg_output(M_SCK_GPIO_PIN)
+#define M_SCK_IN_UP()        nrf_gpio_cfg_input(M_SCK_GPIO_PIN, NRF_GPIO_PIN_PULLUP)
+#define M_SCK_IN_FL()        nrf_gpio_cfg_input(M_SCK_GPIO_PIN, NRF_GPIO_PIN_NOPULL)
+#define M_SCK_FUN_ON         nrf_gpio_pin_set(M_SCK_GPIO_PIN)
+#define M_SCK_FUN_OFF        nrf_gpio_pin_clear(M_SCK_GPIO_PIN)
+
+#define M_MISO_OUT_PP()      nrf_gpio_cfg_output(M_MISO_GPIO_PIN)
+#define M_MISO_IN_FL()       nrf_gpio_cfg_input(M_MISO_GPIO_PIN, NRF_GPIO_PIN_NOPULL)
+#define M_MISO_IN_UP()       nrf_gpio_cfg_input(M_MISO_GPIO_PIN, NRF_GPIO_PIN_PULLUP)
+#define M_MISO_FUN_ON        nrf_gpio_pin_set(M_MISO_GPIO_PIN)
+#define M_MISO_FUN_OFF       nrf_gpio_pin_clear(M_MISO_GPIO_PIN)
+#define M_MISO_IN_READ()     nrf_gpio_pin_read(M_MISO_GPIO_PIN)
+
+#define M_MOSI_OUT_PP()      nrf_gpio_cfg_output(M_MOSI_GPIO_PIN)
+#define M_MOSI_IN_UP()       nrf_gpio_cfg_input(M_MOSI_GPIO_PIN, NRF_GPIO_PIN_PULLUP)
+#define M_MOSI_IN_FL()       nrf_gpio_cfg_input(M_MOSI_GPIO_PIN, NRF_GPIO_PIN_NOPULL)
+#define M_MOSI_FUN_ON        nrf_gpio_pin_set(M_MOSI_GPIO_PIN)
+#define M_MOSI_FUN_OFF       nrf_gpio_pin_clear(M_MOSI_GPIO_PIN)
+
+#define M_RC523_CS_OUT_PP()  nrf_gpio_cfg_output(M_RC523_CS_GPIO_PIN)
+#define M_RC523_CS_IN_UP()   nrf_gpio_cfg_input(M_RC523_CS_GPIO_PIN, NRF_GPIO_PIN_PULLUP)
+#define M_RC523_CS_IN_FL()   nrf_gpio_cfg_input(M_RC523_CS_GPIO_PIN, NRF_GPIO_PIN_NOPULL)
+#define M_RC523_CS_FUN_ON    nrf_gpio_pin_set(M_RC523_CS_GPIO_PIN)
+#define M_RC523_CS_FUN_OFF \
+	M_CS_FLS_FUN_ON;       \
+	nrf_gpio_pin_clear(M_RC523_CS_GPIO_PIN)
+
+
+#define M_POWER_CARD_OUT_PP()		M_RC523_PW_OUT_PP()
+#define M_POWER_CARD_OUT_OFF		M_RC523_PW_OUT_OFF
+#define M_POWER_CARD_OUT_ON			M_RC523_PW_OUT_ON
+#define M_MF522_SCK_OUT_PP()		M_SCK_OUT_PP()
+#define M_MF522_SCK_IN_FL()		    M_SCK_IN_FL()
+#define M_MF522_MOSI_OUT_PP()		M_MOSI_OUT_PP()
+#define M_MF522_MOSI_IN_FL()		M_MOSI_IN_FL()
+#define M_MF522_MISO_IN_UP()		M_MISO_IN_UP()
+#define M_MF522_MISO_IN_FL()		M_MISO_IN_FL()
+#define M_MF522_NSS_OUT_PP()		M_RC523_CS_OUT_PP()
+#define M_MF522_NSS_IN_FL()	        M_RC523_CS_IN_FL()
+#define M_MF522_SCK_OUT_OFF			M_SCK_FUN_OFF
+#define M_MF522_SCK_OUT_ON			M_SCK_FUN_ON
+#define M_MF522_NSS_OUT_OFF			M_RC523_CS_FUN_OFF
+#define M_MF522_NSS_OUT_ON			M_RC523_CS_FUN_ON
+#define M_MF522_MOSI_OUT_OFF		M_MOSI_FUN_OFF
+#define M_MF522_MOSI_OUT_ON			M_MOSI_FUN_ON
+#define M_MF522_MISO_IN_READ		M_MISO_IN_READ
+
+#endif
+
+/***************************************************************************//**
+ * @brief
+ *   定义常数
+ *
+ ******************************************************************************/
+#define M_MAXRLEN 18
+#define M_FN_NOP_DELAY() fn_Nop_Delay(10)
+
+
+uint8_t flash_r[150];
+uint8_t g_u8_CardInfo[14];
+
+uint8_t u8_IgnoreTime = 0;
+
+/***************************************************************************//**
+ ****************************    LOCAL FUNCTION   ******************************
+ ******************************************************************************/
+
+/***************************************************************************************
+**函数名:       fn_Nop_Delay
+**功能描述:     延时tm个NOP指令
+**输入参数:     tm: 延时NOP数
+**输出参数:     
+**备注:     
+****************************************************************************************/
+static void fn_Nop_Delay(uint16_t tm)
+{
+    for (; tm>0; tm--)
+    {
+        __asm("NOP"); /* delay */
+    }
+}
+
+
+/***************************************************************************************
+**函数名:       DRV_MFRC522_ConfigGpio
+**功能描述:     配置相关IO引脚
+**输入参数:     
+**输出参数:     
+**备注:     
+****************************************************************************************/
+void DRV_MFRC522_ConfigGpio(void)
+{
+    NFC_POWER_ON(); // 上电
+#ifdef SPI_DRIVER
+    M_POWER_CARD_OUT_PP();
+    M_POWER_CARD_OUT_ON;
+
+//	  M_POWER_CARD_OUT_OFF;
+
+
+    M_MF522_NSS_OUT_PP();
+
+    M_MF522_SCK_OUT_PP();
+//	  M_MF522_SCK_OUT_ON;
+    M_MF522_MOSI_OUT_PP();
+//  	M_MF522_MOSI_OUT_ON;
+
+    M_MF522_MISO_IN_UP();
+
+#endif
+
+}
+
+
+
+/*******************************************************************************
+ **************************   GLOBAL FUNCTIONS   *******************************
+ ******************************************************************************/
+
+
+/***************************************************************************************
+**函数名:       DRV_MFRC522_PcdRequest
+**功能描述:     寻卡
+**输入参数:     req_code: 寻卡方式:  0x52 = 寻感应区内所有符合14443A标准的卡
+                                    0x26 = 寻未进入休眠状态的卡
+                *pTagType: 卡片类型代码: 0x4400 = Mifare_UltraLight
+                                        0x0400 = Mifare_One(S50)
+                                        0x0200 = Mifare_One(S70)
+                                        0x0800 = Mifare_Pro(X)
+                                        0x4403 = Mifare_DESFire
+**输出参数:     成功返回MI_OK，失败返回MI_ERR
+**备注:     
+****************************************************************************************/
+int8_t DRV_MFRC522_PcdRequest(uint8_t req_code, uint8_t *pTagType)
+{
+    int8_t status;
+    uint16_t  unLen;
+    uint8_t ucComMF522Buf[M_MAXRLEN];
+
+    DRV_MFRC522_ClearBitMask(Status2Reg, 0x08);
+    DRV_MFRC522_WriteRawRC(BitFramingReg, 0x07);
+    DRV_MFRC522_SetBitMask(TxControlReg, 0x03);
+
+    ucComMF522Buf[0] = req_code;
+
+    status = DRV_MFRC522_PcdCom(PCD_TRANSCEIVE, ucComMF522Buf, 1, ucComMF522Buf, &unLen);
+//		my_printf("PcdRequest status=%d\n",status);
+    if ((status == MI_OK) && (unLen == 0x10))
+    {
+        *pTagType     = ucComMF522Buf[0];
+        *(pTagType + 1) = ucComMF522Buf[1];
+    }
+    else
+    {
+        status = MI_ERR;
+    }
+
+    return status;
+}
+
+
+/***************************************************************************************
+**函数名:       DRV_MFRC522_PcdAnticoll
+**功能描述:     防冲撞
+**输入参数:     *pSnr: 卡片序列号，4字节
+**输出参数:     成功返回MI_OK，失败返回MI_ERR
+**备注:     
+****************************************************************************************/
+int8_t DRV_MFRC522_PcdAnticoll(uint8_t *pSnr)
+{
+    int8_t status;
+    uint8_t i, snr_check = 0;
+    uint16_t  unLen;
+    uint8_t ucComMF522Buf[M_MAXRLEN];
+
+
+    DRV_MFRC522_ClearBitMask(Status2Reg, 0x08);
+    DRV_MFRC522_WriteRawRC(BitFramingReg, 0x00);
+    DRV_MFRC522_ClearBitMask(CollReg, 0x80);
+
+    ucComMF522Buf[0] = PICC_ANTICOLL1;
+    ucComMF522Buf[1] = 0x20;
+
+    status = DRV_MFRC522_PcdCom(PCD_TRANSCEIVE, ucComMF522Buf, 2, ucComMF522Buf, &unLen);
+
+    if (status == MI_OK)
+    {
+        for (i = 0; i < 4; i++)
+        {
+            *(pSnr + i)  = ucComMF522Buf[i];
+            snr_check ^= ucComMF522Buf[i];
+        }
+        if (snr_check != ucComMF522Buf[i])
+        {
+            status = MI_ERR;
+        }
+    }
+
+    DRV_MFRC522_SetBitMask(CollReg, 0x80);
+    return status;
+}
+
+
+/***************************************************************************************
+**函数名:       DRV_MFRC522_PcdSelect
+**功能描述:     选定卡片
+**输入参数:     *pSnr: 卡片序列号，4字节
+**输出参数:     成功返回MI_OK，失败返回MI_ERR
+**备注:     
+****************************************************************************************/
+int8_t DRV_MFRC522_PcdSelect(uint8_t *pSnr)
+{
+    int8_t status;
+    uint8_t i;
+    uint16_t  unLen;
+    uint8_t ucComMF522Buf[M_MAXRLEN];
+
+    ucComMF522Buf[0] = PICC_ANTICOLL1;
+    ucComMF522Buf[1] = 0x70;
+    ucComMF522Buf[6] = 0;
+    for (i = 0; i < 4; i++)
+    {
+        ucComMF522Buf[i+2] = *(pSnr + i);
+        ucComMF522Buf[6]  ^= *(pSnr + i);
+    }
+    DRV_MFRC522_CalulateCRC(ucComMF522Buf, 7, &ucComMF522Buf[7]);
+
+    DRV_MFRC522_ClearBitMask(Status2Reg, 0x08);
+
+    status = DRV_MFRC522_PcdCom(PCD_TRANSCEIVE, ucComMF522Buf, 9, ucComMF522Buf, &unLen);
+
+    if ((status == MI_OK) && (unLen == 0x18))
+    {
+        status = MI_OK;
+    }
+    else
+    {
+        status = MI_ERR;
+    }
+
+    return status;
+}
+
+
+/***************************************************************************************
+**函数名:       DRV_MFRC522_PcdAuthState
+**功能描述:     验证卡片密码
+**输入参数:     auth_mode: 密码验证模式: 0x60 = 验证A密钥
+                                       0x61 = 验证B密钥
+                addr:  块地址
+                *pKey: 密码
+                *pSnr: 卡片序列号，4字节
+**输出参数:     成功返回MI_OK，失败返回MI_ERR
+**备注:     
+****************************************************************************************/
+int8_t DRV_MFRC522_PcdAuthState(uint8_t auth_mode, uint8_t addr, uint8_t *pKey, uint8_t *pSnr)
+{
+    int8_t status;
+    uint16_t  unLen;
+    uint8_t i, ucComMF522Buf[M_MAXRLEN];
+
+    ucComMF522Buf[0] = auth_mode;
+    ucComMF522Buf[1] = addr;
+    for (i = 0; i < 6; i++)
+    {
+        ucComMF522Buf[i+2] = *(pKey + i);
+    }
+    for (i = 0; i < 6; i++)
+    {
+        ucComMF522Buf[i+8] = *(pSnr + i);
+    }
+
+    status = DRV_MFRC522_PcdCom(PCD_AUTHENT, ucComMF522Buf, 12, ucComMF522Buf, &unLen);
+    if ((status != MI_OK) || (!(DRV_MFRC522_ReadRawRC(Status2Reg) & 0x08)))
+    {
+        status = MI_ERR;
+    }
+
+    return status;
+}
+
+
+/***************************************************************************************
+**函数名:       DRV_MFRC522_PcdRead
+**功能描述:     读取M1卡一块数据
+**输入参数:     addr[IN]：块地址
+                pData[OUT]：读出的数据，16字节
+**输出参数:     成功返回MI_OK
+**备注:     
+****************************************************************************************/
+int8_t DRV_MFRC522_PcdRead(uint8_t addr, uint8_t *pData)
+{
+    int8_t status;
+    uint16_t  unLen;
+    uint8_t i, ucComMF522Buf[M_MAXRLEN];
+
+    ucComMF522Buf[0] = PICC_READ;
+    ucComMF522Buf[1] = addr;
+    DRV_MFRC522_CalulateCRC(ucComMF522Buf, 2, &ucComMF522Buf[2]);
+
+    status = DRV_MFRC522_PcdCom(PCD_TRANSCEIVE, ucComMF522Buf, 4, ucComMF522Buf, &unLen);
+    if ((status == MI_OK) && (unLen == 0x90))
+    {
+        for (i = 0; i < 16; i++)
+        {
+            *(pData + i) = ucComMF522Buf[i];
+        }
+    }
+    else
+    {
+        status = MI_ERR;
+    }
+
+    return status;
+}
+
+
+/***************************************************************************************
+**函数名:       DRV_MFRC522_PcdWrite
+**功能描述:     写数据到M1卡一块
+**输入参数:     addr[IN]：块地址
+                pData[IN]：写入的数据，16字节
+**输出参数:     成功返回MI_OK
+**备注:     
+****************************************************************************************/
+int8_t DRV_MFRC522_PcdWrite(uint8_t addr, uint8_t *pData)
+{
+    int8_t status;
+    uint16_t  unLen;
+    uint8_t i, ucComMF522Buf[M_MAXRLEN];
+
+    ucComMF522Buf[0] = PICC_WRITE;
+    ucComMF522Buf[1] = addr;
+    DRV_MFRC522_CalulateCRC(ucComMF522Buf, 2, &ucComMF522Buf[2]);
+
+    status = DRV_MFRC522_PcdCom(PCD_TRANSCEIVE, ucComMF522Buf, 4, ucComMF522Buf, &unLen);
+
+    if ((status != MI_OK) || (unLen != 4) || ((ucComMF522Buf[0] & 0x0F) != 0x0A))
+    {
+        status = MI_ERR;
+    }
+
+    if (status == MI_OK)
+    {
+        for (i = 0; i < 16; i++)
+        {
+            ucComMF522Buf[i] = *(pData + i);
+        }
+        DRV_MFRC522_CalulateCRC(ucComMF522Buf, 16, &ucComMF522Buf[16]);
+
+        status = DRV_MFRC522_PcdCom(PCD_TRANSCEIVE, ucComMF522Buf, 18, ucComMF522Buf, &unLen);
+        if ((status != MI_OK) || (unLen != 4) || ((ucComMF522Buf[0] & 0x0F) != 0x0A))
+        {
+            status = MI_ERR;
+        }
+    }
+
+    return status;
+}
+
+
+/***************************************************************************************
+**函数名:       DRV_MFRC522_PcdValue
+**功能描述:     扣款和充值
+**输入参数:     dd_mode[IN]：命令字
+                0xC0 = 扣款
+                0xC1 = 充值
+                addr[IN]：钱包地址
+                pValue[IN]：4字节增(减)值，低位在前
+**输出参数:     成功返回MI_OK
+**备注:     
+****************************************************************************************/
+int8_t DRV_MFRC522_PcdValue(uint8_t dd_mode, uint8_t addr, uint8_t *pValue)
+{
+    int8_t status;
+    uint16_t  unLen;
+    uint8_t i, ucComMF522Buf[M_MAXRLEN];
+
+    ucComMF522Buf[0] = dd_mode;
+    ucComMF522Buf[1] = addr;
+    DRV_MFRC522_CalulateCRC(ucComMF522Buf, 2, &ucComMF522Buf[2]);
+
+    status = DRV_MFRC522_PcdCom(PCD_TRANSCEIVE, ucComMF522Buf, 4, ucComMF522Buf, &unLen);
+
+    if ((status != MI_OK) || (unLen != 4) || ((ucComMF522Buf[0] & 0x0F) != 0x0A))
+    {
+        status = MI_ERR;
+    }
+
+    if (status == MI_OK)
+    {
+        for (i = 0; i < 16; i++)
+        {
+            ucComMF522Buf[i] = *(pValue + i);
+        }
+        DRV_MFRC522_CalulateCRC(ucComMF522Buf, 4, &ucComMF522Buf[4]);
+        unLen = 0;
+        status = DRV_MFRC522_PcdCom(PCD_TRANSCEIVE, ucComMF522Buf, 6, ucComMF522Buf, &unLen);
+        if (status != MI_ERR)
+        {
+            status = MI_OK;
+        }
+    }
+
+    if (status == MI_OK)
+    {
+        ucComMF522Buf[0] = PICC_TRANSFER;
+        ucComMF522Buf[1] = addr;
+        DRV_MFRC522_CalulateCRC(ucComMF522Buf, 2, &ucComMF522Buf[2]);
+
+        status = DRV_MFRC522_PcdCom(PCD_TRANSCEIVE, ucComMF522Buf, 4, ucComMF522Buf, &unLen);
+
+        if ((status != MI_OK) || (unLen != 4) || ((ucComMF522Buf[0] & 0x0F) != 0x0A))
+        {
+            status = MI_ERR;
+        }
+    }
+    return status;
+}
+
+
+/***************************************************************************************
+**函数名:       DRV_MFRC522_PcdBakValue
+**功能描述:     备份钱包
+**输入参数:     sourceaddr[IN]：源地址
+                goaladdr[IN]：目标地址
+**输出参数:     成功返回MI_OK
+**备注:     
+****************************************************************************************/
+int8_t DRV_MFRC522_PcdBakValue(uint8_t sourceaddr, uint8_t goaladdr)
+{
+    int8_t status;
+    uint16_t  unLen;
+    uint8_t ucComMF522Buf[M_MAXRLEN];
+
+    ucComMF522Buf[0] = PICC_RESTORE;
+    ucComMF522Buf[1] = sourceaddr;
+    DRV_MFRC522_CalulateCRC(ucComMF522Buf, 2, &ucComMF522Buf[2]);
+
+    status = DRV_MFRC522_PcdCom(PCD_TRANSCEIVE, ucComMF522Buf, 4, ucComMF522Buf, &unLen);
+
+    if ((status != MI_OK) || (unLen != 4) || ((ucComMF522Buf[0] & 0x0F) != 0x0A))
+    {
+        status = MI_ERR;
+    }
+
+    if (status == MI_OK)
+    {
+        ucComMF522Buf[0] = 0;
+        ucComMF522Buf[1] = 0;
+        ucComMF522Buf[2] = 0;
+        ucComMF522Buf[3] = 0;
+        DRV_MFRC522_CalulateCRC(ucComMF522Buf, 4, &ucComMF522Buf[4]);
+
+        status = DRV_MFRC522_PcdCom(PCD_TRANSCEIVE, ucComMF522Buf, 6, ucComMF522Buf, &unLen);
+        if (status != MI_ERR)
+        {
+            status = MI_OK;
+        }
+    }
+
+    if (status != MI_OK)
+    {
+        return MI_ERR;
+    }
+
+    ucComMF522Buf[0] = PICC_TRANSFER;
+    ucComMF522Buf[1] = goaladdr;
+
+    DRV_MFRC522_CalulateCRC(ucComMF522Buf, 2, &ucComMF522Buf[2]);
+
+    status = DRV_MFRC522_PcdCom(PCD_TRANSCEIVE, ucComMF522Buf, 4, ucComMF522Buf, &unLen);
+
+    if ((status != MI_OK) || (unLen != 4) || ((ucComMF522Buf[0] & 0x0F) != 0x0A))
+    {
+        status = MI_ERR;
+    }
+
+    return status;
+}
+
+
+/***************************************************************************************
+**函数名:       DRV_MFRC522_PcdHalt
+**功能描述:     命令卡片进入休眠状态
+**输入参数:     
+**输出参数:     成功返回MI_OK
+**备注:     
+****************************************************************************************/
+int8_t DRV_MFRC522_PcdHalt(void)
+{
+    uint16_t  unLen;
+    uint8_t ucComMF522Buf[M_MAXRLEN];
+
+    ucComMF522Buf[0] = PICC_HALT;
+    ucComMF522Buf[1] = 0;
+    DRV_MFRC522_CalulateCRC(ucComMF522Buf, 2, &ucComMF522Buf[2]);
+
+    DRV_MFRC522_PcdCom(PCD_TRANSCEIVE, ucComMF522Buf, 4, ucComMF522Buf, &unLen);
+
+    return MI_OK;
+}
+
+
+/***************************************************************************************
+**函数名:       DRV_MFRC522_CalulateCRC
+**功能描述:     用MF522计算CRC16函数
+**输入参数:     
+**输出参数:     
+**备注:     
+****************************************************************************************/
+void DRV_MFRC522_CalulateCRC(uint8_t *pIndata, uint8_t len, uint8_t *pOutData)
+{
+    uint8_t i, n;
+    DRV_MFRC522_ClearBitMask(DivIrqReg, 0x04);
+    DRV_MFRC522_WriteRawRC(CommandReg, PCD_IDLE);
+    DRV_MFRC522_SetBitMask(FIFOLevelReg, 0x80);
+    for (i = 0; i < len; i++)
+    {
+        DRV_MFRC522_WriteRawRC(FIFODataReg, *(pIndata + i));
+    }
+    DRV_MFRC522_WriteRawRC(CommandReg, PCD_CALCCRC);
+    i = 0xFF;
+    do
+    {
+        n = DRV_MFRC522_ReadRawRC(DivIrqReg);
+        i--;
+    }
+    while ((i != 0) && !(n & 0x04));
+    pOutData[0] = DRV_MFRC522_ReadRawRC(CRCResultRegL);
+    pOutData[1] = DRV_MFRC522_ReadRawRC(CRCResultRegM);
+}
+
+
+/***************************************************************************************
+**函数名:       DRV_MFRC522_PcdReset
+**功能描述:     复位RC522
+**输入参数:     
+**输出参数:     成功返回MI_OK
+**备注:     
+****************************************************************************************/
+int8_t DRV_MFRC522_PcdReset()
+{
+    // CARD_RESET=0;
+
+    DRV_MFRC522_ConfigGpio();
+#ifdef SPI_DRIVER
+//	M_POWER_CARD_OUT_OFF;
+//	fn_Delayus(2000);
+    M_POWER_CARD_OUT_ON;
+    fn_Delayus(2000);
+#endif
+    return MI_OK;
+
+}
+
+
+/***************************************************************************************
+**函数名:       DRV_MFRC522_ReadRawRC
+**功能描述:     读RC632寄存器
+**输入参数:     寄存器地址
+**输出参数:     读出的值
+**备注:     
+****************************************************************************************/
+uint8_t DRV_MFRC522_ReadRawRC(uint8_t Address)
+{
+    uint8_t ucResult = 0;
+#ifdef IIC_DRIVER
+
+    // if(!iic1RecvByte(WS1850S_IIC_ADDR,Address,&ucResult))
+    if( DRV_IICReadByte(IIC_MFRC522_CHANNEL, WS1850S_IIC_ADDR, Address, &ucResult, 1) )
+    {
+        my_printf("iic error!\r\n");
+    }
+#else
+    uint8_t i, ucAddr;
+
+    M_MF522_SCK_OUT_OFF;
+    M_FN_NOP_DELAY();
+    M_MF522_NSS_OUT_OFF;
+
+    ucAddr = ((Address << 1) & 0x7E) | 0x80;
+
+//		my_printf(">read ucAddr=%02x, ",ucAddr);
+    M_FN_NOP_DELAY();
+    for(i = 8; i > 0; i--)
+    {
+        if ((ucAddr & 0x80) == 0x80)
+        {
+            M_MF522_MOSI_OUT_ON;
+        }
+        else
+        {
+            M_MF522_MOSI_OUT_OFF;
+        }
+        M_FN_NOP_DELAY();
+        M_MF522_SCK_OUT_ON;
+        ucAddr <<= 1;
+        M_FN_NOP_DELAY();
+        M_MF522_SCK_OUT_OFF;
+//        M_FN_NOP_DELAY();
+    }
+
+    M_FN_NOP_DELAY();
+    for(i = 8; i > 0; i--)
+    {
+        M_MF522_SCK_OUT_ON;
+        ucResult <<= 1;
+        M_FN_NOP_DELAY();
+        if (1 == M_MISO_IN_READ())
+        {
+            ucResult |= 0x01;
+        }
+        else
+        {
+            ucResult &= 0xFE;
+        }
+
+        M_MF522_SCK_OUT_OFF;
+        M_FN_NOP_DELAY();
+    }
+
+    M_MF522_NSS_OUT_ON;
+    M_FN_NOP_DELAY();
+//    M_MF522_SCK_OUT_ON;
+    M_MF522_SCK_OUT_OFF;
+
+//		my_printf("ucResult=%02x\n",ucResult);
+
+#endif
+    return ucResult;
+
+}
+
+
+/***************************************************************************************
+**函数名:       DRV_MFRC522_WriteRawRC
+**功能描述:     写RC632寄存器
+**输入参数:     Address[IN]:寄存器地址  value[IN]:写入的值
+**输出参数:     
+**备注:     
+****************************************************************************************/
+void DRV_MFRC522_WriteRawRC(uint8_t Address, uint8_t value)
+{
+#ifdef IIC_DRIVER
+
+    // if(!iic1SendByte(WS1850S_IIC_ADDR, Address, value))
+    if( DRV_IICWriteByte(IIC_MFRC522_CHANNEL, WS1850S_IIC_ADDR, Address, value) )
+    {
+        my_printf("iic error!\r\n");
+    }
+
+#else
+    uint8_t i, ucAddr;
+    M_MF522_SCK_OUT_OFF;
+    M_FN_NOP_DELAY();
+    M_MF522_NSS_OUT_OFF;
+
+
+//    M_FN_NOP_DELAY();
+
+//	  while(1);
+    ucAddr = ((Address << 1) & 0x7E);
+//  	my_printf("Address=%02x,value=%02x\n",Address,value);
+    M_FN_NOP_DELAY();
+    for(i = 8; i > 0; i--)
+    {
+        if ((ucAddr & 0x80) == 0x80)
+        {
+            M_MF522_MOSI_OUT_ON;
+        }
+        else
+        {
+            M_MF522_MOSI_OUT_OFF;
+        }
+        M_FN_NOP_DELAY();
+        M_MF522_SCK_OUT_ON;
+        ucAddr <<= 1;
+        M_FN_NOP_DELAY();
+        M_MF522_SCK_OUT_OFF;
+//        M_FN_NOP_DELAY();
+    }
+
+    M_FN_NOP_DELAY();
+    for(i = 8; i > 0; i--)
+    {
+        if ((value & 0x80) == 0x80)
+        {
+            M_MF522_MOSI_OUT_ON;
+        }
+        else
+        {
+            M_MF522_MOSI_OUT_OFF;
+        }
+        M_FN_NOP_DELAY();
+        M_MF522_SCK_OUT_ON;
+        value <<= 1;
+        M_FN_NOP_DELAY();
+        M_MF522_SCK_OUT_OFF;
+        M_FN_NOP_DELAY();
+    }
+
+    M_MF522_NSS_OUT_ON;
+    M_FN_NOP_DELAY();
+//    M_MF522_SCK_OUT_ON;
+    M_MF522_SCK_OUT_OFF;
+#endif
+
+}
+
+
+/***************************************************************************************
+**函数名:       DRV_MFRC522_SetBitMask
+**功能描述:     置RC522寄存器位
+**输入参数:     reg[IN]:寄存器地址  mask[IN]:置位值
+**输出参数:     
+**备注:     
+****************************************************************************************/
+void DRV_MFRC522_SetBitMask(uint8_t reg, uint8_t mask)
+{
+    int8_t tmp = 0x0;
+    tmp = DRV_MFRC522_ReadRawRC(reg);
+    DRV_MFRC522_WriteRawRC(reg, tmp | mask); // set bit mask
+}
+
+
+/***************************************************************************************
+**函数名:       DRV_MFRC522_ClearBitMask
+**功能描述:     清RC522寄存器位
+**输入参数:     reg[IN]:寄存器地址  mask[IN]:清位值
+**输出参数:     
+**备注:     
+****************************************************************************************/
+void DRV_MFRC522_ClearBitMask(uint8_t reg, uint8_t mask)
+{
+    int8_t tmp = 0x0;
+    tmp = DRV_MFRC522_ReadRawRC(reg);
+    DRV_MFRC522_WriteRawRC(reg, tmp & ~mask);  // clear bit mask
+}
+
+
+/***************************************************************************************
+**函数名:       DRV_MFRC522_PcdCom
+**功能描述:     通过RC522和ISO14443卡通讯
+**输入参数:     Command[IN]:RC522命令字
+               pInData[IN]:通过RC522发送到卡片的数据
+               InLenByte[IN]:发送数据的字节长度
+               pOutData[OUT]:接收到的卡片返回数据
+               *pOutLenBit[OUT]:返回数据的位长度
+**输出参数:     
+**备注:      
+****************************************************************************************/
+int8_t DRV_MFRC522_PcdCom(uint8_t Command,
+                  uint8_t *pInData,
+                  uint8_t InLenByte,
+                  uint8_t *pOutData,
+                  uint16_t  *pOutLenBit)
+{
+    int8_t status = MI_ERR;
+    uint8_t irqEn   = 0x00;
+    uint8_t waitFor = 0x00;
+    uint8_t lastBits;
+    uint8_t n;
+    uint16_t i;
+    switch (Command)
+    {
+    case PCD_AUTHENT:
+        irqEn   = 0x12;
+        waitFor = 0x10;
+        break;
+    case PCD_TRANSCEIVE:
+        irqEn   = 0x77;
+        waitFor = 0x30;
+        break;
+    default:
+        break;
+    }
+
+    DRV_MFRC522_WriteRawRC(ComIEnReg, irqEn | 0x80);
+    DRV_MFRC522_ClearBitMask(ComIrqReg, 0x80);
+    DRV_MFRC522_WriteRawRC(CommandReg, PCD_IDLE);
+    DRV_MFRC522_SetBitMask(FIFOLevelReg, 0x80);
+
+    for (i = 0; i < InLenByte; i++)
+    {
+        DRV_MFRC522_WriteRawRC(FIFODataReg, pInData[i]);
+    }
+    DRV_MFRC522_WriteRawRC(CommandReg, Command);
+
+
+    if (Command == PCD_TRANSCEIVE)
+    {
+        DRV_MFRC522_SetBitMask(BitFramingReg, 0x80);
+    }
+
+    i = 600;//根据时钟频率调整，操作M1卡最大等待时间25ms
+    do
+    {
+        n = DRV_MFRC522_ReadRawRC(ComIrqReg);
+        i--;
+    }
+    while ((i != 0) && !(n & 0x01) && !(n & waitFor));
+    DRV_MFRC522_ClearBitMask(BitFramingReg, 0x80);
+
+    if (i != 0)
+    {
+        if(!(DRV_MFRC522_ReadRawRC(ErrorReg) & 0x1B))
+        {
+            status = MI_OK;
+            if (n & irqEn & 0x01)
+            {
+                status = MI_NOTAGERR;
+            }
+            if (Command == PCD_TRANSCEIVE)
+            {
+                n = DRV_MFRC522_ReadRawRC(FIFOLevelReg);
+                lastBits = DRV_MFRC522_ReadRawRC(ControlReg) & 0x07;
+                if (lastBits)
+                {
+                    *pOutLenBit = (n - 1) * 8 + lastBits;
+                }
+                else
+                {
+                    *pOutLenBit = n * 8;
+                }
+                if (n == 0)
+                {
+                    n = 1;
+                }
+                if (n > M_MAXRLEN)
+                {
+                    n = M_MAXRLEN;
+                }
+                for (i = 0; i < n; i++)
+                {
+                    pOutData[i] = DRV_MFRC522_ReadRawRC(FIFODataReg);
+                }
+            }
+        }
+        else
+        {
+            status = MI_ERR;
+        }
+    }
+
+    DRV_MFRC522_SetBitMask(ControlReg, 0x80);          // stop timer now
+    DRV_MFRC522_WriteRawRC(CommandReg, PCD_IDLE);
+    return status;
+}
+
+
+/***************************************************************************************
+**函数名:       DRV_MFRC522_PcdAntennaOn
+**功能描述:     开启天线
+**输入参数:     
+**输出参数:     
+**备注:      每次启动或关闭天险发射之间应至少有1ms的间隔
+****************************************************************************************/
+void DRV_MFRC522_PcdAntennaOn()
+{
+    uint8_t i;
+    i = DRV_MFRC522_ReadRawRC(TxControlReg);
+    if (!(i & 0x03))
+    {
+        DRV_MFRC522_SetBitMask(TxControlReg, 0x03);
+
+    }
+}
+
+
+
+/***************************************************************************************
+**函数名:       DRV_MFRC522_PcdAntennaOff
+**功能描述:     关闭天线
+**输入参数:     
+**输出参数:     
+**备注:      
+****************************************************************************************/
+void DRV_MFRC522_PcdAntennaOff()
+{
+    DRV_MFRC522_ClearBitMask(TxControlReg, 0x03);
+}
+
+
+/***************************************************************************************
+**函数名:       DRV_MFRC522_M500PcdConfigISOType
+**功能描述:     设置读卡类型
+**输入参数:     读卡类型
+**输出参数:     成功返回MI_OK，失败返回MI_ERR
+**备注:      
+****************************************************************************************/
+int8_t DRV_MFRC522_M500PcdConfigISOType(int8_t u8_Type)
+{
+    if ('A' == u8_Type)
+    {
+        DRV_MFRC522_WriteRawRC(CommandReg, PCD_RESETPHASE);
+        M_FN_NOP_DELAY();
+
+        DRV_MFRC522_WriteRawRC(CommandReg, 0x00);
+        DRV_MFRC522_WriteRawRC(ModeReg, 0x3D);
+        M_FN_NOP_DELAY();
+        M_FN_NOP_DELAY();
+        DRV_MFRC522_WriteRawRC(TReloadRegL, 30);
+        M_FN_NOP_DELAY();
+        DRV_MFRC522_WriteRawRC(TReloadRegH, 0);
+        M_FN_NOP_DELAY();
+        DRV_MFRC522_WriteRawRC(TModeReg, 0x8D);
+        M_FN_NOP_DELAY();
+        DRV_MFRC522_WriteRawRC(TPrescalerReg, 0x3E);
+        M_FN_NOP_DELAY();
+        DRV_MFRC522_WriteRawRC(TxAutoReg, 0x40);
+
+        DRV_MFRC522_ClearBitMask(Status2Reg, 0x08);
+        DRV_MFRC522_WriteRawRC(ModeReg, 0x3D);
+        DRV_MFRC522_WriteRawRC(RxSelReg, 0x86);
+        DRV_MFRC522_WriteRawRC(RFCfgReg, 0x7F);
+        DRV_MFRC522_WriteRawRC(TReloadRegL, 30);
+        DRV_MFRC522_WriteRawRC(TReloadRegH, 0);
+        DRV_MFRC522_WriteRawRC(TModeReg, 0x8D);
+        DRV_MFRC522_WriteRawRC(TPrescalerReg, 0x3E);
+        DRV_MFRC522_WriteRawRC(MifareReg, 0x10);//电源选择 0x10:3.3V   0x40:5V
+    }
+    else if ('B' == u8_Type)
+    {
+        DRV_MFRC522_WriteRawRC(CommandReg, 0x30);
+    }
+    else
+    {
+        return MI_ERR;
+    }
+
+    return MI_OK;
+}
+
+/***************************************************************************************
+**函数名:       DRV_MFRC522_Poweroff
+**功能描述:     芯片电源关闭
+**输入参数:     
+**输出参数:     
+**备注:      
+****************************************************************************************/
+void DRV_MFRC522_Poweroff(void)
+{
+#ifdef SPI_DRIVER
+    M_POWER_CARD_OUT_PP();
+    M_POWER_CARD_OUT_OFF;  //关电源
+    M_MF522_NSS_OUT_PP();
+    M_MF522_NSS_OUT_ON;  //关SPI
+    M_MISO_IN_FL();
+    M_MOSI_FUN_OFF;
+    M_SCK_OUT_PP();
+#endif
+}
+
+/***************************************************************************************
+**函数名:       DRV_MFRC522_GpioSleep
+**功能描述:     芯片休眠配置引脚
+**输入参数:     
+**输出参数:     
+**备注:      
+****************************************************************************************/
+void DRV_MFRC522_GpioSleep(void)
+{
+    NFC_POWER_OFF(); // 掉电
+#ifdef SPI_DRIVER
+    M_POWER_CARD_OUT_OFF;
+
+    M_MF522_NSS_OUT_PP();
+    M_MF522_NSS_OUT_ON;
+
+    M_MISO_IN_FL();
+    M_MOSI_FUN_OFF;
+    M_SCK_FUN_OFF;
+#endif
+}
+
+
+/***************************************************************************************
+**函数名:       DRV_MFRC522_Init
+**功能描述:     初始化
+**输入参数:     
+**输出参数:     1成功 0失败
+**备注:      
+****************************************************************************************/
+uint8_t DRV_MFRC522_Init(void)
+{
+    if (MI_OK == DRV_MFRC522_PcdReset())
+    {
+        DRV_MFRC522_M500PcdConfigISOType('A');
+        return (1);
+    }
+    return (0);
+}
+
+
+/***************************************************************************************
+**函数名:       DRV_MFRC522_ReadAddCardIdBak
+**功能描述:     增加卡时得到一张S50卡卡号。
+**输入参数:     偿试次数
+**输出参数:     1成功 0失败
+**备注:      
+****************************************************************************************/
+uint8_t DRV_MFRC522_ReadAddCardIdBak(uint8_t u8_times)
+{
+    u8_IgnoreTime = 1;//读卡后，忽略后面1次检测卡结果
+    if (0 == DRV_MFRC522_Init())//初始化
+    {
+        DRV_MFRC522_PcdAntennaOff();
+        return (0);//卡模块连接错误,初始化失败
+    }
+    DRV_MFRC522_PcdAntennaOn();
+    PUBLIC_Delayus(5000); //fn_Delayus(5000);
+    while (1)
+    {
+        if (MI_OK == DRV_MFRC522_PcdRequest(0x52, &g_u8_CardInfo[0]))//请求卡
+        {
+            break;
+        }
+        u8_times--;
+        if (0 == u8_times)
+        {
+            DRV_MFRC522_PcdAntennaOff();
+            PUBLIC_Delayus(5000); //fn_Delayus(5000);
+            return (0);
+        }
+    }
+
+    for (u8_times=3; u8_times>0; u8_times--)
+    {
+        if (MI_OK == DRV_MFRC522_PcdAnticoll(&g_u8_CardInfo[2]))//防碰撞
+        {
+            if (MI_OK ==  DRV_MFRC522_PcdSelect(&g_u8_CardInfo[2]))
+            {
+                DRV_MFRC522_PcdHalt();
+                DRV_MFRC522_PcdAntennaOff();
+                PUBLIC_Delayus(5000); //fn_Delayus(5000);
+                return (1);//读取成功
+            }
+        }
+    }
+    DRV_MFRC522_PcdAntennaOff();
+    return (0);
+}
+
+
+/***************************************************************************************
+**函数名:       DRV_MFRC522_ReadAddCardId
+**功能描述:     增加卡时得到一张S50卡卡号。
+**输入参数:     偿试次数
+**输出参数:     1成功 0失败
+**备注:      
+****************************************************************************************/
+uint8_t DRV_MFRC522_ReadAddCardId(uint8_t u8_times)
+{
+    u8_IgnoreTime = 1; //读卡后，忽略后面1次检测卡结果
+    while (1)
+    {
+        if (MI_OK == DRV_MFRC522_PcdRequest(0x26, &g_u8_CardInfo[0]))//请求卡
+        {
+            break;
+        }
+//		else{
+//			my_printf("PcdRequest failed\n");
+//		}
+        u8_times--;
+        if (0 == u8_times)
+        {
+            return (0);
+        }
+    }
+
+    for (u8_times=3; u8_times>0; u8_times--)
+    {
+        if (MI_OK == DRV_MFRC522_PcdAnticoll(&g_u8_CardInfo[2]))//防碰撞
+        {
+            return (1);//读取成功
+        }
+    }
+    return (0);
+}
+
+
+/***************************************************************************************
+**函数名:       DRV_MFRC522_ReadCardId
+**功能描述:     得到一张S50卡卡号。
+**输入参数:     偿试次数
+**输出参数:     1成功 0失败
+**备注:      
+****************************************************************************************/
+uint8_t DRV_MFRC522_ReadCardId(uint8_t u8_TryTimes)
+{
+    if (0 == DRV_MFRC522_Init())//初始化
+    {
+        my_printf("DRV_MFRC522_Init failed\n");
+        return (0);//卡模块连接错误,初始化失败
+    }
+    DRV_MFRC522_PcdAntennaOn();
+    PUBLIC_Delayms(6);
+    if (1 == DRV_MFRC522_ReadAddCardId(u8_TryTimes))//防碰撞
+    {
+        DRV_MFRC522_PcdAntennaOff();
+        PUBLIC_Delayms(100);
+        return (1);//读取成功
+    }
+    DRV_MFRC522_PcdAntennaOff();
+    PUBLIC_Delayms(100);
+    return (0);
+}
+
+
+
+#endif

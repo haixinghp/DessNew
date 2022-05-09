@@ -1,0 +1,150 @@
+/**************************************************************************** 
+* Copyright (C), 2008-2021,德施曼机电（中国）有限公司 
+* 文件名: DRV_RTC_BM8563.c 
+* 作者：邓业豪
+* 版本：V01
+* 时间：20210722
+* 内容简述：BM8563 RTC驱动文件
+****************************************************************************/
+/* 标准头文件 */
+
+
+/* 内部头文件 */
+#include "DRV_RTC_BM8563.h"
+
+/*******************************宏定义***************************/  
+#define BM8563_SLAVEADDR  0XA2  //硬件地址
+
+#define BM8563_CHANNEL    I2C_CHANNEL0 //硬件通道
+
+
+
+/***************************************************************************************
+**函数名:       DRV_BM8563_ReadTime
+**功能描述:     读取BM8563当前时间
+**输入参数:     RTCType  *Time    时间结构体指针
+**输出参数:     
+**备注:         
+****************************************************************************************/
+void DRV_BM8563_ReadTime(RTCType  *Time )
+{
+	uint8_t temp[7] = {0, 0, 0, 0, 0, 0, 0};
+	DRV_IICReadByte(BM8563_CHANNEL,BM8563_SLAVEADDR, 0x02, temp, 7); //读取RTC时间寄存器
+	Time->second = temp[0] & 0x7F;
+	Time->minuter = temp[1] & 0x7F;
+	Time->hour = temp[2] & 0x3F;
+	Time->day = temp[3] & 0x3F;
+	Time->week = temp[4] & 0x07;
+	//周统一按位记录,bit0无效，bit0~bit7对应周一至周日
+	if(Time->week == 0)   //周日
+	{
+		Time->week = 1 << 7 ;
+	}
+	else //周1至周6
+	{
+		Time->week = 1 << Time->week;
+	}
+	Time->month = temp[5] & 0x1F;
+	Time->year = temp[6];
+	
+	return;
+}
+
+/***************************************************************************************
+**函数名:       DRV_BM8563_ShutDowFlag
+**功能描述:     读取RTC掉电标志
+**输入参数:     无
+**输出参数:     掉电
+**备注:         
+****************************************************************************************/
+uint8_t DRV_BM8563_ShutDowFlag(void)
+{
+	uint8_t ShutDowFlag=0;
+	DRV_IICReadByte(BM8563_CHANNEL,BM8563_SLAVEADDR, 0x02, &ShutDowFlag, 1); //秒寄存器 最高位
+	return (ShutDowFlag&0x80);
+}
+
+/***************************************************************************************
+**函数名:       DRV_BM8563_WriteTime
+**功能描述:     写入BM8563时间
+**输入参数:     RTCType  *Time    时间结构体
+**输出参数:     
+**备注:         
+****************************************************************************************/
+void DRV_BM8563_WriteTime(RTCType  *Time )
+{
+	DRV_IICWriteByte(BM8563_CHANNEL,BM8563_SLAVEADDR,0x02, Time->second);
+    DRV_IICWriteByte(BM8563_CHANNEL,BM8563_SLAVEADDR,0x03, Time->minuter);
+    DRV_IICWriteByte(BM8563_CHANNEL,BM8563_SLAVEADDR,0x04, Time->hour);
+    DRV_IICWriteByte(BM8563_CHANNEL,BM8563_SLAVEADDR,0x05, Time->day);
+    DRV_IICWriteByte(BM8563_CHANNEL,BM8563_SLAVEADDR,0x07, Time->month);
+    DRV_IICWriteByte(BM8563_CHANNEL,BM8563_SLAVEADDR,0x08, Time->year);
+    if (Time->week == 7)   //星期天寄存器=0
+    {
+        Time->week = 0x00;
+    }
+    DRV_IICWriteByte(BM8563_CHANNEL,BM8563_SLAVEADDR,0x06, Time->week);
+	return;
+}
+
+/***************************************************************************************
+**函数名:       DRV_BM8563_Init
+**功能描述:     初始化配置
+**输入参数:     无
+**输出参数:     
+**备注:         
+****************************************************************************************/
+void DRV_BM8563_Init(void)
+{
+	DRV_IICWriteByte(BM8563_CHANNEL,BM8563_SLAVEADDR,0x00, 0X00); //普通模式RTC运行
+	DRV_IICWriteByte(BM8563_CHANNEL,BM8563_SLAVEADDR,0x01, 0X00); //关闭报警及中断
+	return;
+}
+
+
+/***************************************************************************************
+**函数名:       DRV_BM8563_HWCheck
+**功能描述:     检验硬件
+**输入参数:     无
+**输出参数:     
+**备注:         
+****************************************************************************************/
+uint8_t DRV_BM8563_HWCheck(void)
+{
+	return DRV_IICHWCheck(BM8563_CHANNEL,BM8563_SLAVEADDR);
+}
+
+/***************************************************************************************
+**函数名:       DRV_BM8563_CLK_OUT
+**功能描述:     始终CLK OUT IO输出方波
+**输入参数:     无
+**输出参数:     
+**备注:         若启用该功能，引脚为开漏模式需外部上拉
+****************************************************************************************/
+void DRV_BM8563_CLK_OUT(uint8_t frequency)
+{
+	uint8_t reg_data=0;
+	switch(frequency)
+    {
+    case 1:
+        reg_data= 0X80;
+        break; //32768hz
+    case 2:
+        reg_data= 0X81;
+        break; //1024HZ
+    case 3:
+        reg_data= 0X82;
+        break; //32HZ
+    case 4:
+        reg_data= 0X83;
+        break; //1HZ
+    default:
+        break;
+    }
+	DRV_IICWriteByte(BM8563_CHANNEL,BM8563_SLAVEADDR,0x0D, reg_data);
+	return;
+}
+
+
+//.end of the file.
+

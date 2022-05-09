@@ -1,0 +1,65 @@
+/*********************************************************************************************************************
+ * @file:      HAL_ADC.h
+ * @author:    gushengchi
+ * @version:   V01.00
+ * @date:      2021-08-05
+ * @brief:     芯片ADC功能中间接口函数文件
+**********************************************************************************************************************/
+  
+#ifndef  _HAL_ADC_H
+#define  _HAL_ADC_H
+
+/*--------------------------------------------------文件包含---------------------------------------------------------*/
+#include <stdbool.h> 
+#include <stdint.h>  
+/*--------------------------------------------------宏定义-----------------------------------------------------------*/
+typedef enum
+{
+   EM_UPPER_BAT_DATA =0, 	
+   EM_UNDER_BAT_DATA, 	
+   EM_MOTO_AMP_DATA, 	
+   
+}ADC_TYPE_E;   //数据类型
+
+typedef enum
+{
+   E_UPPER_BAT =0, 	
+   E_UNDER_BAT, 
+	
+}BAT_TYPE_E;   //电池类型
+
+/*--------------------------------------------------枚举声明---------------------------------------------------------*/
+ 
+ 
+/*--------------------------------------------------常量声明---------------------------------------------------------*/
+
+
+/*--------------------------------------------------变量声明---------------------------------------------------------*/             
+ 
+ 
+/*--------------------------------------------------函数声明---------------------------------------------------------*/
+void HAL_ADC_FileInit( void );
+void HAL_ADC_WakeupInit( void );  
+void HAL_ADC_SleepInit( void );  
+void HAL_ADC_EnableCtrl( bool cmd );  
+bool HAL_ADC_GetEnableSts( void );  
+void HAL_ADC_SampleTrigger( void ); 
+void HAL_ADC_SampleProcess( void );
+void HAL_ADC_UpBatValLockCtrl( bool cmd );  
+void HAL_ADC_UnderBatValLockCtrl( bool cmd );  
+void HAL_ADC_BatSupplyPowerSwitch( void ); 
+
+uint32_t HAL_ADC_GetAdcVal( ADC_TYPE_E type );
+uint32_t HAL_ADC_GetValidVal( ADC_TYPE_E type ); 
+
+int8_t HAL_ADC_GetVolLowGradeErr( void ); 
+int8_t HAL_ADC_GetVolLowGradeWarm( void ); 
+bool   HAL_ADC_GetSysVolLowWarmState( void ); 
+int8_t HAL_ADC_GetCellBatVolState( BAT_TYPE_E type ); 
+
+
+#endif
+ 
+
+/*--------------------------------------------------THE FILE END-----------------------------------------------------*/
+

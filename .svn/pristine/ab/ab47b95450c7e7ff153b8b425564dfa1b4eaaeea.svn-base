@@ -1,0 +1,233 @@
+/**************************************************************************** 
+* Copyright (C), 2008-2021,德施曼中国有限责任公司 
+* 文件名: publicFunc.c 
+* 作者：范淑毓
+* 内容简述：公共函数定义
+*/
+
+/* 标准头文件 */
+
+/* 内部头文件 */
+#include "Public.h"
+#include "string.h"
+
+/* 外部头文件 */
+#include "DRV_Interface.h"
+
+
+
+/*********************** 外部声明变量和函数************************/
+/**************    为了减少耦合，后续逐步去除外部声音**********/
+
+
+/*************************  0 内部使用宏定义*************************/
+
+#define PUBLIC_PRINTF_SWITCH 1
+#if LOCK_PROJECT_CHIP ==LOCK_PROJECT_RTL8762 
+#define PUBLIC_PRINTF_HEX_BUFF 1
+#else
+#define PUBLIC_PRINTF_HEX_BUFF 0
+#endif
+
+
+
+
+/*****************************  1 静态变量*****************************/
+
+
+
+/***************************** 2  静态函数*****************************/
+
+
+/***************************** 3 对外函数*****************************/
+
+/****************************************************************************** 
+* PUBLIC_Delayms
+* 功 能：延时接口，单位为毫秒
+* 输 入：uint32 _s - 毫秒
+* 输 出：void
+* 返 回：void
+*/ 
+void PUBLIC_Delayms(uint32_t _ms)
+{
+    DRV_InterDelayus(1000*_ms);
+    return;
+}
+
+/****************************************************************************** 
+* PUBLIC_Delayus
+* 功 能：延时接口，单位为微秒
+* 输 入：uint32 _s - 微秒
+* 输 出：void
+* 返 回：void
+*/ 
+void PUBLIC_Delayus(uint32_t _us)
+{
+    DRV_InterDelayus(_us);
+    return;
+}
+
+/****************************************************************************** 
+* 函数名：Math_Bcd2Bin
+* 功 能：Bcd 转换成bin
+* 输 入：uint8_t bcd
+* 输 出：void
+* 返 回：uint8_t
+*/
+uint8_t Math_Bcd2Bin(uint8_t bcd)
+{
+    return ((bcd & 0x0f) + ((bcd & 0xf0) >> 4) * 10);
+}
+
+/****************************************************************************** 
+* 函数名：Math_Bcd2Bin
+* 功 能：bin 转换成bcd
+* 输 入：uint8_t bin
+* 输 出：void
+* 返 回：uint8_t
+*/
+uint8_t Math_Bin2Bcd(uint8_t bin)
+{
+    return (bin % 10) + (((bin / 10) % 10) << 4);
+}
+
+/*****************************
+* 函数名： Math_Bytes2String
+* 功 能：  字节数据转换为可打印字符串
+           如：{0xC8, 0x32, 0x9B, 0xFD, 0x0E, 0x01} --> "C8329BFD0E01"   
+* 输 入：  pSrc: 源数据指针
+           pDst: 目标字符串指针
+           nSrcLength: 源数据长度
+           返回: 目标字符串长度
+        
+ * 注意：  长度最大255
+*****************************/
+uint8_t Math_Bytes2String(const char* pSrc, char* pDst, uint8_t SrcLen,uint8_t asciimode)
+{
+	const char tabSmall[]="0123456789abcdef";    // 0x0-0xf的字符查找表
+	const char tabBig[]="0123456789ABCDEF";  
+	for(uint8_t i=0; i<SrcLen; i++ )
+	{
+		if( asciimode >= 'a' && asciimode <= 'z' )
+		{
+			// bit7~4
+			*pDst++ = tabSmall[*pSrc >> 4];   
+			// bit3~0
+			*pDst++ = tabSmall[*pSrc & 0x0f];
+		}
+		else
+		{   // bit7~4
+			*pDst++ = tabBig[*pSrc >> 4];
+			// bit3~0        
+			*pDst++ = tabBig[*pSrc & 0x0f];
+		}
+		pSrc++;
+	}
+    // 输出字符串加个结束符
+   *pDst = '\0';
+
+    // 返回目标字符串长度
+   return (SrcLen * 2);
+}
+
+/****************************************************************************** 
+* 函数名：PUBLIC_PrintHex
+* 功 能：hex 打印封装接口
+* 输 入：char *data_head, uint8_t *data, uint16_t data_len
+* 输 出：void
+* 返 回：void
+*/
+void PUBLIC_PrintHex ( char *data_head, uint8_t *data, uint16_t data_len )
+{
+#if PUBLIC_PRINTF_HEX_BUFF >0
+	uint8_t disBuff[512]={'\0',};
+	uint8_t table[]={'0','1','2','3','4','5','6','7','8','9','A','B','C','D','E','F'};
+#endif
+    if ( data_head != NULL )
+    {
+        my_printf ( "%s(%d):", data_head, data_len );
+    }
+
+    if ( data_len >= 256 )
+    {
+        my_printf ( "data_len>256=%d:", data_len );
+    }
+    else
+    {
+#if PUBLIC_PRINTF_HEX_BUFF >0
+		for(uint16_t i =0;i< data_len; i++)
+        {
+			disBuff[i*2] =  table[(data[i]>>4)];
+			disBuff[i*2+1] = table[(data[i]&0x0F)];
+        }
+		disBuff[data_len*2] = '\0'; //填写停止符.
+        my_printf ( "%s", disBuff);
+#else
+		for ( int i = 0; i < data_len; i++ )
+        {
+            my_printf ( "%02X", data[i] );
+        }
+#endif
+    }
+    my_printf ( "\n" );
+    return;
+}
+
+/****************************************************************************** 
+* 函数名：PUBLIC_GenerateRandVec(原 random_vector_generate)
+* 功 能：生成随机值
+* 输 入：uint8_t size
+* 输 出：uint8_t *p_buff
+* 返 回：uint8_t
+*/
+uint8_t PUBLIC_GenerateRandVec(uint8_t *p_buff, uint8_t size)
+{
+    return DRV_InterGenerateRandVec(p_buff, size);
+}
+
+/*********************************************************************************************************************
+* Function Name :  PUBLIC_ChangeDecToString()
+* Description   :  将十进制数组转换成字符串
+* Para          :  无
+* Return        :  void
+*********************************************************************************************************************/
+void PUBLIC_ChangeDecToString( uint8_t *pstr, uint8_t *pbuf, uint8_t size )
+{
+	for(uint8_t i=0; i<size; i++)
+	{
+		*(pstr+i) = *(pbuf+i) + 0x30;
+	}
+	return;
+}
+
+/****************************************************************************** 
+* 函数名：PUBLIC_GetMacAdd
+* 功 能： 获取MAC地址
+* 输 入：uint8_t *p_buff 数据指针
+* 输 出：
+*/
+void PUBLIC_GetMacAdd(uint8_t *p_buff)
+{
+	DRV_InterGetMacAddr(p_buff);
+	return;
+}
+
+/***************************************************************************************
+**函数名:       EndianSwap
+**功能描述:     大小端转换
+**输入参数:     data 输入值 
+				length 转换长度（字节数）
+**输出参数:     结果
+**备注:       
+****************************************************************************************/
+uint32_t EndianSwap(uint32_t data, uint32_t length)
+{
+    uint32_t next = 0;	
+	uint32_t i = 0;
+	while(length-- > 0) {
+        *(((uint8_t *)&next) + i++) = *(((uint8_t *)&data) + length);
+	}
+	return next;
+}
+
+

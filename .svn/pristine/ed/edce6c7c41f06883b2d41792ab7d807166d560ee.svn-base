@@ -1,0 +1,134 @@
+/**************************************************************************** 
+* Copyright (C), 2008-2021,德施曼机电（中国）有限公司 
+* 文件名: DRV_Interface.c 
+* 作者：fanshuyu
+* 版本：V01
+* 时间：20220112
+* 内容简述：芯片层提供的基础功能API接口
+****************************************************************************/
+/* 标准头文件 */
+
+
+/* 内部头文件 */
+#include "DRV_Interface.h"
+
+
+/* 外部头文件 */
+#include "nrf_delay.h"
+#include "nrf_drv_rng.h"
+
+
+/*************************  0 内部使用宏定义*************************/
+
+
+
+
+/*****************************  1 静态变量*****************************/
+
+
+
+/***************************** 2  静态函数*****************************/
+
+
+/***************************** 3 对外函数*****************************/
+
+
+/****************************************************************************** 
+* DRV_InterDelayus
+* 功 能：延时接口，单位为毫秒
+* 输 入：uint32 _s - 微秒
+* 输 出：void
+* 返 回：void
+*/ 
+void DRV_InterDelayus(uint32_t _us)
+{
+    nrf_delay_us(_us);
+    return;
+}
+
+
+/****************************************************************************** 
+* 函数名：DRV_InterPrint
+* 功 能：打印封装接口
+* 输 入：const char *fmt, ...
+* 输 出：void
+* 返 回：void
+*/
+void DRV_InterPrint( const char *fmt, ... )
+{
+    va_list arg_ptr;
+    va_start ( arg_ptr, fmt );
+    vprintf ( fmt, arg_ptr );
+    va_end ( arg_ptr );
+    return;
+}
+
+
+/****************************************************************************** 
+* 函数名：DRV_InterGetMacAddr
+* 功 能：获取Mac地址
+* 输 入：uint8_t *p_buff 数据指针
+* 输 出：void
+* 返 回：void
+*/
+void DRV_InterGetMacAddr(uint8_t *p_buff)
+{
+	*(p_buff+0) = (uint8_t)(NRF_FICR->DEVICEADDR[1]>>8) | 0xC0;
+	*(p_buff+1) = (uint8_t)NRF_FICR->DEVICEADDR[1];
+	*(p_buff+2) = (uint8_t)(NRF_FICR->DEVICEADDR[0]>>24);
+	*(p_buff+3) = (uint8_t)(NRF_FICR->DEVICEADDR[0]>>16);
+	*(p_buff+4) = (uint8_t)(NRF_FICR->DEVICEADDR[0]>>8);
+	*(p_buff+5) = (uint8_t)NRF_FICR->DEVICEADDR[0];	
+    return;
+}
+
+
+/****************************************************************************** 
+* 函数名：DRV_InterGenerateRandVec(原 random_vector_generate)
+* 功 能：生成随机值
+* 输 入：uint8_t size
+* 输 出：uint8_t *p_buff
+* 返 回：uint8_t
+*/
+uint8_t DRV_InterGenerateRandVec(uint8_t *p_buff, uint8_t size)
+{
+    uint32_t err_code;
+    uint8_t available;
+
+    nrf_drv_rng_bytes_available(&available);
+    uint8_t length = MIN(size, available);
+
+    err_code = nrf_drv_rng_rand(p_buff, length);
+    APP_ERROR_CHECK(err_code);
+
+    return length;
+}
+
+/****************************************************************************** 
+* 函数名：DRV_InterRandVecInit
+* 功 能：生成随机值
+* 输 入：uint8_t size
+* 输 出：uint8_t *p_buff
+* 返 回：uint8_t
+*/
+void DRV_InterRandVecInit(void)
+{
+    APP_ERROR_CHECK(nrf_drv_rng_init(NULL)); //随机数
+	return;
+}
+
+/****************************************************************************** 
+* 函数名：DRV_InterGenerateStartOta
+* 功 能： 进入OTA模式
+* 输 入：
+* 输 出：
+* 返 回：
+*/
+void DRV_InterGenerateStartOta(void)
+{
+	sd_power_gpregret_clr(0,0xffffffff);  
+	sd_power_gpregret_set(0,0xB1);  
+	NVIC_SystemReset();
+}
+
+//.end of the file.

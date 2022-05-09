@@ -1,0 +1,266 @@
+/*********************************************************************************************************************
+ * @file:        Finger.h
+ * @author:      fanshuyu
+ * @version:     V01.00
+ * @date:        2021-07-26
+ * @Description: 指纹/指静脉业务模块
+ * @ChangeList:  01. 初版
+**********************************************************************************************************************/
+  
+#ifndef  _FINGER_H
+#define  _FINGER_H
+
+/*--------------------------------------------------文件包含---------------------------------------------------------*/
+#include <stdint.h>
+#include <string.h>
+#include <stdbool.h>
+
+#include "LockConfig.h"
+#include "System.h"
+
+/*--------------------------------------------------宏定义-----------------------------------------------------------*/
+/* SEARCH (指令码 0x56) 的搜索个数，一般设置为模组支持的最大值 */
+#ifndef MSG_FINGER_NUM_RESERVED
+#define PS1802_MAX_FP_NUM (100)
+#else
+#define PS1802_MAX_FP_NUM (MSG_FINGER_NUM_RESERVED)
+#endif
+
+//PS1802接收缓冲区大小
+#define RX_DATA_SIZE    30
+#define RX_BUFFER_SIZE  (2*RX_DATA_SIZE)
+
+//指纹模块串口通信指令数据最小长度(1个字节的指令码 + 2个字节的校验位)
+#define FINGER_COM_MINLEN 3
+#define FINGER_COM_MAXLEN (FINGER_COM_MINLEN+30)
+
+#define PS1802_HEAD 1 //头标志
+#define PS1802_NOHEAD 0
+
+#define FINGER_NO           0
+#define FINGER_YES          1
+#define FINGER_FLASH_YES    2   //库中搜索到指纹
+#define FINGER_FLASH_NO     3   //不存在
+
+//指纹模组通讯
+#define FINGER_REP_OK 1
+#define FINGER_REP_ERR 2
+
+//PS1802REVType.full宏定义
+#define FINGER_REV_TYPE_FULL 1
+#define FINGER_REV_TYPE_EMPTY 0    //接收处理完成
+#define FINGER_REV_TYPE_SUCEFULL 2 //接收成功
+#define FINGER_REV_TYPE_FAIL 3     //接收失败
+
+
+//ack  确认码
+#define FINGER_ACK_OK 0X00       //指令执行完毕
+#define FINGER_ACK_ERR 0X01      //接收包有错误
+#define FINGER_ACK_NOFINGER 0X02 //传感器没有手指
+#define FINGER_ACK_GETIMGERR 0X03 //录入不成功
+#define FINGER_ACK_NOSLIDEFINGER 0X06 //指静脉模组检测手指太少或没有
+#define FINGER_ACK_TOOFEWCHAR 0X07 //特征点太少无法生成特征码
+#define FINGER_ACK_NOMATCH 0X08  //指纹不匹配
+#define FINGER_ACK_NOSEARCH 0X09 //指纹没有找到
+#define FINGER_ACK_UPCHARFAIL 0X0D  //上传特征失败
+#define FINGER_ACK_NORECIVE 0X0E    //不能接收后续包
+#define FINGER_ACK_UPIMAGEFAIL 0X0F //上传图象失败
+#define FINGER_ACK_RESETFAIL 0X14 //复位失败
+#define FINGER_ACK_NOTEPADPAGEERR 0X1C //记事本页码指定错误
+#define FINGER_ACK_SETPORTFAIL 0X1D    //端口操作失败
+#define FINGER_ACK_ENROLLFAIL 0X1E     //自动注册失败
+#define FINGER_ACK_FLASHFULL 0X1F      //指纹库满
+#define FINGER_ACK_FLASH_ACK0XF0 0XF0    //有后续包指令，正确接收用0XF0应答
+#define FINGER_ACK_FLASH_ACKCMD0XF1 0XF1 //有后续包指令,命令包用0XF1应答
+#define FINGER_ACK_FLASH_ACKERR 0XF2     //烧写内部flash，检验和错误
+#define FINGER_ACK_FLASH_DATAERR 0XF3    //烧写内部flash，包标识错误
+#define FINGER_ACK_FLASH_DATALENERR 0XF4 //烧写内部flash，包长度错误
+#define FINGER_ACK_FLASH_CODELONG 0XF5   //烧写内部flash，代码长度太长
+#define FINGER_ACK_FLASH_WRITEFAIL 0XF6  //烧写内部flash，烧写flash失败
+#define FINGER_ACK_NONE 0XFF  //复位ACK
+//软件应用内部定义ack 错误码
+#define FINGER_ACK_PROTOCAL_ERR 0XE1    // 协议解析错误
+
+//指纹类型(上电信号)
+#define FINEGER_READY_SIGNAL_NOAES  0x55
+#define FINEGER_READY_SIGNAL_AES    0x66
+#define FINEGER_READY_SIGNAL_AES2   0x68
+#define FINEGER_READY_SIGNAL_AES3   0x67    //指静脉滑动录入加密模式
+
+
+/* ******  加密模块协议宏定义****** */
+/* 1. 头数据包定义 */
+#define FINGER_ENCRY_HEAD       0XAA66          // 协议头: 第二字节由模组上电返回确定
+/* 2. 是否加密 */
+#define FINGER_ENCRY_YES        0x01            // 加密
+#define FINGER_ENCRY_NO         0x00            // 不加密
+/* 0. 其他 */
+#define FINGER_ENCRY_HEAD_INDEX 0               // 加密协议头的数据偏移坐标
+#define FINGER_ENCRY_FLAG_INDEX 2               // 加密标记位的数据偏移坐标
+#define FINGER_ENCRY_LEN_INDEX  3               // 数据段长度值的数据偏移坐标
+#define FINGER_ENCRY_FIXED_LEN  4               // 包头+ 加密标记+ 数据长度值
+
+/* ******  指纹格式宏定义****** */
+/* 1. 头数据包定义 */
+#define FINGER_PRO_HEAD         0XEF01          // 协议头
+/* 2. 芯片地址 */
+#define FINGER_PRO_ADDR         0XFFFFFFFF      // 芯片地址
+/* 3.  包标识( PID 定义) */
+#define FINGER_PRO_INSTRUCTION  0x01            //表示是命令包（Command packet），可以跟后续包
+#define FINGER_PRO_DATA         0x02            //表示是数据包(Data packet)，且有后续包。数据包不能单 独进入执行流程，必须跟在指令包或应答包后面
+#define FINGER_PRO_ACK          0x07            // 表示是应答包（ACK packet），可以跟后续包
+#define FINGER_PRO_OVER         0x08            //表示是最后一个数据包，即结束包(End Data packet)
+/* 5.  包数据( 指令) */
+#define FINGER_NO_PID           0xFF            // 无动作
+#define FINGER_GETIMG           0x01            //读取传感器存缓冲区
+#define FINGER_GETIMG2          0xE0            //读取传感器存缓冲区(需要手动休眠模块使用)
+#define FINGER_IMG2CHAR         0x02            //根据原始图象生成特征存CHARBUF
+#define FINGER_MATCH            0x03            //精确比对charbuf1与charbuf2
+#define FINGER_SEARCH           0x04            //将charbuf1或者charbuf2寻找整个/部分指纹库
+#define FINGER_REGMODEL         0x05            //将charbuf1与charbuf2合并存charbuf2
+#define FINGER_STORCHAR         0x06            //将特征缓冲区文件存flash
+#define FINGER_LOADCHAR         0x07            //从指纹库读取一个特征文件到特征缓冲区
+#define FINGER_UPCHAR           0x08            //将特征缓冲区的文件传给上位机
+#define FINGER_DOWNCHAR         0x09            //从上位机下载一个特征文件到特征缓冲区
+#define FINGER_UPIMAGE          0x0A            //上传原始图象
+#define FINGER_DOWNIMAGE        0x0B            //下载原始图象
+#define FINGER_DELETCHAR        0x0C            //删除flash指纹库的一个特征文件
+#define FINGER_EMPTY            0x0D            //清空flash指纹库
+#define FINGER_WRITEREG         0x0E            //写SOC系统寄存器
+#define FINGER_READSYSPARA      0x0F            //读系统基本参数
+#define FINGER_ENROLL           0x10            //注册模板
+#define FINGER_IDENTIFY         0x11            //验证指纹
+#define FINGER_SETPWD           0x12            //设置设备握手口令
+#define FINGER_VFYPWD           0x13            //验证设备握手口令
+#define FINGER_GETRANDOMCODE    0x14            //采样随机数
+#define FINGER_SETCHIPADDR      0x15            //设置芯片地址
+#define FINGER_READINFPAGE      0x16            //读取flash infomation page 内容
+#define FINGER_PORT_CONTROL     0x17            //通讯端口开关控制
+#define FINGER_WRITENOTEPAD     0x18            //写记事本
+#define FINGER_READNOTEPAD      0x19            //读记事本
+#define FINGER_BURNCODE         0x1A            //烧写片内flash
+#define FINGER_HIGHSPEEDSEARCH  0x1B            //高速查找flash
+#define FINGER_GENBINIMAGE      0x1C            //生成二值化指纹图象
+#define FINGER_VALIDTEMPLETENUM 0x1D            //读有效模板个数
+#define FINGER_USERCOMMAND      0x1E            //用户自定义命令
+#define FINGER_SLIDER           0x22            //滑动录入指静脉，替代0x01和0x02流程
+#define FINGER_AGING            0x23            //指静脉老化亮灯
+#define FINGER_SLEEP            0x33            //休眠指令
+#define FINGER_AESKEY           0x40            //写通信根密钥AesKey (KEY1)
+#define FINGER_RANDOM           0x41            //写通信会话密钥RANDOM (KEY2)
+
+/* 0. 其他 */
+#define FINGER_PRO_HEAD_INDEX   0               // 协议头的数据偏移坐标
+#define FINGER_PRO_ADDR_INDEX   2               // 芯片地址的数据偏移坐标
+#define FINGER_PRO_PID_INDEX    6               // 包标记的数据偏移坐标
+#define FINGER_PRO_LEN_INDEX    7               // 数据段长度值的数据偏移坐标
+#define FINGER_PRO_FIXED_LEN    9               // 包头+ 芯片地址+ 包标识+ 包长度的总和，不包含包内容+  校验和
+
+//dsp工作时间
+#define FINGER_NO_FLOW          0xFF            // 空动作
+#define DSPWORKTIME 20
+
+/*--------------------------------------------------枚举声明---------------------------------------------------------*/
+
+/* 指纹模组命令打包流程处理 */
+typedef enum
+{
+    EM_FINGER_FLOW0_GET = 0,        //Get_Finger();   获取指纹模板流程
+    EM_FINGER_FLOW1_CONVERT,        //将获取指纹模板转换成特征码存放在缓存区
+    EM_FINGER_FLOW2_SEARCH,         //FingerSearch  验证指纹获取 地址ID流程
+    EM_FINGER_FLOW3_REG,            //Reg_Finger_FUN    存储模板流程
+    EM_FINGER_FLOW4_DEL,            //FingerDel_FUN
+    EM_FINGER_FLOW5_EMPTY,          //FingerEmpty_FUN   清空整个指纹库模板
+    EM_FINGER_FLOW6_MERGE,          //模板合并流程
+    EM_FINGER_FLOW7_AESKEY,         //发送AESKEY
+    EM_FINGER_FLOW8_RANDOM,         //发送随机码
+    EM_FINGER_FLOW9_SLIDE,          //滑动录入指静脉
+    EM_FINGER_FLOW10_AGING,         //指静脉老化亮灯
+    /* 主流程数量 */
+    EM_FINGER_FLOW_MAIN_TATAL = EM_FINGER_FLOW10_AGING,
+    /* 扩展流程 */
+    EM_FINGER_FLOW_EX0_GET,         // 同EM_FINGER_FLOW0_GET，但指令不同
+    EM_FINGER_FLOW_EX1_SLEEP,       // 休眠指令
+    /* 总流程数量 */
+    EM_FINGER_FLOW_ALL,             //主流程上限，即最大值
+
+    EM_FINGER_FLOW_NONE = 0xFF,     //无效流程，默认值
+}FINGER_FLOW_TYPE_E; 
+
+
+/*--------------------------------------------------变量声明---------------------------------------------------------*/             
+ 
+typedef struct
+{
+    uint8_t PID;
+    uint16_t size;
+    uint8_t command;
+    uint8_t par[30]; //数据包，有/无
+} FingerTxType_S;
+
+typedef struct
+{
+    uint8_t PID;       //包标识
+    uint16_t size;     //包长度
+    uint8_t AckCode;   //确认码
+    uint8_t par[30];   //数据包，有/无
+    uint8_t report;    //接受包完整性,=FINGER_REV_TYPE_FULL;
+} FingerRxType_S; //接受包格式
+
+typedef struct
+{
+    uint16_t Fp_StartPage;     //开始 地址
+    uint16_t Fp_PageNum;       //个数
+    uint16_t registered;       //本地是否已经注册.
+    uint16_t admin_finger_num; //管理员指纹数量.
+    uint16_t guest_finger_num; //客人指纹数量.
+    uint8_t time_key[6];
+    uint8_t mac_key[6];
+    uint8_t reserved_key[6];
+}LocalFinger_S; //ADMIN_T 本地指纹
+
+typedef struct
+{
+    uint8_t     acRxBuf[RX_BUFFER_SIZE];    // 串口数据接收缓存信息
+    uint16_t    u16RxCnt;                   //当前接受位置
+}FingerRxInfo_S;
+
+typedef struct
+{
+    uint32_t    u32Pad; // 数据
+} FingerRecMsgType_S; //PS1802接受数据包类型
+
+typedef struct
+{
+    FINGER_FLOW_TYPE_E  u8Flow;     // 交互流程枚举
+    uint8_t             u8Pid;      // 交互指令
+    uint8_t             u8Time;     // 交互最长时间
+    uint16_t            u16Size;    // 交互数据段长度
+    uint8_t             u8TxFlag;   // 发送标记
+    bool               bTxRxFlag;  // 发送接收响应标记- 发送后置位true，接收确认后置为false
+} FingerFlowParamMap_S;
+
+
+/*--------------------------------------------------函数声明---------------------------------------------------------*/
+/* 协议接口 */
+void FINGER_Init(void);
+uint8_t FINGER_WorkCountDown(void);
+void FINGER_WakeUp(void);
+void FINGER_Poweroff(void);
+bool FINGER_GetPowerStatus(void);
+uint8_t FINGER_GetPowerFlag(void);
+FINGER_FLOW_TYPE_E FINGER_GetFlowStatus(void);
+uint8_t FINGER_GetAckCode(void);
+uint16_t FINGER_GetSearchID(void);
+uint16_t FINGER_GetSearchScore(void);
+bool FINGER_SleepEx(void);
+bool FINGER_Sleep(void);
+bool FINGER_Operate(FINGER_FLOW_TYPE_E _emFlowType, uint32_t _u32Pageid);
+void FINGER_Scan(void);
+bool FINGER_GetTxRxFlag(void);
+
+#endif
+
+
+
+

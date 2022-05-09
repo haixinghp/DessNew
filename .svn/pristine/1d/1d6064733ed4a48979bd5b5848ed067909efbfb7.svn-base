@@ -1,0 +1,57 @@
+/**************************************************************************** 
+* Copyright (C), 2008-2021,德施曼中国有限责任公司 
+* 文件名: publicFunc.h 
+* 作者：范淑毓
+* 内容简述：公共函数定义
+*/
+
+#ifndef _PUBLIC_H_
+#define _PUBLIC_H_
+
+/* 标准头文件 */
+#include "stdint.h"
+#include "stdarg.h"
+#include "stdio.h"
+#include "stddef.h"
+#include "DRV_Interface.h"
+#include "LockConfig.h"
+/* 外部头文件 */
+
+/* 通用宏定义 */
+#if LOCK_PROJECT_CHIP == LOCK_PROJECT_RTL8762
+	#define my_printf DBG_DIRECT
+#else
+	#define my_printf(fmt, ...) \
+		do\
+		{\
+			DRV_InterPrint(fmt, ##__VA_ARGS__);\
+		}while(0)
+#endif
+#ifndef MIN
+#define MIN(a, b) ((a) < (b) ? (a) : (b))
+#endif
+#ifndef MAX
+#define MAX(a, b) ((a) < (b) ? (b) : (a))
+#endif
+
+
+/* 公共接口 */
+void PUBLIC_Delayms(uint32_t _ms);
+void PUBLIC_Delayus(uint32_t _us);
+uint8_t PUBLIC_GenerateRandVec(uint8_t *p_buff, uint8_t size);
+
+uint8_t Math_Bcd2Bin(uint8_t bcd);
+uint8_t Math_Bin2Bcd(uint8_t bin);
+uint8_t Math_Bytes2String(const char* pSrc, char* pDst, uint8_t SrcLen,uint8_t asciimode);
+
+void PUBLIC_PrintHex ( char *data_head, uint8_t *data, uint16_t data_len );
+void PUBLIC_GetMacAdd(uint8_t *p_buff);
+void PUBLIC_ChangeDecToString( uint8_t *pstr, uint8_t *pbuf, uint8_t size );
+ 
+uint32_t EndianSwap(uint32_t data, uint32_t length);
+#endif
+
+
+
+
+

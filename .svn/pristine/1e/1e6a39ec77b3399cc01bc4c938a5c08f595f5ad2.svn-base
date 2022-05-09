@@ -1,0 +1,284 @@
+/**************************************************************************** 
+* Copyright (C), 2008-2021,德施曼机电（中国）有限公司 
+* 文件名: DRV_GPIO.c 
+* 作者：邓业豪
+* 版本：V01
+* 时间：20210722
+* 内容简述：IO芯片层驱动
+****************************************************************************/
+/* 标准头文件 */
+
+
+/* 内部头文件 */
+#include "DRV_GPIO.h"
+
+/* 外部头文件 */
+#include "nrf_gpio.h"   
+#include "nrf_drv_gpiote.h" 
+
+
+#define   GPIO_NUMBER     32
+DRV_GPIOPtr PinCallBackPtr ;
+
+
+/***************************************************************************************
+**函数名:       DRV_GpioOutPP
+**功能描述:     GPIO推挽输出模式
+**输入参数:     pinNumber     IO
+**备注:         约2ma驱动电流
+****************************************************************************************/
+void DRV_GpioOutPP(uint32_t pinNumber )
+{
+	if(pinNumber >= GPIO_NUMBER)
+	{
+		return;
+	}
+	nrf_gpio_cfg_output(pinNumber);
+
+    return;
+}
+
+/***************************************************************************************
+**函数名:       DRV_GpioHighOut1
+**功能描述:     GPIO推挽输出高驱模式输出1
+**输入参数:     pinNumber     IO
+**备注:         约10ma驱动电流
+****************************************************************************************/
+void DRV_GpioHighOut1(uint32_t pinNumber )
+{
+	if(pinNumber >= GPIO_NUMBER)
+	{
+		return;
+	}
+	nrf_gpio_cfg(
+	pinNumber,
+	NRF_GPIO_PIN_DIR_OUTPUT,
+	NRF_GPIO_PIN_INPUT_DISCONNECT,
+	NRF_GPIO_PIN_NOPULL,
+	NRF_GPIO_PIN_H0H1,
+	NRF_GPIO_PIN_NOSENSE);
+	
+	nrf_gpio_pin_set(pinNumber);
+    return;
+}
+
+/***************************************************************************************
+**函数名:       DRV_GpioHighOut0
+**功能描述:     GPIO推挽输出高驱模式输出0
+**输入参数:     pinNumber     IO
+**备注:         约10ma驱动电流
+****************************************************************************************/
+void DRV_GpioHighOut0(uint32_t pinNumber )
+{
+	if(pinNumber >= GPIO_NUMBER)
+	{
+		return;
+	}
+	nrf_gpio_cfg(
+	pinNumber,
+	NRF_GPIO_PIN_DIR_OUTPUT,
+	NRF_GPIO_PIN_INPUT_DISCONNECT,
+	NRF_GPIO_PIN_NOPULL,
+	NRF_GPIO_PIN_H0H1,
+	NRF_GPIO_PIN_NOSENSE);
+
+	nrf_gpio_pin_clear(pinNumber);
+    return;
+}
+
+
+/***************************************************************************************
+**函数名:       DRV_GpioOut1
+**功能描述:     GPIO推挽输出高
+**输入参数:     pinNumber     IO
+**备注:         约2ma驱动电流
+****************************************************************************************/
+void DRV_GpioOut1(uint32_t pinNumber)
+{
+    if(pinNumber >= GPIO_NUMBER)
+	{
+		return;
+	}
+	DRV_GpioOutPP(pinNumber);
+	nrf_gpio_pin_set(pinNumber);
+
+    return;
+}
+
+
+/***************************************************************************************
+**函数名:       DRV_GpioOut0
+**功能描述:     GPIO推挽输出低
+**输入参数:     pinNumber     IO
+**备注:         约2ma驱动电流
+****************************************************************************************/
+void DRV_GpioOut0(uint32_t pinNumber)
+{
+	if(pinNumber >= GPIO_NUMBER)
+	{
+		return;
+	}
+	DRV_GpioOutPP(pinNumber);
+	nrf_gpio_pin_clear(pinNumber);
+
+    return;
+}
+
+
+/***************************************************************************************
+**函数名:       DRV_GpioInputPullup
+**功能描述:     GPIO上拉输入模式  
+**输入参数:     pinNumber     IO
+**备注:         约13K上拉
+****************************************************************************************/
+void DRV_GpioInputPullup(uint32_t pinNumber)
+{
+	if(pinNumber >= GPIO_NUMBER)
+	{
+		return;
+	}
+	nrf_gpio_cfg_input(pinNumber,NRF_GPIO_PIN_PULLUP);
+
+    return;
+}
+
+/***************************************************************************************
+**函数名:       DRV_GpioInputPulldown
+**功能描述:     GPIO下拉输入模式
+**输入参数:     pinNumber     IO
+**备注:         约13K下拉
+****************************************************************************************/
+void DRV_GpioInputPulldown(uint32_t pinNumber)
+{
+	if(pinNumber >= GPIO_NUMBER)
+	{
+		return;
+	}
+	nrf_gpio_cfg_input(pinNumber,NRF_GPIO_PIN_PULLDOWN);
+
+    return;
+}
+
+
+/***************************************************************************************
+**函数名:       DRV_GpioInputPullnull
+**功能描述:     GPIO浮空输入模式
+**输入参数:     pinNumber     IO
+**备注:         无拉电阻
+****************************************************************************************/
+void DRV_GpioInputPullnull(uint32_t pinNumber)
+{
+	if(pinNumber >= GPIO_NUMBER)
+	{
+		return;
+	}
+	nrf_gpio_cfg_input(pinNumber,NRF_GPIO_PIN_NOPULL);
+
+    return;
+}
+
+/***************************************************************************************
+**函数名:       DRV_GpioRead
+**功能描述:     GPIO读取电平
+**输入参数:     pinNumber     IO
+**备注:         
+****************************************************************************************/
+uint8_t DRV_GpioRead(uint32_t pinNumber)
+{
+	if(pinNumber >= GPIO_NUMBER)
+	{
+		return 0;
+	}	
+	return nrf_gpio_pin_read(pinNumber) ;     
+}
+
+/***************************************************************************************
+**函数名:       DRV_GpioDisconnect
+**功能描述:     GPIO断开连接关系
+**输入参数:     pinNumber     IO
+**备注:         无功耗
+****************************************************************************************/
+void DRV_GpioDisconnect(uint32_t pinNumber)
+{
+	if(pinNumber >= GPIO_NUMBER)
+	{
+		return;
+	}	
+	nrf_gpio_cfg_default(pinNumber);
+
+    return;
+}
+
+
+/*******************************************************
+* 函数名： DRV_GpioDefault
+* 功 能：  所有Gpio断开连接
+* 输 入：
+* 输 出：
+* 返 回：
+********************************************************/ 
+void DRV_GpioDefault(void)
+{
+    for (uint8_t i = 0; i < GPIO_NUMBER; i++)
+    {
+        DRV_GpioDisconnect(i);
+    }
+    return;
+}
+
+
+
+/*******************************************************
+* 函数名： DRV_GpioHandler
+* 功 能：  IO中断函数
+* 输 入：  
+* 输 出：
+* 返 回：
+********************************************************/
+static void DRV_GpioHandler( nrf_drv_gpiote_pin_t pin, nrf_gpiote_polarity_t action )
+{
+	if(PinCallBackPtr !=NULL)
+	{
+		PinCallBackPtr(pin);
+	}	
+	return;
+}
+
+/*******************************************************
+* 函数名： DRV_GpioInterruptEnable
+* 功 能：  休眠及唤醒脚设置
+* 输 入：  触发方式、拉电平、中断函数指针
+* 输 出：
+* 返 回：
+********************************************************/ 
+void DRV_GpioInterruptEnable(uint32_t pinNumber ,DRV_GPIO_POL_E Polarity ,DRV_GPIOPtr handler)
+{
+	PinCallBackPtr =handler;//中断函数指针
+	
+	uint32_t err_code=0;
+	if (!nrf_drv_gpiote_is_init())
+	{
+		err_code = nrf_drv_gpiote_init();
+		APP_ERROR_CHECK(err_code);
+	}
+	nrf_drv_gpiote_in_config_t config = GPIOTE_CONFIG_IN_SENSE_TOGGLE( true );
+	config.sense = (nrf_gpiote_polarity_t)Polarity ;  //触发方式
+	config.pull = NRF_GPIO_PIN_NOPULL; //默认都是无拉电阻
+	err_code = nrf_drv_gpiote_in_init( pinNumber, &config, DRV_GpioHandler );
+	nrf_drv_gpiote_in_event_enable( pinNumber, 1 );
+}
+
+/*******************************************************
+* 函数名： DRV_GpioInterruptDisable
+* 功 能：  休眠及唤醒脚设置
+* 输 入：  触发方式、拉电平、中断函数指针
+* 输 出：
+* 返 回：
+********************************************************/ 
+void DRV_GpioInterruptDisable(uint32_t pinNumber )
+{
+	nrf_drv_gpiote_in_event_disable( pinNumber );
+}
+
+
+//.end of the file.

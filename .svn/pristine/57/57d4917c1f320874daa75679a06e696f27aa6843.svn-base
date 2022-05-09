@@ -1,0 +1,451 @@
+/********************************************************************************************************************
+ * @file:      HAL_ADC.c
+ * @author:    gushengchi
+ * @version:   V01.00
+ * @date:      2021-08-05
+ * @brief:     芯片ADC功能中间接口函数文件
+*********************************************************************************************************************/
+  
+/*-------------------------------------------------文件包含---------------------------------------------------------*/
+#include "HAL_ADC.h"
+ 
+#include <stdint.h>
+#include "LockConfig.h"
+#include "DRV_ADC.h"
+#include "DRV_GPIO.h"
+/*-------------------------------------------------宏定义-----------------------------------------------------------*/
+#define BAT_ADC_CAPT_EN_PIN        M_BAT_ADC_EN_GPIO_PIN         //控制电源ADC接入脚 
+#define BAT_CHARGE_SWITCH_PIN      M_BAT_CHARGE_SWITCH_GPIO_PIN  //电池供电切换引脚
+
+#define BAT_VOL_LOW_GRADE_1        CFG_VOL_LOW_GRADE_1        //精度1mV
+#define BAT_VOL_LOW_GRADE_2        CFG_VOL_LOW_GRADE_2        //精度1mV
+#define BAT_VOL_INSERT_NONE        CFG_VOL_INSERT_NONE        //精度1mV
+/*-------------------------------------------------枚举定义---------------------------------------------------------*/
+
+
+/*-------------------------------------------------常量定义---------------------------------------------------------*/
+
+
+/*-------------------------------------------------全局变量定义-----------------------------------------------------*/         
+
+
+/*-------------------------------------------------局部变量定义-----------------------------------------------------*/
+static bool AdcWorkEnable = false;
+static bool UpperBatAdcValLock = false;
+static bool UnderBatAdcValLock = false;
+
+/*-------------------------------------------------函数声明---------------------------------------------------------*/
+ 
+
+/*-------------------------------------------------函数定义---------------------------------------------------------*/
+
+/*********************************************************************************************************************
+* Function Name :  HAL_ADC_BatVolCaptPinEnCtrl()
+* Description   :  电池接入ADC硬件引脚控制
+* Para          :  cmd-控制命令  ture= 接入电池  false= 断开电池   
+* Return        :  none
+*********************************************************************************************************************/
+static void HAL_ADC_BatVolCaptPinEnCtrl( bool cmd )  
+{
+	 if( true == cmd )
+	 {
+		DRV_GpioOut1( BAT_ADC_CAPT_EN_PIN ); 
+	 }
+	 else if( false == cmd )
+	 {
+		DRV_GpioOut0( BAT_ADC_CAPT_EN_PIN );  
+	 }
+	 return;
+}
+
+/*********************************************************************************************************************
+* Function Name :  HAL_ADC_BatChargeSwitchCtrl()
+* Description   :  电池供电引脚切换控制   大电池馈电，切入小电池供电
+* Para          :  cmd-控制命令  ture= 接入电池  false= 断开电池   
+* Return        :  none  
+*********************************************************************************************************************/
+static void HAL_ADC_BatChargeSwitchCtrl( bool cmd )  
+{
+	 if( true == cmd )
+	 {
+		DRV_GpioOut1( M_BAT_CHARGE_SWITCH_GPIO_PIN ); 
+	 }
+	 else if( false == cmd )
+	 {
+		DRV_GpioOut0( M_BAT_CHARGE_SWITCH_GPIO_PIN );  
+	 }
+	 return;
+}
+
+/*********************************************************************************************************************
+* Function Name :  HAL_ADC_FileInit()
+* Description   :  相关配置初始化   通道 4 5 6
+* Para          :  none   
+* Return        :  none
+*********************************************************************************************************************/
+void HAL_ADC_FileInit( void )  
+{
+	DRV_ADC_FileInit(); 
+	HAL_ADC_BatChargeSwitchCtrl( false ); 
+	HAL_ADC_BatVolCaptPinEnCtrl( true );  
+	HAL_ADC_EnableCtrl( true );  
+	HAL_ADC_UpBatValLockCtrl( false );  
+    HAL_ADC_UnderBatValLockCtrl( false );
+	return;
+}
+ 
+/*********************************************************************************************************************
+* Function Name :  HAL_ADC_WakeupInit()
+* Description   :  唤醒后配置
+* Para          :  none   
+* Return        :  none
+*********************************************************************************************************************/
+void HAL_ADC_WakeupInit( void )  
+{
+	DRV_ADC_FileInit(); 
+	HAL_ADC_BatVolCaptPinEnCtrl( true );  
+	HAL_ADC_EnableCtrl( true );  
+	HAL_ADC_UpBatValLockCtrl( false );  
+    HAL_ADC_UnderBatValLockCtrl( false ); 	
+	return;	
+}
+
+/*********************************************************************************************************************
+* Function Name :  HAL_ADC_SleepInit()
+* Description   :  休眠后配置
+* Para          :  none   
+* Return        :  none
+*********************************************************************************************************************/
+void HAL_ADC_SleepInit( void )  
+{
+    DRV_ADC_SleepInit();
+	HAL_ADC_BatVolCaptPinEnCtrl( false );  
+	HAL_ADC_EnableCtrl( false );  
+	HAL_ADC_UpBatValLockCtrl( false );  
+    HAL_ADC_UnderBatValLockCtrl( false ); 
+	return;	
+}
+
+/*********************************************************************************************************************
+* Function Name :  HAL_ADC_EnableCtrl()
+* Description   :  逻辑功能开关控制   驱动运行，逻辑不控制 
+* Para          :  cmd-控制命令  ture= ON  false= OFF   
+* Return        :  none
+*********************************************************************************************************************/
+void HAL_ADC_EnableCtrl( bool cmd )  
+{
+	AdcWorkEnable = cmd;
+	return;
+}
+
+/*********************************************************************************************************************
+* Function Name :  HAL_ADC_UpBatValLockCtrl()
+* Description   :  上方电池ADC通道采集锁存
+* Para          :  cmd-控制命令  ture= 锁存  false= 正常   
+* Return        :  none
+*********************************************************************************************************************/
+void HAL_ADC_UpBatValLockCtrl( bool cmd )  
+{
+	UpperBatAdcValLock = cmd;
+	return;
+}
+
+/*********************************************************************************************************************
+* Function Name :  HAL_ADC_UnderBatValLockCtrl()
+* Description   :  下方方电池ADC通道采集锁存
+* Para          :  cmd-控制命令  ture= 锁存  false= 正常   
+* Return        :  none
+*********************************************************************************************************************/
+void HAL_ADC_UnderBatValLockCtrl( bool cmd )  
+{
+	UnderBatAdcValLock = cmd;
+	return;
+}
+
+/*********************************************************************************************************************
+* Function Name :  HAL_ADC_GetEnableSts()
+* Description   :  获取功能状态开关状态
+* Para          :  cmd-控制命令  ture= ON  false= OFF   
+* Return        :  none
+*********************************************************************************************************************/
+bool HAL_ADC_GetEnableSts( void )  
+{
+     return AdcWorkEnable;
+}
+
+/*********************************************************************************************************************
+* Function Name :  HAL_ADC_SampleTrigger()
+* Description   :  触发采样，多通道一次行采集完成
+* Para          :  none   
+* Return        :  none
+*********************************************************************************************************************/
+void HAL_ADC_SampleTrigger( void )
+{
+	DRV_ADC_SampleTrigger(); 
+	return;
+}
+ 
+/*********************************************************************************************************************
+* Function Name :  HAL_ADC_SampleProcess()
+* Description   :  采样主进程调度函数，循环调度  10ms执行一次
+* Para          :  none   
+* Return        :  none
+*********************************************************************************************************************/
+void HAL_ADC_SampleProcess( void )
+{
+	if( false == AdcWorkEnable )
+		return;  
+
+	HAL_ADC_SampleTrigger(); 
+	return;
+}
+
+/*********************************************************************************************************************
+* Function Name :  HAL_ADC_GetAdcVal()
+* Description   :  获取滤波后的ADC数值
+* Para          :  type- 数据类型   
+* Return        :  AD值
+*********************************************************************************************************************/
+uint32_t HAL_ADC_GetAdcVal( ADC_TYPE_E type )
+{
+	uint32_t ret =0;
+	
+	static uint32_t upperBatVol = 0; 
+	static uint32_t underBatVol = 0; 
+	
+	if( EM_UPPER_BAT_DATA == type )
+	{
+		if( true == UpperBatAdcValLock )       //数据锁存
+		{
+			ret = upperBatVol;
+		}
+		else if( false == UpperBatAdcValLock ) //数据释放
+		{
+		    ret = DRV_ADC_GetAdcVal( UPPER_BAT_ADC_CH );	
+			upperBatVol = ret;
+		}	
+	}
+	else if( EM_UNDER_BAT_DATA == type )
+	{
+		if( true == UnderBatAdcValLock )       //数据锁存
+		{
+			ret = underBatVol;
+		}
+		else if( false == UnderBatAdcValLock ) //数据释放
+		{
+		    ret = DRV_ADC_GetAdcVal( UNDER_BAT_ADC_CH ); 
+			underBatVol = ret;
+		}
+	}
+	else if( EM_MOTO_AMP_DATA == type )
+	{
+		ret = DRV_ADC_GetAdcVal( MOTO_AMP_ADC_CH );   
+	}
+	
+	return ret;
+}
+ 
+/*********************************************************************************************************************
+* Function Name :  HAL_ADC_GetValidVal()
+* Description   :  获取AD处理后的有效值
+* Para          :  type- 数据类型        
+* Return        :  AD值
+*********************************************************************************************************************/
+uint32_t HAL_ADC_GetValidVal( ADC_TYPE_E type )
+{
+	uint32_t tmp = HAL_ADC_GetAdcVal( type );
+	return DRV_ADC_GetVoltage(tmp,(uint8_t)type);
+}
+
+/*********************************************************************************************************************
+* Function Name :  HAL_ADC_GetVolLowGradeWarm()
+* Description   :  获取电池电压低告警状态,只检告警状态，不检测故障状态
+* Para          :  无
+* Return        :  -1= 上方电池电压低 -2= 下方电池电压低 -3= 上方+下方电池电压低  1= 正常
+*********************************************************************************************************************/
+int8_t HAL_ADC_GetVolLowGradeWarm( void ) 
+{
+	int8_t   ret =1;
+	int8_t   warmflg =0;
+    int8_t   warmflg1 =0;
+	uint32_t batUpVol   = HAL_ADC_GetValidVal( EM_UPPER_BAT_DATA );
+	uint32_t batDownVol = HAL_ADC_GetValidVal( EM_UNDER_BAT_DATA );
+ 
+	if( batUpVol < BAT_VOL_INSERT_NONE )    //未检测到电池
+	{ 
+		warmflg = -1;
+	}
+	else if( (batUpVol < BAT_VOL_LOW_GRADE_1) && (batUpVol > BAT_VOL_LOW_GRADE_2) )
+	{
+		warmflg = 1;
+	}
+	else if( batUpVol <= BAT_VOL_LOW_GRADE_2 )
+	{ 
+		warmflg = 2;
+	}
+	
+	if( batDownVol < BAT_VOL_INSERT_NONE )  //未检测到电池
+	{ 
+		warmflg1 = -1;
+	}
+	else if( (batDownVol < BAT_VOL_LOW_GRADE_1) && (batDownVol > BAT_VOL_LOW_GRADE_2) )
+	{
+		warmflg1 = 1;
+	}
+	else if( batDownVol <= BAT_VOL_LOW_GRADE_2 )
+	{ 
+		warmflg1 = 2;
+	}
+	
+	if( warmflg == -1 )
+	{
+		ret = ( warmflg1 == 1 )? (-2):(1);
+	}
+	else if( warmflg == 0 )  
+	{
+		ret = ( warmflg1 > 0 )? (-2):1;
+	}
+	else if( warmflg == 1 )
+	{
+		ret = ( warmflg1 > 0 )? (-3):(-1);
+	}
+	else if( warmflg == 2 )
+	{
+		ret = ( warmflg1 == 1 )? (-2):(1);
+	}
+		
+	return ret;
+}
+
+/*********************************************************************************************************************
+* Function Name :  HAL_ADC_GetSysVolLowWarmState()
+* Description   :  获取系统供电电源低状态           当电池未插告警时启用
+* Para          :  无
+* Return        :  false= 正常  true= 系统电压低 
+*********************************************************************************************************************/
+bool HAL_ADC_GetSysVolLowWarmState( void ) 
+{
+	#if defined UPPER_BAT_ADC_ON && defined UNDER_BAT_ADC_ON
+	if( HAL_ADC_GetCellBatVolState( E_UPPER_BAT ) < 0 || HAL_ADC_GetCellBatVolState( E_UNDER_BAT ) < 0 ) 
+	{
+	   return true;
+	}
+	#elif defined UPPER_BAT_ADC_ON
+	if( HAL_ADC_GetCellBatVolState( E_UPPER_BAT ) < 0 ) 
+	{
+	    return true;
+	}
+	#elif defined UNDER_BAT_ADC_ON
+	if( HAL_ADC_GetCellBatVolState( E_UNDER_BAT ) < 0 ) 
+	{
+	    return true;
+	}
+	#endif
+		
+	return false;
+}
+
+/*********************************************************************************************************************
+* Function Name :  HAL_ADC_GetVolLowGradeErr()
+* Description   :  获取电池电压低无法工作状态
+* Para          :  无
+* Return        :  -1= 电压低无法工作   1= 正常
+*********************************************************************************************************************/
+int8_t HAL_ADC_GetVolLowGradeErr( void ) 
+{
+	uint32_t batvol;
+	uint32_t batUpVol;
+	uint32_t batDownVol;
+
+	batUpVol   = HAL_ADC_GetValidVal( EM_UPPER_BAT_DATA ); 
+	batDownVol = HAL_ADC_GetValidVal( EM_UNDER_BAT_DATA ); 	
+	batvol = batUpVol > batDownVol ? batUpVol : batDownVol;
+	
+	if( (-3 == HAL_ADC_GetCellBatVolState( E_UPPER_BAT ))&&( -3 == HAL_ADC_GetCellBatVolState( E_UNDER_BAT )))   //未插电池
+	{
+		return 1;
+	}
+	
+	if( batvol <= BAT_VOL_LOW_GRADE_2 )
+		return (-1);
+	
+	return 1;
+}
+
+/*********************************************************************************************************************
+* Function Name :  HAL_ADC_GetCellBatVolState()
+* Description   :  获取单个电池电压低告警状态
+* Para          :  无
+* Return        :  -3= 电池未插入 -2= 电压低无法工作  -1= 电池电压低告警  1= 正常
+*********************************************************************************************************************/
+int8_t HAL_ADC_GetCellBatVolState( BAT_TYPE_E type ) 
+{
+	if( E_UPPER_BAT == type )
+	{
+		uint32_t batUpVol = HAL_ADC_GetValidVal( EM_UPPER_BAT_DATA );
+		
+		if( batUpVol < BAT_VOL_INSERT_NONE )    //未检测到电池
+		{ 
+			return (-3);
+		}
+		else if( (batUpVol < BAT_VOL_LOW_GRADE_1) && (batUpVol > BAT_VOL_LOW_GRADE_2) )   //电压低告警
+		{
+			return (-1);
+		}
+		else if( batUpVol <= BAT_VOL_LOW_GRADE_2 ) //电压低无法工作
+		{ 
+			return (-2);
+		}	
+	}
+	else if( E_UNDER_BAT == type )
+	{
+		uint32_t batDownVol = HAL_ADC_GetValidVal( EM_UNDER_BAT_DATA );
+		if( batDownVol < BAT_VOL_INSERT_NONE )  //未检测到电池
+		{ 
+			return (-3);
+		}
+		else if( (batDownVol < BAT_VOL_LOW_GRADE_1) && (batDownVol > BAT_VOL_LOW_GRADE_2) )  //电压低告警
+		{ 
+			return (-1);
+		}
+		else if( batDownVol <= BAT_VOL_LOW_GRADE_2 )  //电压低无法工作
+		{ 
+			return (-2);
+		}	
+	}
+	return 1;
+}
+
+/*********************************************************************************************************************
+* Function Name :  HAL_ADC_BatSupplyPowerSwitch()
+* Description   :  电池供电电池切换控制  （大电池馈电，切换小电池供电）
+* Para          :  none
+* Return        :  none
+*********************************************************************************************************************/
+void HAL_ADC_BatSupplyPowerSwitch( void ) 
+{
+    #ifdef BAT_CHARGE_SWITCH_ON
+	int8_t sp1 = HAL_ADC_GetCellBatVolState( E_UNDER_BAT );
+	int8_t tp1 = HAL_ADC_GetCellBatVolState( E_UPPER_BAT );
+	if( 1 == sp1 || -1 == sp1 )      //电池正常 或 电池电压低请充电
+	{
+		if( -2 == tp1 )      //电池电压低无法工作
+		{
+		   HAL_ADC_BatChargeSwitchCtrl( true ); 
+		   return;
+		}	
+	}
+	HAL_ADC_BatChargeSwitchCtrl( false );	 
+    #endif
+	return;
+}
+
+
+
+
+
+
+
+
+/*-------------------------------------------------THE FILE END-----------------------------------------------------*/
+

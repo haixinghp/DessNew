@@ -1,0 +1,227 @@
+/********************************************************************************************************************
+ * @file:      SystemTim.c
+ * @author:    gushengchi
+ * @version:   V01.00
+ * @date:      2020-01-02
+ * @brief:     系统定时器功能文件
+*********************************************************************************************************************/
+  
+/*-------------------------------------------------文件包含---------------------------------------------------------*/
+#include "SystemTim.h"
+#include "DRV_TIMER.h"
+
+#include "Public.h"
+#include "SystemInit.h"
+#include "App_Touch.h"
+#include "App_Export.h"
+#include "App_LED.h"
+#include "App_GUI.h"
+#include "App_Key.h"
+#include "App_Finger.h"
+#include "App_CAM.h"
+#include "App_WIFI.h" 
+#include "APP_FACE_PRO.h"
+#include "APP_FACE.h"
+#include "APP_Screen.h"
+#include "APP_Update.h"
+#include "App_HumanSensor.h"
+#include "se_timer.h"
+#include "App_NB.h"
+
+#include "Scheduler.h" 
+#include "..\Server\Face.h"
+#include "..\HAL\HAL_Motor\HAL_Motor.h"
+#include "..\HAL\HAL_VOICE\HAL_Voice.h"
+/*-------------------------------------------------宏定义-----------------------------------------------------------*/
+
+ 
+
+/*-------------------------------------------------枚举定义---------------------------------------------------------*/
+
+
+/*-------------------------------------------------常量定义---------------------------------------------------------*/
+
+
+/*-------------------------------------------------全局变量定义-----------------------------------------------------*/         
+uint32_t SystemTick = 0;
+uint32_t SystemWorkHoldTim = 0;
+
+/*-------------------------------------------------局部变量定义-----------------------------------------------------*/
+static uint8_t  SystickTimerSecond=0;
+
+/*-------------------------------------------------函数声明---------------------------------------------------------*/
+ 
+
+/*-------------------------------------------------函数定义---------------------------------------------------------*/
+
+/*********************************************************************************************************************
+* Function Name :  SystemTim10MS_Handler()
+* Description   :  系统10MS定时器中断处理函数
+* Para          :  无
+* Return        :  void
+*********************************************************************************************************************/
+static void SystemTim10MsTick_Handler( void * p_context ) 
+{
+	if( SystemTick < 0xffffffff )
+	    SystemTick++;
+		
+	if( SystemTick >= 19*60*100 )
+	{
+		if( EN_MENU_AGING_TEST != App_GUI_GetCurMenuNo() && EM_MENU_SMART_SCREEN_SHOW != App_GUI_GetCurMenuNo())
+		{			
+			if( (0 == App_Export_GetPinState( E_PIN_ALARM_IRQ ))    \
+			  ||(false == App_Export_GetAlrmWarmEnSts() )           \
+			  )  //防撬解除或触发完毕
+			{
+				my_printf("system is dead!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!\r\n");
+				PUBLIC_Delayms(3); 
+				NVIC_SystemReset();	
+			}
+		}
+	}
+	
+	if( SystemWorkHoldTim < 0xffffffff )
+	    SystemWorkHoldTim++;
+ 
+	if( SelfCheckDelayTimMs > 0 )
+	    SelfCheckDelayTimMs--;
+	
+	/*--电机定时器------*/
+	 HAL_Motor_Tim10Ms();  
+
+	/*--扩展口定时器----*/
+	 App_Export_Tim10Ms();
+	
+	/*--语音定时器------*/
+	 HAL_Voice_Time10Ms();
+	
+	/*--LED定时器-------*/
+	 App_LED_Tim10Ms(); 
+	
+	/*--触摸按键定时器--*/
+	 App_Touch_Tim10Ms();
+
+	/*--机械按键定时器--*/
+	 App_Key_Tim10Ms();
+	
+	/*--GUI定时器-------*/
+     App_GUI_Tim10Ms();	
+    
+    /*--指纹定时器--*/
+     App_FINGER_Tim10Ms();
+
+    /*--智能屏定时器--*/
+    App_SCREEN_Tim10Ms();
+
+
+	/*--人脸定时器-------*/
+	 #if defined FACE_FUNCTION_ON  || defined IRIS_FUNCTION_ON 
+ 	 ServerFaceTim10Ms();
+	 #endif
+
+	/*--猫眼定时器-------*/
+	 #ifdef  XM_CAM_FUNCTION_ON
+	 App_CAM_Tim10Ms();
+	 #endif
+
+	/*--WIFI定时器-------*/
+	 App_Wifi_Tim10Ms();
+     
+	 /*--NB定时器-------*/
+	 #ifdef NB_FUNCTION
+	 App_NB_Time10Ms();
+	 #endif
+	 
+     /*--BLE OTA数据接收定时器-------*/
+    APP_UpdateWorkCntCountDown();
+
+	/*--接近感应定时器-------*/            
+	 App_HumanSensor_Tim10Ms();
+
+    /*--任务调度定时器--*/
+	 App_Scheduler_Tim10Ms();
+	 
+	/*--1秒计次定时器---*/
+	if( SystickTimerSecond > 0 )
+	    SystickTimerSecond--;
+	if( SystickTimerSecond == 0 )
+	{
+		SystickTimerSecond = 100;
+		
+		//调度1s计时
+		HAL_Motor_Tim1000Ms(); 
+		
+		HAL_RTC_Systick();
+		//复旦微加密芯片用1s定时
+		Id2Tim_SeTimer_s();
+		#if defined OB_CAM_FUNCTION_ON || defined ST_CAM_FUNCTION_ON //二代人脸格式
+		APP_FACE_PRO_Tim1s();
+		#endif
+		#if defined FACE_FUNCTION_ON
+		APP_FACE_Tim1s();
+		#endif
+		
+	}
+
+    return;
+}
+
+/*********************************************************************************************************************
+* Function Name :  SystemLifeTickTimerHandler
+* Description   :  系统睡眠后定时中断处理函数  1秒执行一次中断
+* Para          :  none
+* Return        :  none
+*********************************************************************************************************************/
+static void SystemLifeTickTimerHandler( void * p_context )
+{
+	static uint8_t  tickcnt = 0;
+	tickcnt++;
+	tickcnt %= 100; 
+	
+//    my_printf( "SleepLifeTick = %d\n", tickcnt ); 
+    HAL_RTC_Systick();
+    App_GUI_Tim1000Ms();
+	
+}	
+ 
+
+/*********************************************************************************************************************
+* Function Name :  SystemTim_RTC_Enable
+* Description   :  系统10MS定时器控制  ENABLE_EN=开启  ENABLE_UN=关闭
+* Para          :  无
+* Return        :  void
+*********************************************************************************************************************/
+void SystemTimerIint( bool cmd ) 
+{
+	DRV_TimerInit(cmd , SystemTim10MsTick_Handler);
+}
+
+/*********************************************************************************************************************
+* Function Name :  SystemLifeTickTimerInit
+* Description   :  系统睡眠后定时器配置  1秒心跳一次  
+* Para          :  none
+* Return        :  none
+*********************************************************************************************************************/
+void SystemLifeTickTimerInit( void )
+{
+	DRV_LifeTickTimerInit(SystemLifeTickTimerHandler);
+	my_printf( "SystemLifeTickTimerInit()\n" ); 
+}
+
+/*********************************************************************************************************************
+* Function Name :  SystemLifeTickTimerCtrl
+* Description   :  系统休眠后的生命心跳包 1秒心跳一次     
+* Para          :  0: 关闭  1: 开启
+* Return        :  void
+*********************************************************************************************************************/
+void SystemLifeTickTimerCtrl( bool cmd )
+{
+	DRV_LifeTickTimerCtrl(cmd);
+}
+
+ 
+/*-------------------------------------------------THE FILE END-----------------------------------------------------*/
+
+
+
+

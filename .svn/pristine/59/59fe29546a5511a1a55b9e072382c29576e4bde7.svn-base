@@ -1,0 +1,139 @@
+/**************************************************************************** 
+* Copyright (C), 2008-2021,德施曼机电（中国）有限公司 
+* 文件名: DRV_Interface.c 
+* 作者：fanshuyu
+* 版本：V01
+* 时间：20220112
+* 内容简述：芯片层提供的基础功能API接口
+****************************************************************************/
+/* 标准头文件 */
+
+
+/* 内部头文件 */
+#include "DRV_Interface.h"
+#include "platform_utils.h"
+#include <gap.h>
+/* 外部头文件 */
+
+
+/*************************  0 内部使用宏定义*************************/
+
+
+
+
+/*****************************  1 静态变量*****************************/
+
+
+
+/***************************** 2  静态函数*****************************/
+static bool OTAFalg = false;	//false 不进行OTA,true 可以进行OTA
+
+/***************************** 3 对外函数*****************************/
+
+
+/****************************************************************************** 
+* DRV_InterDelayus
+* 功 能：延时接口，单位为毫秒
+* 输 入：uint32 _s - 微秒
+* 输 出：void
+* 返 回：void
+*/ 
+void DRV_InterRandVecInit( void )   //随机数
+{
+	
+}
+
+/****************************************************************************** 
+* DRV_InterDelayus
+* 功 能：延时接口，单位为毫秒
+* 输 入：uint32 _s - 微秒
+* 输 出：void
+* 返 回：void
+*/ 
+void DRV_InterDelayus(uint32_t _us)
+{
+	platform_delay_us(_us);
+    return;
+}
+
+
+/****************************************************************************** 
+* 函数名：DRV_InterGetMacAddr
+* 功 能：获取Mac地址
+* 输 入：uint8_t *p_buff 数据指针
+* 输 出：void
+* 返 回：void
+*/
+void DRV_InterGetMacAddr(uint8_t *p_buff)
+{
+	uint8_t tmp;
+	uint32_t i;
+	gap_get_param(GAP_PARAM_BD_ADDR, p_buff);
+	/*这里需要对MAC地址转向*/
+	for(i=0;i<3;i++) //对MAC进行反向。来，乾坤大挪移！
+    {
+		tmp = *(p_buff+i);
+		*(p_buff+i) = *(p_buff+5-i);
+		*(p_buff+5-i) = tmp;
+    }
+    return;
+}
+
+
+/****************************************************************************** 
+* 函数名：DRV_InterGenerateRandVec(原 random_vector_generate)
+* 功 能：生成随机值
+* 输 入：uint8_t size
+* 输 出：uint8_t *p_buff
+* 返 回：uint8_t
+*/
+uint8_t DRV_InterGenerateRandVec(uint8_t *p_buff, uint8_t size)
+{
+	uint8_t length = 0;
+	while (size --)
+    {
+		*p_buff = platform_random(0xFF);
+		p_buff++;
+		length++;
+    }
+    return length;
+}
+
+
+/****************************************************************************** 
+* 函数名：DRV_InterGenerateStartOta
+* 功 能： 进入OTA模式
+* 输 入：
+* 输 出：
+* 返 回：
+*/
+void DRV_InterGenerateStartOta(void)
+{
+	OTAFalg = true;
+}
+
+/****************************************************************************** 
+* 函数名：DRV_InterGenerateStopOta
+* 功 能： 退出OTA模式
+* 输 入：
+* 输 出：
+* 返 回：
+*/
+void DRV_InterGenerateStopOta(void)
+{
+	OTAFalg = false;
+}
+
+/****************************************************************************** 
+* 函数名：DRV_InterGenerateOtaGet
+* 功 能： OTA状态获取
+* 输 入：
+* 输 出：
+* 返 回： bool false 不进行OTA,true 可以进行OTA
+*/
+bool DRV_InterGenerateOtaGet(void)
+{
+	return OTAFalg;
+}
+
+//.end of the file.

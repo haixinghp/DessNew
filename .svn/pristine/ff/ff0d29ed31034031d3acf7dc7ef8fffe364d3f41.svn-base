@@ -1,0 +1,110 @@
+/*********************************************************************************************************************
+ * @file:      DRV_GT316L.h
+ * @author:    gushengchi
+ * @version:   V01.00
+ * @date:      2021-07-28
+ * @brief:     触摸芯片GT316L芯片  IIC通信    
+ * @ChangeList:  01. 初版
+**********************************************************************************************************************/
+  
+#ifndef  _DRV_GT316L_H
+#define  _DRV_GT316L_H
+
+/*--------------------------------------------------文件包含---------------------------------------------------------*/
+#include  <stdbool.h>
+#include "LockConfig.h"
+#include "..\DRV\DRV_IIC\DRV_IIC.h"  
+/*--------------------------------------------------宏定义-----------------------------------------------------------*/
+ 
+ 
+/*--------------------------------------------------枚举声明---------------------------------------------------------*/
+typedef enum
+{
+   EM_KEY_00 = 0, 	
+   EM_KEY_01, 
+   EM_KEY_02, 
+   EM_KEY_03,
+   EM_KEY_04, 
+   EM_KEY_05, 
+   EM_KEY_06, 
+   EM_KEY_07,
+   EM_KEY_08, 
+   EM_KEY_09, 
+   EM_KEY_10, 
+   EM_KEY_11, 
+   EM_KEY_12, 
+   EM_KEY_13, 
+   EM_KEY_14, 
+   EM_KEY_15, 
+   INVALUE_KEY = 0xFE, //无效键值
+   NONE_KEY = 0xff, //无键值
+	
+}KEY_VALUE_E; 
+ 
+typedef enum
+{
+   EM_OUT_ON  = 0x00, 	
+   EM_OUT_OFF = 0x1F, 
+ 
+}PWM_VALUE_E; 
+
+typedef enum
+{
+   EM_PWUOUT_CH1  = HW_TOUCH_PWM_01, 	
+   EM_PWUOUT_CH2  = HW_TOUCH_PWM_02, 	
+   EM_PWUOUT_CH3  = HW_TOUCH_PWM_03, 	
+   EM_PWUOUT_CH4  = HW_TOUCH_PWM_04, 	
+}PWM_CHANNEL_E; 
+/*--------------------------------------------------常量声明---------------------------------------------------------*/
+
+
+/*--------------------------------------------------变量声明---------------------------------------------------------*/             
+typedef union
+{
+	 uint8_t  tab[2];
+	 uint16_t data;
+
+	 struct 
+	 {
+		 uint8_t   Pin_SinPwm_01      :1;   
+		 uint8_t   Pin_SinPwm_02      :1; 
+		 uint8_t   Pin_SinPwm_03      :1; 
+		 uint8_t   Pin_SinPwm_04      :1; 
+		 uint8_t   Pin_SinPwm_05      :1; 
+		 uint8_t   Pin_SinPwm_06      :1; 
+		 uint8_t   Pin_SinPwm_07      :1; 
+		 uint8_t   Pin_SinPwm_08      :1;  
+		 
+		 uint8_t   Pin_SinPwm_09      :1;   
+		 uint8_t   Pin_SinPwm_10      :1; 
+		 uint8_t   Pin_SinPwm_11      :1; 
+		 uint8_t   Pin_SinPwm_12      :1; 
+		 uint8_t   Pin_SinPwm_13      :1; 
+		 uint8_t   Pin_SinPwm_14      :1; 
+		 uint8_t   Pin_SinPwm_15      :1; 
+		 uint8_t   Pin_SinPwm_16      :1;   
+		 
+	 }Bit;
+  
+}GT316PinDefine_U;  
+ 
+/*--------------------------------------------------函数声明---------------------------------------------------------*/
+void DRV_GT316L_FileInit( void ); 
+void DRV_GT316L_SleepInit( void ); 
+bool DRV_GT316L_GetIICBusState( void );
+void DRV_GT316L_PwmOutputCtrl( PWM_CHANNEL_E channel, uint8_t pwmVal );
+
+KEY_VALUE_E DRV_GT316L_GetKeyValue( void );
+
+
+
+#endif
+/*--------------------------------------------------FILE END---------------------------------------------------------*/
+
+
+
+
+
+
+
+

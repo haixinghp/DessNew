@@ -1,0 +1,84 @@
+/*********************************************************************************************************************
+ * @file:      HAL_Uart.h
+ * @author:    gushengchi
+ * @version:   V01.00
+ * @date:      2022-01-13
+ * @brief:     uart功能调度中间层次接口文件
+**********************************************************************************************************************/
+  
+#ifndef  __HAL_UART_H
+#define  __HAL_UART_H
+
+/*--------------------------------------------------文件包含---------------------------------------------------------*/
+#include <stdint.h>
+#include "DRV_UART.h"
+#include "LockConfig.h"
+/*--------------------------------------------------宏定义-----------------------------------------------------------*/
+
+
+/*--------------------------------------------------枚举声明---------------------------------------------------------*/
+typedef enum
+{
+	E_NO_UART =0,
+	E_FACE_UART,
+	E_CAMERA_UART,
+	E_FINGER_UART,
+	E_WIFI_UART,
+	E_IR_UART,
+	E_RADARNB_UART,
+	E_GYPE_UART,
+	E_LCD_UART,
+	E_NB_UART
+}UART_TYPE_E;
+
+typedef enum
+{
+    UART_SUCCESS,              //执行成功
+    UART_ERROR,               
+}DRV_UART_ERROR_E;
+ 
+typedef enum
+{
+    E_UART_COM0 = HW_UART_COM0,             
+    E_UART_COM1 = HW_UART_COM1, 
+	E_UART_COM_NONE =99, 
+ 
+}UART_COM_E;
+ 
+/*--------------------------------------------------常量声明---------------------------------------------------------*/
+
+
+/*--------------------------------------------------变量声明---------------------------------------------------------*/             
+typedef union
+{
+	uint32_t UartEnabled;        //串口使能
+	struct
+	{
+		uint32_t FaceUart:1;        //人脸
+		uint32_t CameraUart:1;      //猫眼
+		uint32_t FingerUart:1;      //指纹
+		uint32_t WifiUart:1;        //WIFI
+		uint32_t IrUart:1;          //红外
+		uint32_t RadarUart:1;       //雷达
+		uint32_t NBUart:1;          //NB
+		uint32_t GypeUart:1;        //陀螺仪
+		uint32_t LcdUart:1;         //LCD屏
+		uint32_t Unknow:23;
+	}UartOption;
+}UART_STATE_U; 
+ 
+/*--------------------------------------------------函数声明---------------------------------------------------------*/
+void HAL_Uart_FileInit( void );
+void HAL_Uart_SleepInit( void ); 
+void HAL_Uart_ConfigInit( UART_TYPE_E uartType, UartCfg_S uartCfg ); 
+void HAL_Uart_DeInit( UART_TYPE_E uartType );
+uint32_t HAL_Uart_PopByteFromQueue( uint8_t com, uint8_t *pdat );
+UART_TYPE_E HAL_Uart_GetCurDeviceType( uint8_t uartCom );
+void HAL_Uart_TxMessage( uint8_t uartCom, const uint8_t *p_data, uint16_t length );
+ 
+
+
+#endif
+
+/*-------------------------------------------------THE FILE END-----------------------------------------------------*/
+

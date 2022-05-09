@@ -1,0 +1,47 @@
+#ifndef  _DRV_BLE_H
+#define  _DRV_BLE_H
+
+/*--------------------------------------------------文件包含---------------------------------------------------------*/
+#include <stdint.h> 
+#include "app_fifo.h"   
+#include "app_msg.h"  
+/*--------------------------------------------------宏定义-----------------------------------------------------------*/
+ 
+/*--------------------------------------------------枚举声明---------------------------------------------------------*/
+ 
+typedef enum
+{
+	NONE_REGISTERED, //未注册
+	REGISTERED,      //已注册
+	ADMIN_MODE,       //设置模式
+}DRV_BLE_ADV_MODE;
+
+typedef enum
+{
+	LIMITED_FLAGS,	 //有限模式
+	GENERAL_FLAGS    //一般模式（常广播）  
+}DRV_BLE_ADV_FLAGS;   //广播类型
+
+typedef uint8_t (*DRV_BlePtr)();
+
+/*--------------------------------------------------常量声明---------------------------------------------------------*/
+
+
+/*--------------------------------------------------变量声明---------------------------------------------------------*/             
+
+extern app_fifo_t    AppBleFifo;    //串口队列 
+extern uint16_t m_conn_handle; 
+/*--------------------------------------------------函数声明---------------------------------------------------------*/
+
+void app_handle_gap_msg(T_IO_MSG *p_gap_msg);
+void DRV_BleInit(DRV_BLE_ADV_MODE mode, DRV_BLE_ADV_FLAGS flags, DRV_BlePtr ptrHandler);
+bool ble_tx_event_handle(uint8_t *Txdata , uint8_t TxLen);
+uint8_t DRV_GetBleConnect(void);
+extern uint8_t DRV_ConncetCallBackReg(DRV_BlePtr p);
+
+
+#endif
+/*--------------------------------------------------THE FILE END-----------------------------------------------------*/
+
+
+

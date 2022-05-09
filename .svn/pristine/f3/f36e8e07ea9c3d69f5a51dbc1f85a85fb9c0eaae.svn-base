@@ -1,0 +1,62 @@
+/********************************************************************************************************************
+ * @file:      DRV_Motor_218.c
+ * @author:    zhanglin
+ * @version:   V01.00
+ * @date:      2021-09-13
+ * @brief:     216锁体六浮版本
+*********************************************************************************************************************/
+  
+#ifndef  _DRV_MOTOR_218_H
+#define  _DRV_MOTOR_218_H
+
+/*--------------------------------------------------文件包含---------------------------------------------------------*/
+#include <stdint.h> 
+#include <stdbool.h> 
+#include "LockConfig.h"
+/*--------------------------------------------------宏定义-----------------------------------------------------------*/
+#if defined LOCK_BODY_218_MOTOR || defined LOCK_BODY_AUTO_MOTOR
+
+#define M_BOLT_GPIO_PIN          M_LOCK_BOLT_GPIO_PIN    //主锁舌
+#define M_TRIGGER_GPIO_PIN       M_LOCK_TRIGGER_GPIO_PIN //检测三角舌
+#define M_LATCH_GPIO_PIN         M_LOCK_LATCH_GPIO_PIN   //斜舌
+
+/*-------------------------------------------------全局变量声明-----------------------------------------------------*/    
+ 
+ 
+/*-------------------------------------------------枚举声明---------------------------------------------------------*/ 
+
+ 
+/*-------------------------------------------------函数声明---------------------------------------------------------*/	
+void DRV_Motor218_FileInit( void );  
+void DRV_Motor218_WakeupInit( void ); 
+void DRV_Motor218_SleepInit( void ); 
+void DRV_Motor218_Tim10Ms( void );  
+
+int8_t DRV_Motor218_OpenDoorThread( void );  
+int8_t DRV_Motor218_ForceOpenDoorThread( void );  
+int8_t DRV_Motor218_CloseDoorThread( void ); 
+int8_t DRV_Motor218_ForceCloseDoorThread( void );  
+int8_t DRV_Motor218_BurnTestCloseDoorThread( void ); 
+
+uint8_t DRV_Motor218_ForgetLockWarmCheck( void );
+uint8_t DRV_Motor218_HandleTryForbitWarmCheck( void );
+uint8_t DRV_Motor218_FalseLockWarmCheck( void );
+uint8_t DRV_Motor218_ReleaseTryProtectCheck( void );
+uint8_t DRV_Motor218_DefendActionCheck( bool resetflg );
+
+bool DRV_Motor218_GetForgetLockWarmState( void );
+bool DRV_Motor218_GetHandleTryForbitWarmState( void );
+bool DRV_Motor218_GetFalseLockWarmState( void );
+ 
+uint8_t DRV_Motor218_AutoLockCheck( bool *pfirstflg );
+ 
+void DRV_Motor218_Tim1000Ms( void ); 
+void DRV_Motor218_PinSenseHandler( uint32_t singal_pin );
+
+
+#endif
+
+#endif
+
+/*--------------------------------------------------THE FILE END-----------------------------------------------------*/
+

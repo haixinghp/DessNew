@@ -1,0 +1,116 @@
+/*********************************************************************************************************************
+ * @file:        HW_Common.h
+ * @author:      fanshuyu
+ * @version:     V01.00
+ * @date:        2021-08-30
+ * @Description: 硬件公共定义宏，基础参数定义，非硬件接口定义
+ * @ChangeList:  01. 初版
+**********************************************************************************************************************/
+#ifndef _HW_COMMON_H_
+#define _HW_COMMON_H_
+
+#ifdef __cplusplus
+extern "C"
+{
+#endif
+
+#define GPIO_PIN_NO_00      ( 0 )   
+#define GPIO_PIN_NO_01      ( 1 )   
+#define GPIO_PIN_NO_02      ( 2 )   
+#define GPIO_PIN_NO_03      ( 3 )   
+#define GPIO_PIN_NO_04      ( 4 )   
+#define GPIO_PIN_NO_05      ( 5 )  
+#define GPIO_PIN_NO_06      ( 6 )   
+#define GPIO_PIN_NO_07      ( 7 )   
+#define GPIO_PIN_NO_08      ( 8 )   
+#define GPIO_PIN_NO_09      ( 9 )   
+#define GPIO_PIN_NO_10      ( 10 )   
+#define GPIO_PIN_NO_11      ( 11 ) 		
+#define GPIO_PIN_NO_12      ( 12 )   
+#define GPIO_PIN_NO_13      ( 13 ) 				
+#define GPIO_PIN_NO_14      ( 14 )   
+#define GPIO_PIN_NO_15      ( 15 ) 		
+#define GPIO_PIN_NO_16      ( 16 )   
+#define GPIO_PIN_NO_17      ( 17 ) 		
+#define GPIO_PIN_NO_18      ( 18 )   
+#define GPIO_PIN_NO_19      ( 19 ) 		
+#define GPIO_PIN_NO_20      ( 20 )   
+#define GPIO_PIN_NO_21      ( 21 ) 				
+#define GPIO_PIN_NO_22      ( 22 )   
+#define GPIO_PIN_NO_23      ( 23 ) 		
+#define GPIO_PIN_NO_24      ( 24 )   
+#define GPIO_PIN_NO_25      ( 25 ) 		
+#define GPIO_PIN_NO_26      ( 26 )   
+#define GPIO_PIN_NO_27      ( 27 ) 				
+#define GPIO_PIN_NO_28      ( 28 )   
+#define GPIO_PIN_NO_29      ( 29 ) 		
+#define GPIO_PIN_NO_30      ( 30 )   
+#define GPIO_PIN_NO_31      ( 31 ) 
+ 
+/*--- 加密配置---*/
+#define ID2_ENCRYPT_FDW     1       // 复旦微加密芯片方案
+#define ID2_ENCRYPT_NXP     2       // 恩智浦加密芯片方案
+
+/* 电平有效值定义 */
+#define HW_ACTIVE_LEVEL_LOW                 0
+#define HW_ACTIVE_LEVEL_HIGH                1
+
+
+/* MCU 预留端口*/
+#define M_MCU_PIN_RERSVER                   0xFF
+
+
+/* IIC通道配置 无需配置*/
+#define CFG_I2C_CHANNEL0                    0
+#define CFG_I2C_CHANNEL1                    1
+#define CFG_I2C_CHANNEL2                    2
+
+
+/*按键对应的键值*/
+#define HW_TOUCH_KEY_NO_0             0u      //数字0键
+#define HW_TOUCH_KEY_NO_1             1u	  //数字1键
+#define HW_TOUCH_KEY_NO_2             2u      //数字2键
+#define HW_TOUCH_KEY_NO_3             3u      //数字3键
+#define HW_TOUCH_KEY_NO_4             4u      //数字4键
+#define HW_TOUCH_KEY_NO_5             5u      //数字5键
+#define HW_TOUCH_KEY_NO_6             6u      //数字6键
+#define HW_TOUCH_KEY_NO_7             7u      //数字7键
+#define HW_TOUCH_KEY_NO_8             8u      //数字8键
+#define HW_TOUCH_KEY_NO_9             9u      //数字9键
+#define HW_TOUCH_KEY_ENTER            10u     //确认键
+#define HW_TOUCH_KEY_BACK             11u     //返回键
+#define HW_TOUCH_KEY_LOCK             12u     //上锁键
+#define HW_TOUCH_KEY_BELL             13u     //门铃键
+#define HW_TOUCH_KEY_NONE             0xFF    //无效键值
+
+
+/* 通道对应的方向定义 */
+#define HW_TOUCH_PIN_DIR_OUT         0        //端口输入模式
+#define HW_TOUCH_PIN_DIR_IN          1        //端口输出模式
+
+
+ /* 呼吸灯 PWM引脚定义，无需配置 */
+#define HW_TOUCH_PWM_01     1    
+#define HW_TOUCH_PWM_02     2
+#define HW_TOUCH_PWM_03     3
+#define HW_TOUCH_PWM_04     4
+
+/* 74HC4052 串口扩展板串口定义 */
+#define HW_74HC4052_UART_Y0     0
+#define HW_74HC4052_UART_Y1     1
+#define HW_74HC4052_UART_Y2     2
+#define HW_74HC4052_UART_Y3     3
+#define HW_74HC4052_UART_RES    0xFF
+#define HW_74HC4052_UART_OFF    HW_74HC4052_UART_RES
+
+/* UART资源定义 */
+#define HW_UART_COM0       0
+#define HW_UART_COM1       1
+
+#ifdef __cplusplus
+}
+#endif
+
+#endif
+
+

@@ -1,0 +1,9 @@
+.\_build\sm_apdu.o: ..\..\..\..\..\emb\ID2\NXP\sm_apdu.c
+.\_build\sm_apdu.o: C:\Keil_v5\ARM\ARMCC\Bin\..\include\string.h
+.\_build\sm_apdu.o: C:\Keil_v5\ARM\ARMCC\Bin\..\include\stdbool.h
+.\_build\sm_apdu.o: C:\Keil_v5\ARM\ARMCC\Bin\..\include\stdlib.h
+.\_build\sm_apdu.o: ..\..\..\..\..\emb\ID2\NXP\sm_apdu.h
+.\_build\sm_apdu.o: ..\..\..\..\..\emb\ID2\NXP\apduComm.h
+.\_build\sm_apdu.o: ..\..\..\..\..\emb\ID2\NXP\sm_types.h
+.\_build\sm_apdu.o: ..\..\..\..\..\emb\ID2\NXP\scp.h
+.\_build\sm_apdu.o: ..\..\..\..\..\emb\ID2\NXP\smCom.h

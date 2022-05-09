@@ -1,0 +1,650 @@
+/********************************************************************************************************************
+ * @file:        DRV_BLE.c
+ * @author:      gushengchi
+ * @version:     V01.00
+ * @date:        2021-08-30
+ * @Description: 蓝牙驱动功能文件
+ * @ChangeList:  01. 初版
+*********************************************************************************************************************/
+  
+/*-------------------------------------------------文件包含---------------------------------------------------------*/
+#include <nrf.h>
+#include <nrf_log.h> 
+#include <nrf_sdh.h> 
+#include <nrf_sdh_ble.h> 
+#include <nrf_ble_qwr.h> 
+#include <nrf_ble_gatt.h> 
+#include <ble_gap.h> 
+#include <ble_nus.h> 
+#include <ble_advertising.h> 
+#include <ble_conn_params.h> 
+#include <app_error.h>  
+#include <app_util.h>  
+#include <app_timer.h>  
+#include <sdk_config.h>  
+#include "nrf_sdh_soc.h"
+#include "nrf_sdh_ble.h"
+
+#include "DRV_BLE.h"  
+#include "Public.h"
+#include "LockConfig.h"
+/*-------------------------------------------------宏定义-----------------------------------------------------------*/
+#define APP_BLE_CONN_CFG_TAG      1           /**< A tag identifying the SoftDevice BLE configuration. */
+
+#define NUS_SERVICE_UUID_TYPE     BLE_UUID_TYPE_VENDOR_BEGIN  /**< UUID type for the Nordic UART Service (vendor specific). */
+#define APP_BLE_OBSERVER_PRIO     3          /**< Application's BLE observer priority. You shouldn't need to modify this value. */
+//广播周期400ms
+#define APP_ADV_INTERVAL 		  640        /**< The advertising interval (in units of 0.625 ms. This value corresponds to 40 ms). */
+//设置0长广播不停止
+#define APP_ADV_DURATION          0      /**< The advertising duration (180 seconds) in units of 10 milliseconds. */
+//这个间隔 是指成功连接后 的周期性通讯时间,越大功耗月底，越小速度越快，需两者均衡20210830dyh
+#define MIN_CONN_INTERVAL MSEC_TO_UNITS(7.5, UNIT_1_25_MS) /**< Minimum acceptable connection interval (20 ms), Connection interval uses 1.25 ms units. */
+#define MAX_CONN_INTERVAL MSEC_TO_UNITS(20, UNIT_1_25_MS)  /**< Maximum acceptable connection interval (75 ms), Connection interval uses 1.25 ms units. */
+ 
+#define SLAVE_LATENCY             0                        /**< Slave latency. */
+#define CONN_SUP_TIMEOUT  MSEC_TO_UNITS(4000, UNIT_10_MS)      /**< Connection supervisory timeout (4 seconds), Supervision Timeout uses 10 ms units. */
+#define FIRST_CONN_PARAMS_UPDATE_DELAY  APP_TIMER_TICKS(5000)  /**< Time from initiating event (connect or start of notification) to first time sd_ble_gap_conn_param_update is called (5 seconds). */
+#define NEXT_CONN_PARAMS_UPDATE_DELAY   APP_TIMER_TICKS(30000) /**< Time between each call to sd_ble_gap_conn_param_update after the first call (30 seconds). */
+#define MAX_CONN_PARAMS_UPDATE_COUNT    3                      /**< Number of attempts before giving up the connection parameter negotiation. */
+
+#define DEAD_BEEF 0xDEADBEEF /**< Value used as error code on stack dump, can be used to identify stack location on stack unwind. */
+
+/*-------------------------------------------------枚举定义---------------------------------------------------------*/
+
+
+/*-------------------------------------------------常量定义---------------------------------------------------------*/
+ 
+
+/*-------------------------------------------------全局变量定义-----------------------------------------------------*/         
+app_fifo_t    AppBleFifo;    //串口队列 
+uint16_t m_conn_handle = BLE_CONN_HANDLE_INVALID;  //蓝牙连接句柄
+
+
+/*-------------------------------------------------局部变量定义-----------------------------------------------------*/
+              
+static uint16_t m_ble_nus_max_data_len = BLE_GATT_ATT_MTU_DEFAULT - 3; /**< Maximum length of data (in bytes) that can be transmitted to the peer by the Nordic UART service module. */
+static ble_uuid_t m_adv_uuids[] =                                      /**< Universally unique service identifier. */
+{
+   {BLE_UUID_NUS_SERVICE, NUS_SERVICE_UUID_TYPE}
+};
+static DRV_BlePtr s_ptrBleHandler = NULL; // 蓝牙注册函数，处理其他应用 业务
+
+BLE_ADVERTISING_DEF(m_advertising); /**< Advertising module instance. */
+/*-------------------------------------------------函数声明---------------------------------------------------------*/
+//协议栈将事件结构体上抛在这里
+BLE_NUS_DEF(m_nus, NRF_SDH_BLE_TOTAL_LINK_COUNT); /**< BLE NUS service instance. */
+//普通协议属性，广播扫描扫描回复
+NRF_BLE_GATT_DEF(m_gatt);
+  
+//队列写操作
+NRF_BLE_QWR_DEF(m_qwr);             /**< Context for the Queued Write module.*/
+/*-------------------------------------------------函数定义---------------------------------------------------------*/
+
+/*********************************************************************************************************************
+* Function Name :  ble_evt_handler()
+* Description   :  蓝牙接收回调函数
+* Para          :  无
+* Return        :  void
+*********************************************************************************************************************/
+static void ble_evt_handler(ble_evt_t const *p_ble_evt, void *p_context)
+{
+    uint32_t err_code;
+
+    switch( p_ble_evt->header.evt_id )
+    {
+		case BLE_GAP_EVT_CONNECTED:    //已连接
+			app_fifo_flush(&AppBleFifo);
+			my_printf("BLE_GAP_EVT_CONNECTED\n");
+
+			//句柄
+			m_conn_handle = p_ble_evt->evt.gap_evt.conn_handle;
+			err_code = nrf_ble_qwr_conn_handle_assign(&m_qwr, m_conn_handle);
+			APP_ERROR_CHECK(err_code);
+			break;
+
+		case BLE_GAP_EVT_DISCONNECTED:  //已断开
+			app_fifo_flush(&AppBleFifo);
+			my_printf("BLE_GAP_EVT_DISCONNECTED\n");
+			m_conn_handle = BLE_CONN_HANDLE_INVALID;
+			break;
+
+		case BLE_GAP_EVT_PHY_UPDATE_REQUEST:
+		{
+			ble_gap_phys_t const phys =
+			{
+				.rx_phys = BLE_GAP_PHY_AUTO,
+				.tx_phys = BLE_GAP_PHY_AUTO,
+			};
+			err_code = sd_ble_gap_phy_update(p_ble_evt->evt.gap_evt.conn_handle, &phys);
+			APP_ERROR_CHECK(err_code);
+			if(phys.rx_phys==0x00)
+			{
+				my_printf("BLE_GAP_PHY_AUTO \n");
+			}
+			else if(phys.rx_phys==0x01)
+			{
+				my_printf("BLE_GAP_PHY_1MBPS \n");
+			}
+			else if(phys.rx_phys==0x02)
+			{
+				my_printf("BLE_GAP_PHY_2MBPS \n");
+			}
+		}
+		break;
+
+		case BLE_GAP_EVT_SEC_PARAMS_REQUEST:
+			// Pairing not supported
+			err_code = sd_ble_gap_sec_params_reply(m_conn_handle, BLE_GAP_SEC_STATUS_PAIRING_NOT_SUPP, NULL, NULL);
+			APP_ERROR_CHECK(err_code);
+			break;
+
+		case BLE_GATTS_EVT_SYS_ATTR_MISSING:
+			// No system attributes have been stored.
+			err_code = sd_ble_gatts_sys_attr_set(m_conn_handle, NULL, 0, 0);
+			APP_ERROR_CHECK(err_code);
+			break;
+
+		case BLE_GATTC_EVT_TIMEOUT:
+			// Disconnect on GATT Client timeout event.
+			err_code = sd_ble_gap_disconnect(p_ble_evt->evt.gattc_evt.conn_handle,
+											 BLE_HCI_REMOTE_USER_TERMINATED_CONNECTION);
+			APP_ERROR_CHECK(err_code);
+			break;
+
+		case BLE_GATTS_EVT_TIMEOUT:
+			// Disconnect on GATT Server timeout event.
+			err_code = sd_ble_gap_disconnect(p_ble_evt->evt.gatts_evt.conn_handle,
+											 BLE_HCI_REMOTE_USER_TERMINATED_CONNECTION);
+			APP_ERROR_CHECK(err_code);
+			break;
+
+		default:
+			// No implementation needed.
+			break;
+    }
+}
+
+
+/**@brief Function for the SoftDevice initialization.
+ *
+ * @details This function initializes the SoftDevice and the BLE event interrupt.
+ */
+static void ble_stack_init(void)
+{
+    ret_code_t err_code;
+    //NRF_SDH_CLOCK_LF_SRC = 0
+    //NRF_SDH_CLOCK_LF_RC_CTIV = 16    //4s
+    //NRF_SDH_CLOCK_LF_RC_TEMP_CTIV = 2
+    //NRF_SDH_CLOCK_LF_ACCURACY = 1  //500ppm
+    //协议栈时钟
+    err_code = nrf_sdh_enable_request();
+    APP_ERROR_CHECK(err_code);
+
+    // Configure the BLE stack using the default settings.
+    // Fetch the start address of the application RAM.
+    //	NRF_SDH_BLE_TOTAL_LINK_COUNT  //总共支持连接数量1
+    //NRF_SDH_BLE_PERIPHERAL_LINK_COUNT  //从模式连接数1
+    //NRF_SDH_BLE_CENTRAL_LINK_COUNT  //主模式连接数1
+    //NRF_SDH_BLE_GATT_MAX_MTU_SIZE //MTU size  247
+    //NRF_SDH_BLE_VS_UUID_COUNT  //用户自定义base UUID
+    //NRF_SDH_BLE_GATTS_ATTR_TAB_SIZE  //Attribute table协议栈RAM空间  1408
+    //NRF_SDH_BLE_SERVICE_CHANGED  //?????service change characteristic
+    //协议栈配置
+    uint32_t ram_start = 0;
+    err_code = nrf_sdh_ble_default_cfg_set(APP_BLE_CONN_CFG_TAG, &ram_start);
+    APP_ERROR_CHECK(err_code);
+    //  START 0x3118
+    // Enable BLE stack.
+    err_code = nrf_sdh_ble_enable(&ram_start);
+    APP_ERROR_CHECK(err_code);
+
+    // Register a handler for BLE events.
+    NRF_SDH_BLE_OBSERVER(m_ble_observer, APP_BLE_OBSERVER_PRIO, ble_evt_handler, NULL);
+}
+
+/**@brief Function for the GAP initialization.
+ *
+ * @details This function will set up all the necessary GAP (Generic Access Profile) parameters of
+ *          the device. It also sets the permissions and appearance.
+ */ 
+static void gap_params_init( DRV_BLE_ADV_MODE registsts )
+{
+    uint32_t err_code;
+    ble_gap_conn_params_t gap_conn_params;
+    ble_gap_conn_sec_mode_t sec_mode;
+    char dev_n[14];
+    char dev_nb1[5];
+    char dev_nb2[5];
+#ifdef BLE_ID2_AES_ENC
+	if(ADMIN_MODE==registsts)//设置模式
+	{
+		strcpy(&dev_n[0], "Dsmn");
+	}
+	else if(NONE_REGISTERED==registsts) //未注册模式
+	{
+		strcpy(&dev_n[0], "dsmn");
+	}
+	else 
+	{
+		strcpy(&dev_n[0], "LOCK"); //已注册一般模式
+	}
+#else	
+	if(ADMIN_MODE==registsts)
+	{
+		strcpy(&dev_n[0], "REGLOCK");
+	}
+	else 
+	{
+		strcpy(&dev_n[0], "LOCK");
+	}
+#endif	
+	
+    strcpy(&dev_nb1[0], "");
+    dev_nb2[0] = ((NRF_FICR->DEVICEADDR[0] & 0xff00) >> 8);
+    dev_nb2[1] = ((NRF_FICR->DEVICEADDR[0] & 0xff)); //  mac地址
+    Math_Bytes2String(&dev_nb2[0], &dev_nb1[0], 2, 'a');
+    strcat(&dev_n[0], "_");
+    strcat(&dev_n[0], &dev_nb1[0]); //设备名字
+
+    my_printf("DEVICE_NAME =%s \n",dev_n);
+
+    BLE_GAP_CONN_SEC_MODE_SET_OPEN(&sec_mode);
+
+    err_code = sd_ble_gap_device_name_set(&sec_mode,
+                                          (const uint8_t *)dev_n,
+                                          strlen(dev_n));
+    APP_ERROR_CHECK(err_code);
+
+    memset(&gap_conn_params, 0, sizeof(gap_conn_params));
+
+    gap_conn_params.min_conn_interval = MIN_CONN_INTERVAL;
+    gap_conn_params.max_conn_interval = MAX_CONN_INTERVAL;//0xffff;
+    gap_conn_params.slave_latency = SLAVE_LATENCY;
+    gap_conn_params.conn_sup_timeout = CONN_SUP_TIMEOUT;
+
+    err_code = sd_ble_gap_ppcp_set(&gap_conn_params);
+    APP_ERROR_CHECK(err_code);
+}
+
+/**@brief Function for handling events from the GATT library. */
+static void gatt_evt_handler(nrf_ble_gatt_t *p_gatt, nrf_ble_gatt_evt_t const *p_evt)
+{
+    if ((m_conn_handle == p_evt->conn_handle) && (p_evt->evt_id == NRF_BLE_GATT_EVT_ATT_MTU_UPDATED))
+    {
+        m_ble_nus_max_data_len = p_evt->params.att_mtu_effective - OPCODE_LENGTH - HANDLE_LENGTH;
+        NRF_LOG_INFO("Data len is set to 0x%X(%d)", m_ble_nus_max_data_len, m_ble_nus_max_data_len);
+    }
+    NRF_LOG_DEBUG("ATT MTU exchange completed. central 0x%x peripheral 0x%x",
+                  p_gatt->att_mtu_desired_central,
+                  p_gatt->att_mtu_desired_periph);
+}
+
+/**@brief Function for initializing the GATT library. */
+static void gatt_init(void)
+{
+    ret_code_t err_code;
+
+    err_code = nrf_ble_gatt_init(&m_gatt, gatt_evt_handler);
+    APP_ERROR_CHECK(err_code);
+
+    err_code = nrf_ble_gatt_att_mtu_periph_set(&m_gatt, NRF_SDH_BLE_GATT_MAX_MTU_SIZE);
+    APP_ERROR_CHECK(err_code);
+}
+
+/**@brief Function for handling Queued Write Module errors.
+ *
+ * @details A pointer to this function will be passed to each service which may need to inform the
+ *          application about an error.
+ *
+ * @param[in]   nrf_error   Error code containing information about what went wrong.
+ */
+static void nrf_qwr_error_handler(uint32_t nrf_error)
+{
+    APP_ERROR_HANDLER(nrf_error);
+}
+
+
+/***************************************************************************************
+**函数名:       nus_data_handler
+**功能描述:     蓝牙接收函数
+**输入参数:     
+**输出参数:     
+**备注:         
+****************************************************************************************/
+static void nus_data_handler(ble_nus_evt_t *p_evt)
+{
+	uint8_t ble_rx_d[255];
+	uint8_t ble_rx_i = 0;
+	ble_rx_i = p_evt->params.rx_data.length; //长度
+	memcpy ( ble_rx_d, p_evt->params.rx_data.p_data, ble_rx_i ); //数据
+	
+    if(s_ptrBleHandler != NULL)
+    {
+        uint8_t ret = (*s_ptrBleHandler)(ble_rx_d,ble_rx_i);
+        if(ret > 0) {return;}
+    }
+	
+	if(ble_rx_i)
+	{
+		PUBLIC_PrintHex ( "app_fifo_put", ble_rx_d, ble_rx_i );
+	}
+	for ( ble_rx_i = 0; ble_rx_i <  p_evt->params.rx_data.length; ble_rx_i++ ) //数据入队列
+	{
+		app_fifo_put ( &AppBleFifo, ble_rx_d[ble_rx_i] );
+	}
+
+    return;
+}
+
+
+
+/**@snippet [Handling the data received over BLE] */
+
+/**@brief Function for initializing services that will be used by the application.
+ */
+static void services_init(void)
+{
+    uint32_t err_code;
+    ble_nus_init_t nus_init;
+    nrf_ble_qwr_init_t qwr_init = {0};
+
+    // Initialize Queued Write Module.
+    qwr_init.error_handler = nrf_qwr_error_handler;
+
+    err_code = nrf_ble_qwr_init(&m_qwr, &qwr_init);
+    APP_ERROR_CHECK(err_code);
+
+    // Initialize NUS.
+    memset(&nus_init, 0, sizeof(nus_init));
+
+    nus_init.data_handler = nus_data_handler;
+
+    err_code = ble_nus_init(&m_nus, &nus_init);
+    APP_ERROR_CHECK(err_code);
+}
+
+
+/**@brief Function for handling advertising events.
+ *
+ * @details This function will be called for advertising events which are passed to the application.
+ *
+ * @param[in] ble_adv_evt  Advertising event.
+ */
+static void on_adv_evt(ble_adv_evt_t ble_adv_evt)
+{
+    switch (ble_adv_evt)
+    {
+    case BLE_ADV_EVT_FAST:
+        break;
+    case BLE_ADV_EVT_IDLE:
+        break;
+    default:
+        break;
+    }
+}
+
+/**@snippet [UART Initialization] */
+
+/**@brief Function for initializing the Advertising functionality.
+ */
+static void advertising_init ( uint8_t flags )
+{
+    uint32_t err_code;
+
+    ble_advertising_init_t init;
+
+    memset(&init, 0, sizeof(init));
+
+    init.advdata.name_type = BLE_ADVDATA_FULL_NAME;
+    init.advdata.include_appearance = false;
+    init.advdata.flags = BLE_GAP_ADV_FLAGS_LE_ONLY_GENERAL_DISC_MODE; //BLE_GAP_ADV_FLAGS_LE_ONLY_LIMITED_DISC_MODE;
+
+    init.advdata.include_ble_device_addr = true; // 广播MAC
+    // init.advdata.p_tx_power_level=&TX_POWER;//功率
+
+    init.srdata.uuids_complete.uuid_cnt = sizeof(m_adv_uuids) / sizeof(m_adv_uuids[0]);
+    init.srdata.uuids_complete.p_uuids = m_adv_uuids;
+
+    init.config.ble_adv_fast_enabled = true;
+    init.config.ble_adv_fast_interval = APP_ADV_INTERVAL;
+    init.config.ble_adv_fast_timeout = APP_ADV_DURATION;
+	
+	if(flags==LIMITED_FLAGS)
+	{
+		init.advdata.flags= BLE_GAP_ADV_FLAGS_LE_ONLY_LIMITED_DISC_MODE; //有限广播
+		init.config.ble_adv_fast_timeout  =6000; //超时一分钟
+	}
+	
+    init.evt_handler = on_adv_evt;
+
+    err_code = ble_advertising_init(&m_advertising, &init);
+    APP_ERROR_CHECK(err_code);
+
+    ble_advertising_conn_cfg_tag_set(&m_advertising, APP_BLE_CONN_CFG_TAG);
+}
+
+/**@brief Function for handling an event from the Connection Parameters Module.
+ *
+ * @details This function will be called for all events in the Connection Parameters Module
+ *          which are passed to the application.
+ *
+ * @note All this function does is to disconnect. This could have been done by simply setting
+ *       the disconnect_on_fail config parameter, but instead we use the event handler
+ *       mechanism to demonstrate its use.
+ *
+ * @param[in] p_evt  Event received from the Connection Parameters Module.
+ */
+static void on_conn_params_evt(ble_conn_params_evt_t *p_evt)
+{
+    if (p_evt->evt_type == BLE_CONN_PARAMS_EVT_FAILED)
+    {
+        uint32_t err_code = sd_ble_gap_disconnect(m_conn_handle, BLE_HCI_CONN_INTERVAL_UNACCEPTABLE);
+        APP_ERROR_CHECK(err_code);
+    }
+}
+ 
+/**@brief Function for handling errors from the Connection Parameters module.
+ *
+ * @param[in] nrf_error  Error code containing information about what went wrong.
+ */
+static void conn_params_error_handler(uint32_t nrf_error)
+{
+    if(nrf_error == NRF_ERROR_INVALID_STATE)
+        return ;
+    APP_ERROR_HANDLER(nrf_error);
+}
+
+
+/**@brief Function for initializing the Connection Parameters module.
+ */
+static void conn_params_init(void)
+{
+    uint32_t err_code;
+    ble_conn_params_init_t cp_init;
+
+    memset(&cp_init, 0, sizeof(cp_init));
+
+    cp_init.p_conn_params = NULL;
+    cp_init.first_conn_params_update_delay = FIRST_CONN_PARAMS_UPDATE_DELAY;
+    cp_init.next_conn_params_update_delay = NEXT_CONN_PARAMS_UPDATE_DELAY;
+    cp_init.max_conn_params_update_count = MAX_CONN_PARAMS_UPDATE_COUNT;
+    cp_init.start_on_notify_cccd_handle = BLE_GATT_HANDLE_INVALID;
+    cp_init.disconnect_on_fail = false;
+    cp_init.evt_handler = on_conn_params_evt;
+    cp_init.error_handler = conn_params_error_handler;
+
+    err_code = ble_conn_params_init(&cp_init);
+    APP_ERROR_CHECK(err_code);
+}
+
+
+
+/***************************************************************************************
+**函数名:       ble_tx_event_handle
+**功能描述:     蓝牙发送函数
+**输入参数:     *Txdata  发送数据指针
+				TxLen    发送数据总长
+**输出参数:     
+**备注:         
+****************************************************************************************/	
+void ble_tx_event_handle(uint8_t *Txdata , uint8_t TxLen)
+{
+	if( m_conn_handle == BLE_CONN_HANDLE_INVALID )
+	{
+		return;
+	}
+	uint32_t err_code;
+    uint8_t ble_t[20];
+    uint8_t unsend_len = TxLen; //剩余发送长度
+	uint16_t length; //当前长度
+    while ( unsend_len > 0 )
+    {
+        if ( unsend_len <= 20 )
+        {
+            length = ( uint16_t ) unsend_len; //送长度指针
+            memcpy ( ble_t, &Txdata[TxLen - unsend_len], unsend_len ); //不足20直接发送
+            do
+            {
+                err_code = ble_nus_data_send ( &m_nus, ble_t, &length, m_conn_handle );
+				if(err_code==NRF_ERROR_RESOURCES) //资源不足等待 改为Busy，不然会复位
+				{
+					err_code = NRF_ERROR_BUSY;
+				}
+				else if (err_code==BLE_ERROR_GATTS_SYS_ATTR_MISSING) //手机未打开通知的情况可能出错无法发送
+				{
+					my_printf("BLE_ERROR_GATTS_SYS_ATTR_MISSING \n");
+					return;
+				}
+                else if ( ( err_code != NRF_ERROR_INVALID_STATE ) && ( err_code != NRF_ERROR_BUSY ) &&
+                        ( err_code != NRF_ERROR_NOT_FOUND ) )
+                {
+                    APP_ERROR_CHECK ( err_code );
+                }
+            }
+            while ( err_code == NRF_ERROR_BUSY );
+            unsend_len = 0;//未发送字节数清零
+        }
+        else
+        {
+            length = 20;
+            memcpy ( ble_t,  &Txdata[TxLen - unsend_len], 20 ); //一包送20
+            do
+            {
+                err_code = ble_nus_data_send ( &m_nus, ble_t, &length, m_conn_handle );
+				if(err_code==NRF_ERROR_RESOURCES) //资源不足等待 改为Busy，不然会复位
+				{
+					err_code = NRF_ERROR_BUSY;
+				}
+                else if ( ( err_code != NRF_ERROR_INVALID_STATE ) && ( err_code != NRF_ERROR_BUSY ) &&
+                        ( err_code != NRF_ERROR_NOT_FOUND ) )
+                {
+                    APP_ERROR_CHECK ( err_code );
+                }
+            }
+            while ( err_code == NRF_ERROR_BUSY );
+            unsend_len = unsend_len - 20;
+        }
+    }
+    PUBLIC_PrintHex ( "ble_tx_event_handle",Txdata, TxLen );
+}
+
+/***************************************************************************************
+**函数名:       DRV_GetBleConnect
+**功能描述:     获取蓝牙连接状态
+**输入参数:     
+**输出参数:     1连接  0断开
+**备注:         
+****************************************************************************************/		
+uint8_t DRV_GetBleConnect(void)
+{
+	if( m_conn_handle != BLE_CONN_HANDLE_INVALID )
+	{
+		return 1; //连接状态
+	}
+	else
+	{
+		return 0;
+	}
+}
+
+
+
+
+/***************************************************************************************
+**函数名:       AppBleInit
+**功能描述:     队列初始化,信道密码获取
+**输入参数:     
+**输出参数:     
+**备注:         
+****************************************************************************************/		
+void DRV_FifoInit(void)
+{    
+	static uint8_t     rx_buf[256];   // fifo buff     
+	memset(rx_buf,0 ,sizeof (rx_buf));
+	app_fifo_init(&AppBleFifo, rx_buf, sizeof (rx_buf));
+	
+}
+
+//status 为true时，打开CLE
+void conn_evt_len_ext_set(bool status)
+{
+    ret_code_t err_code;
+    ble_opt_t  opt;
+
+    memset(&opt, 0x00, sizeof(opt));
+    opt.common_opt.conn_evt_ext.enable = status ? 1 : 0;
+
+    err_code = sd_ble_opt_set(BLE_COMMON_OPT_CONN_EVT_EXT, &opt);
+    APP_ERROR_CHECK(err_code);
+}
+
+
+/*********************************************************************************************************************
+* Function Name :  DRV_BleInit()
+* Description   :  功能文件初始化
+* Para          :  无
+* Return        :  void
+*********************************************************************************************************************/
+void DRV_BleInit(DRV_BLE_ADV_MODE mode, DRV_BLE_ADV_FLAGS flags, DRV_BlePtr ptrHandler)
+{
+	uint32_t err_code;
+	static uint8_t FristInit=0;	
+	if(FristInit==0)//上电仅初始化一次
+	{
+		FristInit=1;
+		s_ptrBleHandler = ptrHandler;
+		ble_stack_init();      //开协议栈
+//		conn_evt_len_ext_set(true);
+		gap_params_init(mode);     //广播名
+		gatt_init();           //gatt
+		services_init();       //蓝牙服务
+		advertising_init(flags);    //广播
+		conn_params_init();    //连接参数
+		DRV_FifoInit();        //接收队列
+	}
+	else
+	{
+		if( m_conn_handle != BLE_CONN_HANDLE_INVALID )
+		{
+			err_code=sd_ble_gap_disconnect(m_conn_handle, BLE_HCI_REMOTE_USER_TERMINATED_CONNECTION); //断开连接
+			APP_ERROR_CHECK(err_code);
+			my_printf("sd_ble_gap_disconnect=%x \n",err_code); 
+		}
+		while(m_conn_handle != BLE_CONN_HANDLE_INVALID); //暂时这样写，测试蓝牙断不开的情况
+		
+		(void)sd_ble_gap_adv_stop(m_advertising.adv_handle); //停止广播
+		gap_params_init(mode);     //更改广播名
+		advertising_init(flags);    //广播重新初始化
+	}
+#ifdef BLE_ADVERTISING
+    // 4db TX 开始广播
+    sd_ble_gap_tx_power_set(BLE_GAP_TX_POWER_ROLE_ADV, m_advertising.adv_handle, 4);
+    err_code= ble_advertising_start(&m_advertising, BLE_ADV_MODE_FAST);
+    APP_ERROR_CHECK(err_code);
+#endif
+}
+
+
+/*-------------------------------------------------THE FILE END-----------------------------------------------------*/
+
+

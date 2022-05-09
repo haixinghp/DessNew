@@ -1,0 +1,109 @@
+/********************************************************************************************************************
+ * @file:      DRV_74HC0452.c
+ * @author:    gushengchi
+ * @version:   V01.00
+ * @date:      2021-07-28
+ * @brief:     端口选择芯片 74HC0452   直接端口控制
+*********************************************************************************************************************/
+  
+/*-------------------------------------------------文件包含---------------------------------------------------------*/
+#include "DRV_74HC4052.h"
+#include "LockConfig.h"
+#include "..\DRV\DRV_EXPORT\DRV_NCA9555.h"
+/*-------------------------------------------------宏定义-----------------------------------------------------------*/
+#define  SELECT_DEVICE_ADDR          CFG_IO_EXPORT_ADDRESS                    //定义PCA9555_2地址   
+#define  SELECT_DEVICE_CHANNEL       ((DRV_IIC_CHANNEL_E)CFG_IO_IIC_CHANNEL)  //IIC驱动的通道      
+#define  NCA9555_CHIP_NO             NO_ONE  
+
+#define  PIN_74HC_E                  PIN_CONFIG_74HC_E
+#define  PIN_74HC_A0                 PIN_CONFIG_74HC_A0
+#define  PIN_74HC_A1                 PIN_CONFIG_74HC_A1
+/*-------------------------------------------------枚举定义---------------------------------------------------------*/
+
+
+/*-------------------------------------------------常量定义---------------------------------------------------------*/
+
+
+/*-------------------------------------------------全局变量定义-----------------------------------------------------*/         
+
+
+/*-------------------------------------------------局部变量定义-----------------------------------------------------*/
+ 
+
+/*-------------------------------------------------函数声明---------------------------------------------------------*/
+ 
+
+/*-------------------------------------------------函数定义---------------------------------------------------------*/
+/*********************************************************************************************************************
+* Function Name :  DRV_74HC0452_PinInit()
+* Description   :  相关配置初始化
+* Para          :  none
+* Return        :  none
+*********************************************************************************************************************/
+static void DRV_74HC0452_PinInit( void )  
+{
+	 DRV_NCA9555_PinDirInit( NCA9555_CHIP_NO, SELECT_DEVICE_CHANNEL, SELECT_DEVICE_ADDR, PIN_74HC_E, DIR_OUT ); 
+	 DRV_NCA9555_PinPoloInit( NCA9555_CHIP_NO, SELECT_DEVICE_CHANNEL, SELECT_DEVICE_ADDR, PIN_74HC_E, POLO_RETTAIN ); 	
+	
+     DRV_NCA9555_PinDirInit( NCA9555_CHIP_NO, SELECT_DEVICE_CHANNEL, SELECT_DEVICE_ADDR, PIN_74HC_A0, DIR_OUT ); 
+     DRV_NCA9555_PinPoloInit( NCA9555_CHIP_NO, SELECT_DEVICE_CHANNEL, SELECT_DEVICE_ADDR, PIN_74HC_A0, POLO_RETTAIN ); 
+	
+     DRV_NCA9555_PinDirInit( NCA9555_CHIP_NO, SELECT_DEVICE_CHANNEL, SELECT_DEVICE_ADDR, PIN_74HC_A1, DIR_OUT ); 
+     DRV_NCA9555_PinPoloInit( NCA9555_CHIP_NO, SELECT_DEVICE_CHANNEL, SELECT_DEVICE_ADDR, PIN_74HC_A1, POLO_RETTAIN ); 
+}
+ 
+/*********************************************************************************************************************
+* Function Name :  DRV_74HC0452_UartSelect()
+* Description   :  uart source select
+* Para          :  uartType - 串口资源选择
+* Return        :  none
+*********************************************************************************************************************/
+void DRV_74HC0452_UartSelect( uint32_t uartType ) 
+{
+	 static uint8_t  firstFlg;
+	
+	 if( firstFlg == 0 )
+	 {
+		 firstFlg = 1;
+		 DRV_74HC0452_PinInit();  
+	 }
+
+	 if( HW_74HC4052_UART_Y0 == uartType )
+	 {
+	   /*-------Y0--Z---FINGER----*/
+		DRV_NCA9555_PinSet( NCA9555_CHIP_NO, SELECT_DEVICE_CHANNEL, SELECT_DEVICE_ADDR, PIN_74HC_A0, OUT_LOW );   
+		DRV_NCA9555_PinSet( NCA9555_CHIP_NO, SELECT_DEVICE_CHANNEL, SELECT_DEVICE_ADDR, PIN_74HC_A1, OUT_LOW );
+		DRV_NCA9555_PinSet( NCA9555_CHIP_NO, SELECT_DEVICE_CHANNEL, SELECT_DEVICE_ADDR, PIN_74HC_E, OUT_LOW );   
+	 }
+	 else if( HW_74HC4052_UART_Y1 == uartType )
+	 {
+       /*-------Y1--Z---FACE----*/
+		DRV_NCA9555_PinSet( NCA9555_CHIP_NO, SELECT_DEVICE_CHANNEL, SELECT_DEVICE_ADDR, PIN_74HC_A0, OUT_HIGH );   
+		DRV_NCA9555_PinSet( NCA9555_CHIP_NO, SELECT_DEVICE_CHANNEL, SELECT_DEVICE_ADDR, PIN_74HC_A1, OUT_LOW );
+		DRV_NCA9555_PinSet( NCA9555_CHIP_NO, SELECT_DEVICE_CHANNEL, SELECT_DEVICE_ADDR, PIN_74HC_E, OUT_LOW );  
+	 }
+	 else if( HW_74HC4052_UART_Y2 == uartType )
+	 {
+	   /*-------Y2--Z---CAMERA----*/
+		DRV_NCA9555_PinSet( NCA9555_CHIP_NO, SELECT_DEVICE_CHANNEL, SELECT_DEVICE_ADDR, PIN_74HC_A0, OUT_LOW );   
+		DRV_NCA9555_PinSet( NCA9555_CHIP_NO, SELECT_DEVICE_CHANNEL, SELECT_DEVICE_ADDR, PIN_74HC_A1, OUT_HIGH ); 
+		DRV_NCA9555_PinSet( NCA9555_CHIP_NO, SELECT_DEVICE_CHANNEL, SELECT_DEVICE_ADDR, PIN_74HC_E, OUT_LOW );   
+	 }
+	 else if( HW_74HC4052_UART_Y3 == uartType )
+	 {
+	   /*-------Y3--Z---IR----*/
+		DRV_NCA9555_PinSet( NCA9555_CHIP_NO, SELECT_DEVICE_CHANNEL, SELECT_DEVICE_ADDR, PIN_74HC_A0, OUT_HIGH );   
+		DRV_NCA9555_PinSet( NCA9555_CHIP_NO, SELECT_DEVICE_CHANNEL, SELECT_DEVICE_ADDR, PIN_74HC_A1, OUT_HIGH ); 
+		DRV_NCA9555_PinSet( NCA9555_CHIP_NO, SELECT_DEVICE_CHANNEL, SELECT_DEVICE_ADDR, PIN_74HC_E, OUT_LOW );  
+	 }
+	 else 
+	 {
+	   /*-------Y3--Z---RSD----*/
+		DRV_NCA9555_PinSet( NCA9555_CHIP_NO, SELECT_DEVICE_CHANNEL, SELECT_DEVICE_ADDR, PIN_74HC_A0, OUT_HIGH );   
+		DRV_NCA9555_PinSet( NCA9555_CHIP_NO, SELECT_DEVICE_CHANNEL, SELECT_DEVICE_ADDR, PIN_74HC_A1, OUT_HIGH ); 
+        DRV_NCA9555_PinSet( NCA9555_CHIP_NO, SELECT_DEVICE_CHANNEL, SELECT_DEVICE_ADDR, PIN_74HC_E, OUT_HIGH ); 		 
+	 }
+} 
+
+/*-------------------------------------------------THE FILE END-----------------------------------------------------*/
+

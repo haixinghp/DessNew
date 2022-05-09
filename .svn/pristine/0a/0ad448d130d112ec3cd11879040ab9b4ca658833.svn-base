@@ -1,0 +1,168 @@
+/*********************************************************************************************************************
+ * @file:        Screen.h
+ * @author:      fanshuyu
+ * @version:     V01.00
+ * @date:        2021-09-02
+ * @Description: 智能屏交互协议
+ * @ChangeList:  01. 初版
+**********************************************************************************************************************/
+  
+#ifndef  _SCREEN_H_
+#define  _SCREEN_H_
+
+/*--------------------------------------------------文件包含---------------------------------------------------------*/
+#include <stdint.h>
+#include <string.h>
+#include <stdbool.h>
+
+#include "LockConfig.h"
+#include "System.h"
+
+/*--------------------------------------------------宏定义-----------------------------------------------------------*/
+
+/* ******  加密模块协议宏定义****** */
+/* 1. 头数据包定义 */
+#define SCREEN_ENCRY_HEAD       0XAA66          // 协议头: 第二字节由模组上电返回确定
+/* 2. 是否加密 */
+#define SCREEN_ENCRY_YES        0x01            // 加密
+#define SCREEN_ENCRY_NO         0x00            // 不加密
+/* 0. 其他 */
+#define SCREEN_ENCRY_HEAD_INDEX 0               // 加密协议头的数据偏移坐标
+#define SCREEN_ENCRY_FLAG_INDEX 2               // 加密标记位的数据偏移坐标
+#define SCREEN_ENCRY_LEN_INDEX  3               // 数据段长度值的数据偏移坐标
+#define SCREEN_ENCRY_FIXED_LEN  4               // 包头+ 加密标记+ 数据长度值
+
+
+//UART 接收缓冲区大小
+#define SCREEN_UART_DATA_SIZE    32
+#define SCREEN_UART_BUFFER_SIZE  (2*SCREEN_UART_DATA_SIZE)
+
+/* 上电信号 */
+#define SCREEN_READY_SIGNAL_NOAES  0x55
+
+/* 0. 协议固定部分宏定义 */
+#define SCREEN_PRO_HEAD_LEN     7               // 协议指令包( 包头 + 模块地址 + 包标识)的长度
+#define SCREEN_PRO_BODY_LEN     3               // 协议指令包( 指令码 + 校验和)的长度
+#define SCREEN_PRO_CHECK_LEN    2               // 校验和长度
+#define SCREEN_PRO_MIN_LEN      12              // 不包含参数的最小长度
+
+#define SCREEN_PRO_HEAD_INDEX       0           // 协议头的数据偏移坐标
+#define SCREEN_PRO_ADDR_INDEX       2           // 协议头的地址数据偏移坐标
+#define SCREEN_PRO_TAG_INDEX        6           // 协议头的包标识偏移坐标
+#define SCREEN_PRO_PKG_LEN_INDEX    7           // 协议头的包长偏移坐标
+#define SCREEN_PRO_ORDER_INDEX      9           // 协议头的指令码(确认码)偏移坐标
+#define SCREEN_PRO_PARAM_INDEX      10          // 协议头的输入参数(返回参数)偏移坐标
+
+
+/* 1. 头数据包定义 */
+#define SCREEN_PRO_HEAD         0xEF02          // 协议头
+/* 2. 芯片地址 */
+#define SCREEN_PRO_ADDR         0x00000000     // 芯片地址
+/* 3. 标识 */
+#define SCREEN_TX_TAG           0x01            // 指令包标识
+#define SCREEN_RX_TAG           0x07            // 应答包标识
+
+
+/* 1. 协议指令 */
+#define SCREEN_POWER_UP         0x00            // 上电确认
+#define SCREEN_POWER_DOWN       0xF0            //下电确认
+#define SCREEN_SHOW_MOTION      0x10            // 展示动图
+#define SCREEN_SHOW_COVER       0x11            // 展示图层
+#define SCREEN_SWITCH_VER       0x12            // 切换动图版本
+#define SCREEN_GET_VER          0x13            // 获取动图版本
+#define SCREEN_SWITCH_BASE      0x14            // 切换基础屏显动画
+#define SCREEN_UPDATE           0x21            // 发起升级动作
+#define SCREEN_UPDATE_DATA      0x22            // 升级包数据推送
+#define SCREEN_FACTORY_RESET    0x31            // 恢复出厂
+
+/* 应答包ACK */
+#define SCREEN_ACK_OK           0
+#define SCREEN_ACK_ERR          1
+
+#define SCREEN_ACK_CHECK_ERR    0xFE    //校验错误
+#define SCREEN_ACK_NONE         0xFF
+
+
+/*--------------------------------------------------枚举声明---------------------------------------------------------*/
+
+/* 指纹模组命令打包流程处理 */
+typedef enum
+{
+    EM_SCREEN_FLOW0_POWERUP = 0,    // 上电确认流程
+    EM_SCREEN_FLOW1_POWERDOWN,      // 下电确认流程
+    EM_SCREEN_FLOW2_SHOW_MOTION,    // 展示动图(表情)
+    EM_SCREEN_FLOW3_SHOW_COVER,     // 展示图层(菜单、温湿度等变化值)
+    EM_SCREEN_FLOW4_SWITCH_VER,     // 切换版本
+    EM_SCREEN_FLOW5_GET_VER,        // 获取版本
+    EM_SCREEN_FLOW6_SWITCH_BASE,    // 切换基础屏显动画
+    EM_SCREEN_FLOW7_UPDATE,         // 升级动作发起
+    EM_SCREEN_FLOW8_UPDATE_DATA,    // 升级包数据推送
+    EM_SCREEN_FLOW9_FACTORY_RESET,  // 恢复出厂
+    
+    /* 总流程数量 */
+    EM_SCREEN_FLOW_ALL,             //主流程上限，即最大值
+
+    EM_SCREEN_FLOW_NONE = 0xFF,     //无效流程，默认值
+}SCREEN_FLOW_TYPE_E; 
+
+
+/*--------------------------------------------------变量声明---------------------------------------------------------*/             
+
+/* 屏幕UART 数据收发操作结构体 */
+typedef struct
+{
+    uint8_t     u8Pid;      // 交互指令
+    uint8_t     u8ACK;      // 应答
+    uint16_t    u16Size;    // 交互参数长度
+    uint8_t     u8Par[SCREEN_UART_DATA_SIZE]; //交互数据
+    uint8_t*    pu8Par;         //交互数据: 在u8Par无法存放下的情况下，使用外部内存空间导入
+} ScreenUartType_T;
+
+/* 屏幕UART 数据收发缓存结构体 */
+typedef struct
+{
+    uint8_t     acBuf[SCREEN_UART_BUFFER_SIZE]; // 串口数据接收缓存信息
+    uint16_t    u16Cnt;                         //当前接受位置
+}ScreenUartInfo_T;
+
+/* 流程MAP 类型 */
+typedef struct
+{
+    SCREEN_FLOW_TYPE_E  emFlow;     // 交互流程枚举
+    uint8_t             u8Pid;      // 交互指令
+    uint8_t             u8Size;     // 交互参数长度
+    uint8_t             u8Time;     // 交互最长时间
+} ScreenFlowParamMap_T;
+
+
+typedef struct
+{
+    uint8_t     acRxBuf[SCREEN_UART_BUFFER_SIZE];    // 串口数据接收缓存信息
+    uint16_t    u16RxCnt;                   //当前接受位置
+}ScreenRxInfo_S;
+
+
+/*--------------------------------------------------函数声明---------------------------------------------------------*/
+
+void SCREEN_Init(void);
+void SCREEN_GetVersion(void);
+uint8_t SCREEN_WorkCountDown(void);
+bool SCREEN_GetPowerStatus(void);
+void SCREEN_PowerUp(void);
+uint8_t SCREEN_GetAckCode(void);
+void SCREEN_OperateReady(void);
+void SCREEN_PowerDown(void);
+void SCREEN_SwitchVersion(uint32_t _u32Ex);
+void SCREEN_ShowMotionPic(uint8_t _u8WrapCnt, uint32_t _u32Ex);
+void SCREEN_ShowCoverPic(uint8_t _u8WrapCnt, uint8_t _u8Scene, uint32_t _u32Ex);
+void SCREEN_SwitchBase(uint8_t _u8WrapCnt, uint32_t _u32Ex);
+void SCREEN_ApplyForUpdate(uint8_t _au8Ex[15]);
+void SCREEN_StartToUpdate(uint8_t* _pu8Ex, uint16_t _u16Len);
+void SCREEN_FactoryReset(uint8_t _u8Ex);
+void SCREEN_Scan(void);
+
+#endif
+
+
+
+

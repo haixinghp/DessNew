@@ -1,0 +1,295 @@
+/********************************************************************************************************************
+ * @file:      DRV_ADC.c
+ * @author:    gushengchi
+ * @version:   V01.00
+ * @date:      2021-08-05
+ * @brief:     芯片ADC初始化函数
+*********************************************************************************************************************/
+  
+/*-------------------------------------------------文件包含---------------------------------------------------------*/
+#include <math.h>
+#include <stdlib.h>
+#include "nrf_drv_saadc.h" 
+#include "LockConfig.h"
+#include "DRV_ADC.h"
+#include "DRV_GPIO.h"
+/*-------------------------------------------------宏定义-----------------------------------------------------------*/
+#define  MOTOR_ADC_CAPT_PIN         M_MOTOR_ADC_GPIO_PIN       //电机电流采集 
+#define  UP_BAT_ADC_CAPT_PIN        M_UP_BAT_ADC_GPIO_PIN      //上方电池电压采集  
+#define  UD_BAT_ADC_CAPT_PIN        M_UD_BAT_ADC_GPIO_PIN      //下方电池电压采集 
+
+#ifdef MOTOR_AMP_ADC_ON
+  #define MOTOR_ADC_EN      1
+#else
+  #define MOTOR_ADC_EN      0
+#endif
+
+#ifdef UPPER_BAT_ADC_ON
+  #define UPPER_BAT_EN  	1
+#else
+  #define UPPER_BAT_EN      0
+#endif
+
+#ifdef UNDER_BAT_ADC_ON
+  #define UNDER_BAT_EN      1
+#else
+  #define UNDER_BAT_EN      0
+#endif
+
+#if defined (MOTOR_AMP_ADC_ON) || defined (UPPER_BAT_ADC_ON) || defined (UNDER_BAT_ADC_ON)
+#else
+#error "ADC not defined!"
+#endif
+
+#define  ADC_CHANNEL_CNT            3  		//采集通道个数
+#define  ADC_CAPTURE_CNT            10      //采集滤波次数
+#define  ADC_EN_CNT                 (MOTOR_ADC_EN + UPPER_BAT_EN + UNDER_BAT_EN)      //实际采集通道数 
+
+#define  MOTO_AMP_ADC_CHAHNEL       CFG_MOTO_AMP_ADC_CHANNEL    //电机电流ADC通道
+#define  UPPER_BAT_ADC_CHAHNEL      CFG_UPPER_BAT_ADC_CHANNEL   //上方电池电压ADC通道
+#define  UNDER_BAT_ADC_CHAHNEL      CFG_UNDER_BAT_ADC_CHANNEL   //下方电池电压ADC通道
+
+/*-------------------------------------------------枚举定义---------------------------------------------------------*/
+
+
+/*-------------------------------------------------常量定义---------------------------------------------------------*/
+
+
+/*-------------------------------------------------全局变量定义-----------------------------------------------------*/       
+static bool AdcInitStateFlg = false;
+
+static uint32_t AdcAveValue[ ADC_CHANNEL_CNT ] = {0};
+
+/*-------------------------------------------------局部变量定义-----------------------------------------------------*/
+static int16_t  AdcValBuf[2][ ADC_CHANNEL_CNT ];	// ADC采集值缓存
+static uint16_t AdcValData[ ADC_CHANNEL_CNT ][ ADC_CAPTURE_CNT ] = {0}; 	//ADC多次滤波缓存
+static uint8_t  AdcIndex =0;	// AdcValData 数组第1维度的索引
+/*-------------------------------------------------函数声明---------------------------------------------------------*/
+ 
+
+/*-------------------------------------------------函数定义---------------------------------------------------------*/
+
+	
+/*********************************************************************************************************************
+* Function Name :  DRV_ADC_CaptureIRQ()
+* Description   :  ADC采样完成中断函数
+* Para          :  none   
+* Return        :  none
+*********************************************************************************************************************/
+static void DRV_ADC_CaptureIRQ(nrf_drv_saadc_evt_t const * p_event)
+{
+	uint32_t sumval[ ADC_CHANNEL_CNT ] ={0};
+
+    if (p_event->type == NRF_DRV_SAADC_EVT_DONE)
+    {
+        ret_code_t err_code;
+        err_code = nrf_drv_saadc_buffer_convert(p_event->data.done.p_buffer, ADC_EN_CNT);
+        APP_ERROR_CHECK(err_code);
+
+		#ifdef MOTOR_AMP_ADC_ON
+		     AdcValData[ MOTO_AMP_ADC_CH ][ AdcIndex ] = abs(p_event->data.done.p_buffer[ 0 ]);
+			 #ifdef UPPER_BAT_ADC_ON
+		         AdcValData[ UPPER_BAT_ADC_CH ][ AdcIndex ] = abs(p_event->data.done.p_buffer[ 1 ]);
+				 #ifdef UNDER_BAT_ADC_ON
+		         AdcValData[ UNDER_BAT_ADC_CH ][ AdcIndex ] = abs(p_event->data.done.p_buffer[ 2 ]);
+		         #endif
+		     #elif defined UNDER_BAT_ADC_ON
+		         AdcValData[ UNDER_BAT_ADC_CH ][ AdcIndex ] = abs(p_event->data.done.p_buffer[ 1 ]);
+		     #endif
+		#elif defined UPPER_BAT_ADC_ON
+			 AdcValData[ UPPER_BAT_ADC_CH ][ AdcIndex ] = abs(p_event->data.done.p_buffer[ 0 ]);
+			 #ifdef UNDER_BAT_ADC_ON
+			 AdcValData[ UNDER_BAT_ADC_CH ][ AdcIndex ] = abs(p_event->data.done.p_buffer[ 1 ]);
+			 #endif
+		#elif defined UNDER_BAT_ADC_ON
+			 AdcValData[ UNDER_BAT_ADC_CH ][ AdcIndex ] = abs(p_event->data.done.p_buffer[ 0 ]);
+		#endif
+		
+	    AdcIndex++;
+		AdcIndex %= ADC_CAPTURE_CNT;	
+		
+        for(uint8_t i=0; i<ADC_CAPTURE_CNT; i++) 
+        {
+			#ifdef MOTOR_AMP_ADC_ON
+            sumval[ MOTO_AMP_ADC_CH ] +=  AdcValData[ MOTO_AMP_ADC_CH ][ i ];
+			#endif 
+			#ifdef UPPER_BAT_ADC_ON
+			sumval[ UPPER_BAT_ADC_CH ] +=  AdcValData[ UPPER_BAT_ADC_CH ][ i ];
+			#endif 
+			#ifdef UNDER_BAT_ADC_ON
+			sumval[ UNDER_BAT_ADC_CH ] +=  AdcValData[ UNDER_BAT_ADC_CH ][ i ];
+			#endif 
+        }
+		
+	    AdcAveValue[ MOTO_AMP_ADC_CH ]  =  sumval[ MOTO_AMP_ADC_CH ] / ADC_CAPTURE_CNT;
+	    AdcAveValue[ UPPER_BAT_ADC_CH ] =  sumval[ UPPER_BAT_ADC_CH ] / ADC_CAPTURE_CNT;
+	    AdcAveValue[ UNDER_BAT_ADC_CH ] =  sumval[ UNDER_BAT_ADC_CH ] / ADC_CAPTURE_CNT;
+    }	
+	return;
+}
+
+/*********************************************************************************************************************
+* Function Name :  DRV_ADC_GetAdcVal()
+* Description   :  获取采样对应的AD值
+* Para          :  none   
+* Return        :  AD值
+*********************************************************************************************************************/
+uint32_t DRV_ADC_GetAdcVal( uint8_t type ) 
+{
+	return AdcAveValue[ type ];
+}
+
+/*********************************************************************************************************************
+* Function Name :  DRV_ADC_ConfigInit()
+* Description   :  相关配置初始化   通道 4 5 6
+* Para          :  none   
+* Return        :  none
+*********************************************************************************************************************/
+static void DRV_ADC_ConfigInit( void )  
+{
+	if( AdcInitStateFlg )
+		return;
+	AdcInitStateFlg = true;
+	
+    ret_code_t err_code;
+
+    nrf_drv_saadc_config_t saadc_config = NRF_DRV_SAADC_DEFAULT_CONFIG;
+    saadc_config.resolution = NRF_SAADC_RESOLUTION_12BIT;
+	
+    err_code = nrf_drv_saadc_init(&saadc_config, DRV_ADC_CaptureIRQ);
+    APP_ERROR_CHECK(err_code);
+
+	#ifdef  MOTOR_AMP_ADC_ON
+    nrf_saadc_channel_config_t channel_config_1 =
+    NRF_DRV_SAADC_DEFAULT_CHANNEL_CONFIG_SE(MOTO_AMP_ADC_CHAHNEL);
+    err_code = nrf_drv_saadc_channel_init(MOTO_AMP_ADC_CH, &channel_config_1);
+    APP_ERROR_CHECK(err_code);
+	#endif
+	
+	#ifdef  UPPER_BAT_ADC_ON
+    nrf_saadc_channel_config_t channel_config_2 =
+    NRF_DRV_SAADC_DEFAULT_CHANNEL_CONFIG_SE(UPPER_BAT_ADC_CHAHNEL);
+    err_code = nrf_drv_saadc_channel_init(UPPER_BAT_ADC_CH, &channel_config_2);
+    APP_ERROR_CHECK(err_code);
+	#endif
+	
+	#ifdef  UNDER_BAT_ADC_ON
+    nrf_saadc_channel_config_t channel_config_3 =
+    NRF_DRV_SAADC_DEFAULT_CHANNEL_CONFIG_SE(UNDER_BAT_ADC_CHAHNEL);
+    err_code = nrf_drv_saadc_channel_init(UNDER_BAT_ADC_CH, &channel_config_3);
+    APP_ERROR_CHECK(err_code);
+	#endif
+
+    err_code = nrf_drv_saadc_buffer_convert(AdcValBuf[0], ADC_EN_CNT);
+	APP_ERROR_CHECK(err_code);	
+	
+    err_code = nrf_drv_saadc_buffer_convert(AdcValBuf[1], ADC_EN_CNT);
+	APP_ERROR_CHECK(err_code);	
+	return;
+}
+ 
+/*********************************************************************************************************************
+* Function Name :  DRV_ADC_AdcSourceRelease()
+* Description   :  ADC资源释放
+* Para          :  none   
+* Return        :  none
+*********************************************************************************************************************/
+static void DRV_ADC_AdcSourceRelease( void )
+{
+	if( !AdcInitStateFlg)
+	    return;
+	nrf_drv_saadc_uninit();
+	AdcInitStateFlg = false;
+	return;
+}
+
+/*********************************************************************************************************************
+* Function Name :  DRV_ADC_SampleTrigger()
+* Description   :  触发采样，多通道一次性采集完成
+* Para          :  none   
+* Return        :  none
+*********************************************************************************************************************/
+void DRV_ADC_SampleTrigger( void )
+{
+	ret_code_t errCode;
+	errCode = nrf_drv_saadc_sample();
+	APP_ERROR_CHECK(errCode);
+	return;
+}
+ 
+/*********************************************************************************************************************
+* Function Name :  DRV_ADC_FileInit()
+* Description   :  相关文件初始化    
+* Para          :  none   
+* Return        :  none
+*********************************************************************************************************************/
+void DRV_ADC_FileInit( void )  
+{
+    DRV_ADC_ConfigInit();  
+	
+    AdcIndex = 0;
+	for(uint8_t i=0; i<ADC_CHANNEL_CNT; i++) 
+	{
+		for(uint8_t j=0; j<ADC_CAPTURE_CNT; j++) 
+		{
+			AdcValData[ i ][ j ] = 0;
+		}
+	}
+	return;
+}
+
+/*********************************************************************************************************************
+* Function Name :  DRV_ADC_SleepInit()
+* Description   :  休眠配置   
+* Para          :  none   
+* Return        :  none
+*********************************************************************************************************************/
+void DRV_ADC_SleepInit( void )  
+{
+	DRV_ADC_AdcSourceRelease();
+	
+	AdcIndex = 0;
+	for(uint8_t i=0; i<ADC_CHANNEL_CNT; i++) 
+	{
+		for(uint8_t j=0; j<ADC_CAPTURE_CNT; j++) 
+		{
+			AdcValData[ i ][ j ] = 0;
+		}
+	}
+#ifdef MOTOR_AMP_ADC_ON
+	DRV_GpioDisconnect( MOTOR_ADC_CAPT_PIN ); 
+#endif
+#ifdef UPPER_BAT_ADC_ON
+	DRV_GpioDisconnect( UP_BAT_ADC_CAPT_PIN ); 
+#endif
+#ifdef UNDER_BAT_ADC_ON
+	DRV_GpioDisconnect( UD_BAT_ADC_CAPT_PIN ); 
+#endif
+	return;
+}
+/*********************************************************************************************************************
+* Function Name :  DRV_ADC_GetVoltage()
+* Description   :  获取电压
+* Para          :  none
+* Return        :  none
+*********************************************************************************************************************/
+uint32_t DRV_ADC_GetVoltage( uint32_t dat,uint8_t type)
+{
+    uint32_t vTmp=0;
+	switch (type)
+	{
+		case 0:
+		case 1:
+			vTmp =3600*32*dat /(4096*7);      //V(mv) = AD*3600/4096 *(56/256)   3600为参考电压单位mv，56/256为电阻比例
+			break;
+		case 2:
+			vTmp =dat*3600*20/4096;			  //V(mA) = AD*3600/4096 /0.05       3600为参考电压单位mv，0.05为电阻阻值 单位欧姆	 
+			break;
+		default:
+			break;
+	}
+	return vTmp;
+}
+
+/*-------------------------------------------------THE FILE END-----------------------------------------------------*/
+

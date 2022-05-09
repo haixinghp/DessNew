@@ -1,0 +1,102 @@
+/*********************************************************************************************************************
+ * @file:        DRV_NCA9555.h
+ * @author:      gushengchi
+ * @version:     V01.00
+ * @date:        2021-07-27
+ * @Description: 芯片NCA9555端口扩展芯片  IIC接口
+ * @ChangeList:  01. 初版
+**********************************************************************************************************************/
+  
+#ifndef  _DRV_NCA9555_H
+#define  _DRV_NCA9555_H
+
+/*--------------------------------------------------文件包含---------------------------------------------------------*/
+#include "..\DRV\DRV_IIC\DRV_IIC.h"
+/*--------------------------------------------------宏定义-----------------------------------------------------------*/
+
+/*--------------------------------------------------枚举声明---------------------------------------------------------*/
+typedef enum
+{
+   DIR_OUT = 0, 	
+   DIR_IN, 	
+   DIR_DEFAULT,	
+}PIN_DIR_E;
+
+typedef enum
+{
+   POLO_RETTAIN = 0, 	
+   POLO_INVERTE, 	
+   POLO_DEFAULT, 	
+}PIN_POLO_E;
+
+typedef enum
+{
+   OUT_LOW = 0, 	
+   OUT_HIGH, 
+   OUT_DEFAULT = 0xFF, 		
+}PIN_SET_E;
+
+typedef enum
+{
+   IN_LOW = 0, 	
+   IN_HIGH, 	
+   IN_DEFAULT = 0xFF, 		
+}PIN_GET_E;
+
+
+typedef enum
+{
+   NO_ONE = 0, 	
+   NO_TWO, 	
+   NO_THREE, 		
+}CHIP_NO_E;
+/*--------------------------------------------------常量声明---------------------------------------------------------*/
+
+
+/*--------------------------------------------------变量声明---------------------------------------------------------*/             
+typedef union
+{
+	 uint8_t  tab[2];
+	 uint16_t data;
+
+	 struct 
+	 {
+		 uint8_t   Pin_I00      :1;   
+		 uint8_t   Pin_I01      :1; 
+		 uint8_t   Pin_I02      :1; 
+		 uint8_t   Pin_I03      :1; 
+		 uint8_t   Pin_I04      :1; 
+		 uint8_t   Pin_I05      :1; 
+		 uint8_t   Pin_I06      :1; 
+		 uint8_t   Pin_I07      :1;  
+		 
+		 uint8_t   Pin_I10      :1;   
+		 uint8_t   Pin_I11      :1; 
+		 uint8_t   Pin_I12      :1; 
+		 uint8_t   Pin_I13      :1; 
+		 uint8_t   Pin_I14      :1; 
+		 uint8_t   Pin_I15      :1; 
+		 uint8_t   Pin_I16      :1; 
+		 uint8_t   Pin_I17      :1;   
+		 
+	 }Bit;
+  
+}PinDefine_U;
+
+ 
+/*--------------------------------------------------函数声明---------------------------------------------------------*/ 
+void DRV_NCA9555_FileInit( void );
+void DRV_NCA9555_WakeupInit( void ); 
+void DRV_NCA9555_SleepInit( void ); 
+	
+uint8_t DRV_NCA9555_PinDirInit( CHIP_NO_E chipNo, DRV_IIC_CHANNEL_E channel ,uint8_t deviceAddr, uint16_t pinNo, PIN_DIR_E dirMode ); 
+uint8_t DRV_NCA9555_PinPoloInit( CHIP_NO_E chipNo, DRV_IIC_CHANNEL_E channel ,uint8_t deviceAddr, uint16_t pinNo, PIN_POLO_E poloMode ); 
+
+uint8_t DRV_NCA9555_PinSet( CHIP_NO_E chipNo, DRV_IIC_CHANNEL_E channel ,uint8_t deviceAddr, uint16_t pinNo, PIN_SET_E pinSet ); 
+PIN_GET_E DRV_NCA9555_PinGet( DRV_IIC_CHANNEL_E channel ,uint8_t deviceAddr, uint16_t pinNo ); 
+
+
+
+#endif
+
+

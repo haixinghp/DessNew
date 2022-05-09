@@ -1,0 +1,38 @@
+#ifndef _DRV_RADAR_H_
+#define _DRV_RADAR_H_
+
+#ifdef __cplusplus
+extern "C"
+{
+#endif
+
+
+
+/* 标准头文件 */
+#include "stdint.h"
+#include "LockConfig.h"
+
+#ifdef RADAR_FUNCTION_ON 
+
+typedef enum
+{
+    RADAR_OFF = SENSE_OFF_GRADE,         
+    RADAR_NEAR = SENSE_LOW_GRADE,         
+	RADAR_FAR = SENSE_HIGH_GRADE,
+	RADAR_MEDIUM,      
+}RADAR_MODE_E;
+
+
+typedef struct
+{
+	RADAR_MODE_E Mode;
+}RADAR_CONTROL_MODE;
+
+
+void DRV_Radar_SetMode(uint8_t mode);//雷达设置感应距离调节
+
+
+#endif
+ 
+
+#endif

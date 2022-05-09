@@ -1,0 +1,232 @@
+/*********************************************************************************************************************
+ * @file:      DRV_TIMER.C
+ * @author:    dengyehao
+ * @version:   V01.00
+ * @date:      2022-01-18
+ * @brief:     芯片时钟
+**********************************************************************************************************************/
+/*-------------------------------------------------文件包含---------------------------------------------------------*/
+#include "rtl876x_rcc.h"
+#include "rtl876x_tim.h"
+#include "rtl876x_nvic.h"
+#include "rtl876x_rtc.h"
+#include "app_msg.h"
+#include <app_task.h>
+
+#include "DRV_TIMER.h"
+#include "Public.h"
+/*-------------------------------------------------宏定义-----------------------------------------------------------*/
+#define RTC_COMP_INDEX          1
+#define RTC_INT_CMP_NUM         RTC_INT_CMP1
+#define RTC_COMP_VALUE          (10)     //10HZ*10  1秒钟  
+#define RTC_PRESCALER_VALUE     (3200-1) //f = 10Hz  (32000/(PRESCALER+1)).  0-4095
+#define TIMER_NUM       		TIM6
+#define TIMER_IRQN      		TIMER6_IRQ
+
+/*-------------------------------------------------局部变量定义-----------------------------------------------------*/
+static bool SystickTimerSts = 0;  
+static DRV_TimerPtr  DRV_TimerCallBackPtr;//中断回调接口指针
+static DRV_TimerPtr  DRV_RTCCallBackPtr;//中断回调接口指针
+
+/*********************************************************************************************************************
+* Function Name :  DRV_TimerInit()
+* Description   :  定时器初始化     10ms执行一次中断
+* Para          :  cmd 开关    Handler中断回调函数 
+* Return        :  void
+* 备注          :  高频不需要关，进入DLPS后自动停止，唤醒后自动开启
+*********************************************************************************************************************/
+void DRV_TimerInit(  bool cmd  ,  DRV_TimerPtr Handler ) 
+{
+	if( cmd == true ) //开启
+	{
+		if(SystickTimerSts)
+		{
+			return;
+		}
+		SystickTimerSts=true;
+		RCC_PeriphClockCmd(APBPeriph_TIMER, APBPeriph_TIMER_CLOCK, ENABLE);
+		TIM_TimeBaseInitTypeDef TIM_InitStruct;
+		TIM_StructInit(&TIM_InitStruct);
+
+		TIM_InitStruct.TIM_PWM_En = PWM_DISABLE;
+		TIM_InitStruct.TIM_Period = ((10000)*40-1) ;
+		TIM_InitStruct.TIM_Mode = TIM_Mode_UserDefine;
+		TIM_TimeBaseInit(TIMER_NUM, &TIM_InitStruct);
+
+		DRV_TimerCallBackPtr=Handler;
+		
+		/*  Enable TIMER IRQ  */
+		NVIC_InitTypeDef NVIC_InitStruct;
+		NVIC_InitStruct.NVIC_IRQChannel = TIMER_IRQN;
+		NVIC_InitStruct.NVIC_IRQChannelPriority = 3;
+		NVIC_InitStruct.NVIC_IRQChannelCmd = ENABLE;
+		NVIC_Init(&NVIC_InitStruct);
+
+		TIM_ClearINT(TIMER_NUM);
+		TIM_INTConfig(TIMER_NUM, ENABLE);
+		TIM_Cmd(TIMER_NUM, ENABLE);
+		my_printf( "DRV_TimerInit( true )\n" ); 
+	}
+	else
+	{
+		
+	}
+}
+
+
+/*********************************************************************************************************************
+* Function Name :  SystemLifeTickTimerInit
+* Description   :  系统睡眠后定时器配置  1秒心跳一次  
+* Para          :  Handler 中断入口
+* Return        :  none
+*********************************************************************************************************************/
+void DRV_LifeTickTimerInit( DRV_TimerPtr Handler ) 
+{
+    RTC_DeInit();
+    RTC_SetPrescaler(RTC_PRESCALER_VALUE);
+
+    RTC_SetComp(RTC_COMP_INDEX, RTC_COMP_VALUE);
+    RTC_MaskINTConfig(RTC_INT_CMP_NUM, DISABLE);
+    RTC_CompINTConfig(RTC_INT_CMP_NUM, ENABLE);
+
+	DRV_RTCCallBackPtr=Handler;
+    /* Config RTC interrupt */
+    NVIC_InitTypeDef NVIC_InitStruct;
+    NVIC_InitStruct.NVIC_IRQChannel = RTC_IRQn;
+    NVIC_InitStruct.NVIC_IRQChannelPriority = 3;
+    NVIC_InitStruct.NVIC_IRQChannelCmd = ENABLE;
+    NVIC_Init(&NVIC_InitStruct);
+	
+	/* Enable or disable system wake up of RTC or LPC. */
+	RTC_SystemWakeupConfig(ENABLE);
+}
+/*********************************************************************************************************************
+* Function Name :  SystemLifeTickTimerCtrl
+* Description   :  系统休眠后的生命心跳包 1秒心跳一次     
+* Para          :  0: 关闭  1: 开启
+* Return        :  void
+                   实测1分钟平均功耗6微安（包含MCU休眠3微安）
+*********************************************************************************************************************/
+void DRV_LifeTickTimerCtrl( bool cmd )
+{
+	if( cmd == true )
+	{
+		/* Start RTC */
+		RTC_RunCmd(ENABLE);
+	
+		my_printf( "SystemLifeTickTimerCtrl( true )\n" ); 
+	}
+	else if( cmd == false )
+	{
+		/* Stop RTC */
+		RTC_RunCmd(DISABLE);	
+		
+		my_printf( "SystemLifeTickTimerCtrl( false )\n" ); 
+	}
+}
+
+/*********************************************************************************************************************
+* Function Name :  Timer6_Handler
+* Description   :  高频定时器10ms中断入口
+* Para          :  
+* Return        :  
+*********************************************************************************************************************/
+void Timer6_Handler(void)
+{
+    TIM_ClearINT(TIM6);
+    TIM_Cmd(TIM6, DISABLE);
+	if(DRV_TimerCallBackPtr!=NULL)
+	{
+		( *DRV_TimerCallBackPtr )();     //给应用层提供中断入口
+	}
+	TIM_Cmd(TIM6, ENABLE);
+}
+
+/*********************************************************************************************************************
+* Function Name :  RTC_Handler
+* Description   :  RTC定时器中断入口
+* Para          :  
+* Return        :  
+*********************************************************************************************************************/
+void RTC_Handler(void)
+{
+	if (RTC_GetINTStatus(RTC_INT_CMP_NUM) == SET)
+    {
+        RTC_SetComp(RTC_COMP_INDEX, RTC_GetCounter() + RTC_COMP_VALUE);
+        RTC_ClearCompINT(RTC_COMP_INDEX);
+		if(DRV_RTCCallBackPtr!=NULL)
+		{
+			( *DRV_RTCCallBackPtr )();     //给应用层提供中断入口
+		}
+    }
+}
+
+
+
+
+
+/*********************************************************************************************************************
+* Function Name :  DRV_TaskTimerInit
+* Description   :  任务定时器
+* Para          :  
+* Return        :  
+*********************************************************************************************************************/
+#define TASK_TIMER_NUM       		TIM5
+#define TASK_TIMER_IRQN      		TIMER5_IRQ
+
+void DRV_TaskTimerInit(void)
+{
+	RCC_PeriphClockCmd(APBPeriph_TIMER, APBPeriph_TIMER_CLOCK, ENABLE);
+	TIM_TimeBaseInitTypeDef TIM_InitStruct;
+	TIM_StructInit(&TIM_InitStruct);
+
+	TIM_InitStruct.TIM_PWM_En = PWM_DISABLE;
+	TIM_InitStruct.TIM_Period = ((10000)*40-1) ;
+	TIM_InitStruct.TIM_Mode = TIM_Mode_UserDefine;
+	TIM_TimeBaseInit(TASK_TIMER_NUM, &TIM_InitStruct);
+	
+	/*  Enable TIMER IRQ  */
+	NVIC_InitTypeDef NVIC_InitStruct;
+	NVIC_InitStruct.NVIC_IRQChannel = TASK_TIMER_IRQN;
+	NVIC_InitStruct.NVIC_IRQChannelPriority = 3;
+	NVIC_InitStruct.NVIC_IRQChannelCmd = ENABLE;
+	NVIC_Init(&NVIC_InitStruct);
+
+	TIM_ClearINT(TASK_TIMER_NUM);
+	TIM_INTConfig(TASK_TIMER_NUM, ENABLE);
+	TIM_Cmd(TASK_TIMER_NUM, ENABLE);
+}
+
+/*********************************************************************************************************************
+* Function Name :  Timer5_Handler
+* Description   :  高频定时器中断入口,用于系统事件循环调度
+* Para          :  
+* Return        :  
+*********************************************************************************************************************/
+void Timer5_Handler(void)
+{
+    TIM_ClearINT(TIM5);
+    TIM_Cmd(TIM5, DISABLE);
+
+	
+    /* Send msg to app task */
+	T_IO_MSG int_uart_msg;
+
+	int_uart_msg.type = IO_MSG_TYPE_TIMER;
+	int_uart_msg.subtype = IO_MSG_TIMER_RWS;
+	if (false == app_send_msg_to_apptask(&int_uart_msg))
+	{
+		APP_PRINT_ERROR0("Send Task msg failed!");
+		//Add user code here!
+		return;
+	}
+	
+	TIM_Cmd(TIM5, ENABLE);
+}
+
+
+
+
+
+
+/*-------------------------------------------------THE FILE END-----------------------------------------------------*/

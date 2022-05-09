@@ -1,0 +1,184 @@
+/**************************************************************************** 
+* Copyright (C), 2008-2021,德施曼机电（中国）有限公司 
+* 文件名: Encrypto.c 
+* 作者：张琳
+* 版本：不做版本控制，根据实际情况修改
+* 时间：20210818
+* 内容简述：公共加解密上层调用接口
+****************************************************************************/
+
+
+/*-------------------------------------------------文件包含---------------------------------------------------------*/ 
+/* 标准头文件 */
+
+/* 内部头文件 */
+
+#include "Encrypto.h"
+#include "App_ID2.h"
+
+/* 外部头文件 */
+#include "Md5.h"
+#include "base64.h"
+#include "id2_client.h"
+
+//#if (ID2_SE_TYPE==ID2_ENCRYPT_FDW)
+	#include "ali_crypto.h"
+//#elif (ID2_TYPE==ID2_ENCRYPT_NXP)
+//	#include "irot_pal.h"
+//#endif
+
+
+/*********************************************************************************************************************
+* Function Name :  mi_md5(unsigned char * content ,int len ,unsigned char  * md5_res )
+* Description   :  MD5数据加密
+* Para          :  content = 写入数据的起始地址 len=数据长度 md5_res=加密数据存放地址
+* Return        :  md5_res 加密数据
+*********************************************************************************************************************/
+unsigned char * Encrypto_my_md5(unsigned char * content ,int len ,unsigned char  * md5_res/*the length of md5_res must be more than 16 Bytes*/ )
+{	
+	if(!md5_res || NULL==content){
+		return NULL ;
+	}
+	MD5_CTX md5Ctx;
+	MD5Init(&md5Ctx);
+	MD5Update(&md5Ctx, content, len);
+	MD5Final(&md5Ctx,md5_res);
+ 
+	return md5_res ;
+}
+/*********************************************************************************************************************
+* Function Name :  mi_my_aes(uint8 flag,uint8_t *data, int len, uint8_t *key)
+* Description   :  AES数据加密
+* Para          :  data = 写入数据的起始地址 len=数据长度 data=加密数据存放地址
+* Return        :  data 加密数据
+*********************************************************************************************************************/
+
+unsigned char * Encrypto_my_aes(ENCRYPTIO_FLAG flag,uint8_t *data, int len, uint8_t *key)
+{
+
+	if(flag==ENCRYPTION)
+	{
+		aes_encrypt_ecb(AES_CYPHER_128,data,len,key);
+	}
+	else if (flag==DECRYPTION)
+	{
+		aes_decrypt_ecb(AES_CYPHER_128,data,len,key);
+	}
+
+     return data;
+}
+
+/*********************************************************************************************************************
+* Function Name :  Encrypto_my_base64(uint8_t *data_in, int in_len, unsigned char *data_out, int *out_len)
+* Description   :  8Bit字节码的编码方式，Base64就是一种基于64个可打印字符来表示二进制数据的方法
+* Para          :  data_in = 写入数据的起始地址 len_in=输入数据长度 data_out=加密数据存放地址 out_len=输出数据长度
+* Return        :  null
+*********************************************************************************************************************/
+void  Encrypto_my_base64(uint8_t *data_in, int in_len, unsigned char *data_out, int *out_len)
+{
+	my_base64_decode(data_in,in_len,data_out,out_len);
+	return;
+}
+/*********************************************************************************************************************
+* Function Name :  Encrypto_my_sha256(uint8 flag,uint8_t *data, int len, uint8_t *key)
+* Description   :  哈希256 用于生成16字节随机数
+* Para          :  data_in = 写入数据的起始地址 len_in=输入数据长度 data_out=加密数据存放地址 out_len=输出数据长度
+* Return        :  ret 错误码
+*********************************************************************************************************************/
+unsigned int Encrypto_my_sha256(uint8_t* data_in, uint32_t in_len, uint8_t* data_out, uint32_t* out_len)
+{
+	int ret=0;
+//#if (ID2_SE_TYPE==ID2_ENCRYPT_NXP)
+//	ret=irot_pal_hash_sum(data_in,in_len,data_out,out_len,0x02);
+//	if (ret)
+//	{
+//		for(int cn=0;cn<3;cn++)
+//		{
+//		    ret= irot_pal_hash_sum(data_in,in_len,data_out,out_len,0x02);
+//			if(ret==0)
+//				break;
+//		}
+//	}
+//#elif (ID2_SE_TYPE==ID2_ENCRYPT_FDW)
+	
+	ret=ali_hash_digest(SHA256,data_in,in_len,data_out);
+	*out_len = 32;
+	if (ret)
+	{
+		for(int cn=0;cn<3;cn++)
+		{
+		    ret= ali_hash_digest(SHA256,data_in,in_len,data_out);
+			if(ret==0)
+				break;
+		}
+	}
+//#endif
+	return ret;
+}
+/*********************************************************************************************************************
+* Function Name :  Encrypto_my_id2_decrypt(uint8_t* data_in, uint32_t in_len, uint8_t* data_out, uint32_t out_len)
+* Description   :  id2解密
+* Para          :  data_in = 写入数据的起始地址 len_in=输入数据长度 data_out=加密数据存放地址 out_len=输出数据长度
+* Return        :  ret 错误码
+*********************************************************************************************************************/
+unsigned int Encrypto_my_id2_decrypt(uint8_t* data_in, uint32_t in_len, uint8_t* data_out, uint32_t out_len)
+{
+	int ret=0;
+	ret=id2_client_decrypt(data_in,in_len,data_out,&out_len);
+	if(ret)
+	{
+		for(int cn=0;cn<3;cn++)
+		{
+		    ret=id2_client_decrypt(data_in,in_len,data_out,&out_len);
+			if(ret==0)
+				break;
+		}
+	}
+	return ret;	
+}
+/*********************************************************************************************************************
+* Function Name :  Encrypto_my_id2_get_challenge_auth_code(uint8_t* challenge, uint8_t* auth_code, uint32_t len)
+* Description   :  发起挑战，获取auth_code
+* Para          :  challenge = 传入挑战数据 auth_code=要获取的auth_code   len=auth_code长度
+* Return        :  ret 错误码
+*********************************************************************************************************************/
+unsigned int Encrypto_my_id2_get_challenge_auth_code(uint8_t* challenge, uint8_t* auth_code, uint32_t len)
+{
+	int ret=0;
+	ret=id2_client_get_challenge_auth_code((const char *)challenge, NULL, 0, auth_code, &len);
+	if(ret)
+	{
+		for(int cn=0;cn<3;cn++)
+		{
+		    ret=id2_client_get_challenge_auth_code((const char *)challenge, NULL, 0, auth_code, &len);
+			if(ret==0)
+				break;
+		}
+	}
+	return ret;		
+}
+/*********************************************************************************************************************
+* Function Name :  Encrypto_my_id2_get_id(uint8_t* id2, uint32_t len)
+* Description   :  获取id2
+* Para          :  id2 = 获取的数据存放地址 out_len=输出数据长度
+* Return        :  ret 错误码
+*********************************************************************************************************************/
+unsigned int Encrypto_my_id2_get_id(uint8_t* id2, uint32_t len)
+{
+	int ret=0;
+	ret = id2_client_get_id(id2, &len);//获取ID2
+	if(ret)
+	{
+		for(int cn=0;cn<3;cn++)
+		{
+		    ret=id2_client_get_id(id2, &len);
+			if(ret==0)
+				break;
+		}
+	}
+	return ret;		
+}
+
+
+
+/*-------------------------------------------------THE FILE END-----------------------------------------------------*/

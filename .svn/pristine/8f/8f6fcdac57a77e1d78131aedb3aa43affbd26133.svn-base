@@ -1,0 +1,454 @@
+/********************************************************************************************************************
+ * @file:      HAL_Motor.c
+ * @author:    gushengchi
+ * @version:   V01.00
+ * @date:      2021-08-09
+ * @brief:     电机接口功能文件
+*********************************************************************************************************************/
+  
+/*-------------------------------------------------文件包含---------------------------------------------------------*/
+#include "HAL_MOTOR.h"
+#include "System.h"
+#include "..\DRV\DRV_Motor\DRV_Motor.h"
+#include "..\DRV\DRV_Motor\DRV_Motor_216.h"
+#include "..\DRV\DRV_Motor\DRV_Motor_218.h"
+/*-------------------------------------------------宏定义-----------------------------------------------------------*/
+ 
+
+/*-------------------------------------------------枚举定义---------------------------------------------------------*/
+
+
+/*-------------------------------------------------常量定义---------------------------------------------------------*/
+
+
+/*-------------------------------------------------全局变量定义-----------------------------------------------------*/         
+
+
+/*-------------------------------------------------局部变量定义-----------------------------------------------------*/
+ 
+ 
+/*-------------------------------------------------函数声明---------------------------------------------------------*/
+ 
+
+/*-------------------------------------------------函数定义---------------------------------------------------------*/
+
+/*********************************************************************************************************************
+* Function Name :  HAL_Motor_FileInit()
+* Description   :  相关文件初始化    
+* Para          :  none   
+* Return        :  none
+*********************************************************************************************************************/
+void HAL_Motor_FileInit( void )  
+{
+	#ifdef LOCK_BODY_212_MOTOR
+    DRV_Motor_FileInit(); 
+	#elif defined LOCK_BODY_216_MOTOR
+	DRV_Motor216_FileInit();  
+	#elif defined LOCK_BODY_218_MOTOR
+    DRV_Motor218_FileInit();  
+	#elif defined LOCK_BODY_AUTO_MOTOR
+    DRV_Motor218_FileInit();  
+	#endif 
+	return;
+}
+
+/*********************************************************************************************************************
+* Function Name :  HAL_Motor_WakeupInit()
+* Description   :  唤醒初始化    
+* Para          :  none   
+* Return        :  none
+*********************************************************************************************************************/
+void HAL_Motor_WakeupInit( void )  
+{
+	// 211锁体无唤醒初始化
+	#ifdef LOCK_BODY_216_MOTOR
+    DRV_Motor216_WakeupInit(); 
+	#elif defined LOCK_BODY_218_MOTOR
+    DRV_Motor218_WakeupInit(); 
+	#elif defined LOCK_BODY_AUTO_MOTOR
+	DRV_Motor218_WakeupInit(); 
+	#endif 
+	return;
+}
+
+/*********************************************************************************************************************
+* Function Name :  HAL_Motor_SleepInit()
+* Description   :  休眠初始化    
+* Para          :  none   
+* Return        :  none
+*********************************************************************************************************************/
+void HAL_Motor_SleepInit( void )  
+{
+	// 211锁体无休眠初始化
+	#ifdef LOCK_BODY_216_MOTOR
+	DRV_Motor216_SleepInit(); 
+	#elif defined LOCK_BODY_218_MOTOR
+    DRV_Motor218_SleepInit(); 
+	#elif defined LOCK_BODY_AUTO_MOTOR
+	DRV_Motor218_SleepInit(); 
+	#endif 
+	return;
+}
+ 
+/*********************************************************************************************************************
+* Function Name :  HAL_Motor_Tim10Ms()
+* Description   :  相关定时器    
+* Para          :  none   
+* Return        :  none
+*********************************************************************************************************************/
+void HAL_Motor_Tim10Ms( void )  
+{
+	#ifdef LOCK_BODY_212_MOTOR
+    DRV_Motor_Tim10Ms();  
+	#elif defined LOCK_BODY_216_MOTOR
+	DRV_Motor216_Tim10Ms();
+	#elif defined LOCK_BODY_218_MOTOR
+	DRV_Motor218_Tim10Ms();  
+	#elif defined LOCK_BODY_AUTO_MOTOR
+	DRV_Motor_Tim10Ms();  
+	DRV_Motor218_Tim10Ms();  
+	#endif  
+	return;
+}
+
+/*********************************************************************************************************************
+* Function Name :  HAL_Motor_Tim10Ms()
+* Description   :  相关定时器    
+* Para          :  none   
+* Return        :  none
+*********************************************************************************************************************/
+void HAL_Motor_Tim1000Ms( void )  
+{
+	#ifdef LOCK_BODY_216_MOTOR
+	DRV_Motor216_Tim1000Ms();  
+	#elif defined LOCK_BODY_218_MOTOR
+	DRV_Motor218_Tim1000Ms();  
+	#elif defined LOCK_BODY_AUTO_MOTOR
+	DRV_Motor218_Tim1000Ms();  
+	#endif  
+	return;
+}
+ 
+/*********************************************************************************************************************
+* Function Name :  HAL_Motor_OpenDoorThread()
+* Description   :  开门流程     左开是1  右开是0x55
+* Para          :  none       
+* Return        :  执行结果   -1=失败  0=执行中  1=执行完成  2=主锁舌已收回 3=开门动作执行后未推开门  
+*********************************************************************************************************************/
+int8_t HAL_Motor_OpenDoorThread( void )  
+{
+	#ifdef LOCK_BODY_212_MOTOR
+        #ifdef FRAME_PLATFORM_HALF_AUTO_ON
+        return DRV_Motor_HalfAuto_OpenDoorThread();
+        #else    
+        return DRV_Motor_OpenDoorThread(); 
+        #endif
+	#elif defined LOCK_BODY_216_MOTOR
+	return DRV_Motor216_OpenDoorThread();  
+	#elif defined LOCK_BODY_218_MOTOR
+    return DRV_Motor218_OpenDoorThread();  
+	#elif defined LOCK_BODY_AUTO_MOTOR
+    if( LockConfigMode == LOCK_BODY_218 )
+	{
+	    return DRV_Motor218_OpenDoorThread();  
+	}
+	else if( LockConfigMode == LOCK_BODY_212 )
+	{
+		return DRV_Motor_OpenDoorThread(); 
+	}
+	return 0; 
+	#endif
+}
+
+/*********************************************************************************************************************
+* Function Name :  HAL_Motor_ForceOpenDoorThread()
+* Description   :  强制执行开门流程     左开是1  右开是0x55
+* Para          :  none       
+* Return        :  执行结果   -1=失败  0=执行中  1=执行完成  2=主锁舌已收回 3=开门动作执行后未推开门  
+*********************************************************************************************************************/
+int8_t HAL_Motor_ForceOpenDoorThread( void )  
+{
+	#ifdef LOCK_BODY_212_MOTOR
+	return DRV_Motor_OpenDoorThread(); 
+	#elif defined LOCK_BODY_216_MOTOR
+	return DRV_Motor216_OpenDoorThread();  
+	#elif defined LOCK_BODY_218_MOTOR
+    return DRV_Motor218_ForceOpenDoorThread();  
+	#elif defined LOCK_BODY_AUTO_MOTOR
+    if( LockConfigMode == LOCK_BODY_218 )
+	{
+	    return DRV_Motor218_ForceOpenDoorThread();  
+	}
+	else if( LockConfigMode == LOCK_BODY_212 )
+	{
+		return DRV_Motor_OpenDoorThread(); 
+	}
+	return 0;
+	#endif
+}
+
+/*********************************************************************************************************************
+* Function Name :  HAL_Motor_CloseDoorThread()
+* Description   :  关门门流程    
+* Para          :  none   
+* Return        : 执行结果   -2=假锁 -1=失败  0=执行中  1=执行完成  
+*********************************************************************************************************************/
+int8_t HAL_Motor_CloseDoorThread( void )
+{
+	#ifdef LOCK_BODY_212_MOTOR
+	return DRV_Motor_CloseDoorThread(); 
+	#elif defined LOCK_BODY_216_MOTOR
+    return DRV_Motor216_CloseDoorThread();
+	#elif defined LOCK_BODY_218_MOTOR
+    return DRV_Motor218_CloseDoorThread(); 
+	#elif defined LOCK_BODY_AUTO_MOTOR
+    if( LockConfigMode == LOCK_BODY_218 )
+	{
+	    return DRV_Motor218_CloseDoorThread();  
+	}
+	else if( LockConfigMode == LOCK_BODY_212 )
+	{
+		return DRV_Motor_CloseDoorThread(); 
+	}
+	return 0; 
+	#endif
+}	
+
+/*********************************************************************************************************************
+* Function Name :  HAL_Motor_ForceCloseDoorThread()
+* Description   :  强制执行关门流程    
+* Para          :  none   
+* Return        : 执行结果  -1=失败  0=执行中  1=执行完成  
+*********************************************************************************************************************/
+int8_t HAL_Motor_ForceCloseDoorThread( void )
+{
+	#ifdef LOCK_BODY_212_MOTOR
+	return DRV_Motor_CloseDoorThread(); 
+	#elif defined LOCK_BODY_216_MOTOR
+    return DRV_Motor216_CloseDoorThread();
+	#elif defined LOCK_BODY_218_MOTOR
+    return DRV_Motor218_ForceCloseDoorThread(); 
+	#elif defined LOCK_BODY_AUTO_MOTOR
+    if( LockConfigMode == LOCK_BODY_218 )
+	{
+	    return DRV_Motor218_ForceCloseDoorThread();  
+	}
+	else if( LockConfigMode == LOCK_BODY_212 )
+	{
+		return DRV_Motor_CloseDoorThread(); 
+	}
+	return 0; 
+	#endif
+}	
+
+/*********************************************************************************************************************
+* Function Name :  HAL_Motor_BurnTestCloseDoorThread()
+* Description   :  老化测试强制执行关门流程    
+* Para          :  none   
+* Return        : 执行结果  -1=失败  0=执行中  1=执行完成  
+*********************************************************************************************************************/
+int8_t HAL_Motor_BurnTestCloseDoorThread( void )
+{
+	#ifdef LOCK_BODY_212_MOTOR
+	return DRV_Motor_CloseDoorThread(); 
+	#elif defined LOCK_BODY_216_MOTOR
+    return DRV_Motor216_CloseDoorThread();
+	#elif defined LOCK_BODY_218_MOTOR
+    return DRV_Motor218_BurnTestCloseDoorThread(); 
+	#elif defined LOCK_BODY_AUTO_MOTOR
+    if( LockConfigMode == LOCK_BODY_218 )
+	{
+	    return DRV_Motor218_BurnTestCloseDoorThread();  
+	}
+	else if( LockConfigMode == LOCK_BODY_212 )
+	{
+		return DRV_Motor_CloseDoorThread(); 
+	}
+	return 0; 
+	#endif
+}	
+
+/*********************************************************************************************************************
+* Function Name :  HAL_Motor_AutoLockCheck()
+* Description   :  自动锁体上锁检测
+* Para          :  pfirstflg = 状态机复位标志 
+* Return        :  0= 执行中  1= 可启动锁门  2= 检测结束
+*********************************************************************************************************************/
+uint8_t HAL_Motor_AutoLockCheck( bool *pfirstflg )
+{
+	#ifdef LOCK_BODY_212_MOTOR
+    return 0;
+	#elif defined LOCK_BODY_216_MOTOR
+    return DRV_Motor216_AutoLockCheck( pfirstflg );
+	#elif defined LOCK_BODY_218_MOTOR
+    return DRV_Motor218_AutoLockCheck( pfirstflg );
+	#elif defined LOCK_BODY_AUTO_MOTOR
+    if( LockConfigMode == LOCK_BODY_218 )
+	{
+	    return DRV_Motor218_AutoLockCheck( pfirstflg );
+	}
+	else if( LockConfigMode == LOCK_BODY_212 )
+	{
+		return 0; 
+	}
+	return 0; 
+	#endif
+}
+
+ /*********************************************************************************************************************
+* Function Name :  HAL_Motor_ForgetLockWarmCheck()
+* Description   :  门未关告警检测
+* Para          :  none
+* Return        :  0= 执行中  1= 门未关报警
+*********************************************************************************************************************/
+uint8_t HAL_Motor_ForgetLockWarmCheck( void )
+{
+	#ifdef LOCK_BODY_212_MOTOR
+	return 0;
+	#elif defined LOCK_BODY_216_MOTOR
+    return DRV_Motor216_ForgetLockWarmCheck(); 
+	#elif defined LOCK_BODY_218_MOTOR
+    return DRV_Motor218_ForgetLockWarmCheck(); 
+    #elif defined LOCK_BODY_AUTO_MOTOR
+    return DRV_Motor218_ForgetLockWarmCheck(); 
+	#endif
+}
+
+/*********************************************************************************************************************
+* Function Name :  HAL_Motor_FalseLockWarmCheck()
+* Description   :  假锁告警检测
+* Para          :  none
+* Return        :  0= 执行中  1= 假锁报警
+*********************************************************************************************************************/
+uint8_t HAL_Motor_FalseLockWarmCheck( void )
+{
+	#ifdef LOCK_BODY_212_MOTOR
+	return 0;
+	#elif defined LOCK_BODY_216_MOTOR
+    return DRV_Motor216_FalseLockWarmCheck(); 
+	#elif defined LOCK_BODY_218_MOTOR
+    return DRV_Motor218_FalseLockWarmCheck(); 
+    #elif defined LOCK_BODY_AUTO_MOTOR
+    return DRV_Motor218_FalseLockWarmCheck(); 
+	#endif
+}
+
+/*********************************************************************************************************************
+* Function Name :  HAL_Motor_HandleTryForbitWarmCheck()
+* Description   :  把手试玩告警检测
+* Para          :  none
+* Return        :  0= 执行中  1= 假锁报警
+*********************************************************************************************************************/
+uint8_t HAL_Motor_HandleTryForbitWarmCheck( void )
+{
+	#ifdef LOCK_BODY_212_MOTOR
+	return 0;
+	#elif defined LOCK_BODY_216_MOTOR
+    return DRV_Motor216_HandleTryForbitWarmCheck();
+	#elif defined LOCK_BODY_218_MOTOR
+    return DRV_Motor218_HandleTryForbitWarmCheck();
+    #elif defined LOCK_BODY_AUTO_MOTOR
+    return DRV_Motor218_HandleTryForbitWarmCheck();
+	#endif
+}
+
+/*********************************************************************************************************************
+* Function Name :  HAL_Motor_ReleaseTryProtectCheck()
+* Description   :  禁试解除信号检测
+* Para          :  none
+* Return        :  0= 未检测到  1= 已检测到
+*********************************************************************************************************************/
+uint8_t HAL_Motor_ReleaseTryProtectCheck( void )
+{
+    uint8_t ret = 0;
+	#ifdef LOCK_BODY_216_MOTOR
+    ret = DRV_Motor216_ReleaseTryProtectCheck();
+	#elif defined LOCK_BODY_218_MOTOR
+    ret = DRV_Motor218_ReleaseTryProtectCheck();
+    #elif defined LOCK_BODY_AUTO_MOTOR
+    ret = DRV_Motor218_ReleaseTryProtectCheck();
+	#endif
+	return ret;
+	
+}
+
+/*********************************************************************************************************************
+* Function Name :  HAL_Motor_DefendActionCheck()
+* Description   :  触发一键布防告警信号检测
+* Para          :  resetflg :  清除状态标志   true= 清除  false= 不清除
+* Return        :  0= 未检测到  1= 已检测到
+*********************************************************************************************************************/
+uint8_t HAL_Motor_DefendActionCheck( bool resetflg )
+{
+    uint8_t ret = 0;
+	#ifdef LOCK_BODY_216_MOTOR
+    ret = DRV_Motor216_DefendActionCheck( resetflg );
+	#elif defined LOCK_BODY_218_MOTOR
+    ret = DRV_Motor218_DefendActionCheck( resetflg );
+    #elif defined LOCK_BODY_AUTO_MOTOR
+    ret = DRV_Motor218_DefendActionCheck( resetflg );
+	#endif
+	return ret;
+}
+
+/*********************************************************************************************************************
+* Function Name :  HAL_Motor_GetForgetLockWarmState()
+* Description   :  获取门未关告警状态  休眠唤醒使用
+* Para          :  none
+* Return        :  0= normal  1= 门未关报警
+*********************************************************************************************************************/
+bool HAL_Motor_GetForgetLockWarmState( void )
+{
+	#ifdef LOCK_BODY_212_MOTOR
+	return 0;
+	#elif defined LOCK_BODY_216_MOTOR
+    return DRV_Motor216_GetForgetLockWarmState(); 
+	#elif defined LOCK_BODY_218_MOTOR
+    return DRV_Motor218_GetForgetLockWarmState(); 
+    #elif defined LOCK_BODY_AUTO_MOTOR
+    return DRV_Motor218_GetForgetLockWarmState(); 
+	#endif
+}
+
+/*********************************************************************************************************************
+* Function Name :  HAL_Motor_GetFalseLockWarmState()
+* Description   :  获取假锁告警状态  休眠唤醒使用
+* Para          :  none
+* Return        :  0= normal  1= 假锁报警
+*********************************************************************************************************************/
+bool HAL_Motor_GetFalseLockWarmState( void )
+{
+	#ifdef LOCK_BODY_212_MOTOR
+	return 0;
+	#elif defined LOCK_BODY_216_MOTOR
+    return DRV_Motor216_GetFalseLockWarmState(); 
+	#elif defined LOCK_BODY_218_MOTOR
+    return DRV_Motor218_GetFalseLockWarmState(); 
+    #elif defined LOCK_BODY_AUTO_MOTOR
+    return DRV_Motor218_GetFalseLockWarmState(); 
+	#endif
+}
+
+/*********************************************************************************************************************
+* Function Name :  HAL_Motor_GetHandleTryForbitWarmState()
+* Description   :  把手试玩告警状态  休眠唤醒使用
+* Para          :  none
+* Return        :  0= normal  1= 假锁报警
+*********************************************************************************************************************/
+bool HAL_Motor_GetHandleTryForbitWarmState( void )
+{
+	#ifdef LOCK_BODY_212_MOTOR
+	return 0;
+	#elif defined LOCK_BODY_216_MOTOR
+	return DRV_Motor216_HandleTryForbitWarmState();
+	#elif defined LOCK_BODY_218_MOTOR
+	return DRV_Motor218_GetHandleTryForbitWarmState();
+    #elif defined LOCK_BODY_AUTO_MOTOR
+	return DRV_Motor218_GetHandleTryForbitWarmState();
+	#endif
+}
+
+ 
+
+/*-------------------------------------------------THE FILE END-----------------------------------------------------*/
+

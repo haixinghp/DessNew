@@ -1,0 +1,300 @@
+/********************************************************************************************************************
+ * @file:        DRV_NCA9555.c
+ * @author:      gushengchi
+ * @version:     V01.00
+ * @date:        2021-07-27
+ * @Description: 芯片NCA9555端口扩展芯片  IIC接口
+ * @ChangeList:  01. 初版
+*********************************************************************************************************************/
+  
+/*-------------------------------------------------文件包含---------------------------------------------------------*/
+#include "DRV_NCA9555.h" 
+#include "LockConfig.h"
+#include "DRV_GPIO.h"
+/*-------------------------------------------------宏定义-----------------------------------------------------------*/ 
+#define  M_IIC_SDA0_GPIO_PIN       M_SDA0_GPIO_PIN        
+#define  M_IIC_SCL0_GPIO_PIN       M_SCL0_GPIO_PIN        
+#define  M_IIC_SDA1_GPIO_PIN       M_SDA1_GPIO_PIN       
+#define  M_IIC_SCL1_GPIO_PIN       M_SCL1_GPIO_PIN     
+ 
+#define  CHIP_PCA9555_NUM          2       //芯片总个数
+ 
+/*--------芯片内部寄存器----------*/
+#define  PCA9555_REG_IN0         0x00                        //  定义输入寄存器0地址    
+#define  PCA9555_REG_IN1         0x01                        //  定义输入寄存器1地址    
+#define  PCA9555_REG_OUT0        0x02                        //  定义输出寄存器0地址    
+#define  PCA9555_REG_OUT1        0x03                        //  定义输出寄存器1地址    
+#define  PCA9555_REG_POL0        0x04                        //  定义极性反转寄存器0地址    
+#define  PCA9555_REG_POL1        0x05                        //  定义极性反转寄存器1地址 
+#define  PCA9555_REG_CFG0        0x06                        //  定义方向配置寄存器0地址    
+#define  PCA9555_REG_CFG1        0x07                        //  定义方向配置寄存器1地址    
+/*-------------------------------------------------枚举定义---------------------------------------------------------*/
+
+
+/*-------------------------------------------------常量定义---------------------------------------------------------*/
+
+
+/*-------------------------------------------------全局变量定义-----------------------------------------------------*/         
+
+
+/*-------------------------------------------------局部变量定义-----------------------------------------------------*/
+static PinDefine_U  PinDirSet[ CHIP_PCA9555_NUM ];
+static PinDefine_U  PinPoloSet[ CHIP_PCA9555_NUM ];
+static PinDefine_U  PinCtrlSet[ CHIP_PCA9555_NUM ];
+
+static PinDefine_U  *PPinDirSet  = PinDirSet;
+static PinDefine_U  *PPinPoloSet = PinPoloSet;
+static PinDefine_U  *PPinCtrlSet = PinCtrlSet;
+/*-------------------------------------------------函数声明---------------------------------------------------------*/
+ 
+
+/*-------------------------------------------------函数定义---------------------------------------------------------*/
+
+/*********************************************************************************************************************
+* Function Name :  DRV_NCA9555_FileInit()
+* Description   :  功能文件初始化   所有端口都默认设置为输入
+* Para          :  无
+* Return        :  void
+*********************************************************************************************************************/
+void DRV_NCA9555_FileInit( void ) 
+{
+    DRV_GpioInputPullup( M_IIC_SDA0_GPIO_PIN ); 
+	DRV_GpioInputPullup( M_IIC_SCL0_GPIO_PIN ); 
+	DRV_GpioInputPullup( M_IIC_SDA1_GPIO_PIN ); 
+	DRV_GpioInputPullup( M_IIC_SCL1_GPIO_PIN ); 
+	
+	for(uint8_t i=0; i<CHIP_PCA9555_NUM; i++)
+	{
+		PinDirSet[ i ].data  = 0xFFFF;
+		PinPoloSet[ i ].data = 0x0000;
+		PinCtrlSet[ i ].data = 0xFFFF;
+	}	
+	return;
+}
+
+/*********************************************************************************************************************
+* Function Name :  DRV_NCA9555_WakeupInit()
+* Description   :  唤醒后配置
+* Para          :  无
+* Return        :  void
+*********************************************************************************************************************/
+void DRV_NCA9555_WakeupInit( void ) 
+{
+    DRV_GpioInputPullup( M_IIC_SDA0_GPIO_PIN ); 
+	DRV_GpioInputPullup( M_IIC_SCL0_GPIO_PIN ); 
+	DRV_GpioInputPullup( M_IIC_SDA1_GPIO_PIN ); 
+	DRV_GpioInputPullup( M_IIC_SCL1_GPIO_PIN ); 
+	return;
+}
+
+/*********************************************************************************************************************
+* Function Name :  DRV_NCA9555_SleepInit()
+* Description   :  休眠配置
+* Para          :  无
+* Return        :  void
+*********************************************************************************************************************/
+void DRV_NCA9555_SleepInit( void ) 
+{
+	DRV_GpioInputPullnull( M_IIC_SDA0_GPIO_PIN ); 
+	DRV_GpioInputPullnull( M_IIC_SCL0_GPIO_PIN ); 
+	DRV_GpioInputPullnull( M_IIC_SDA1_GPIO_PIN ); 
+	DRV_GpioInputPullnull( M_IIC_SCL1_GPIO_PIN );
+	return; 
+}
+ 
+/*********************************************************************************************************************
+* Function Name :  DRV_NCA9555_SendBytes()
+* Description   :  扩展芯片通信之发送多个数据接口
+* Para          :  channel= IIC通道  deviceAddr= 设备地址  startAddr = 寄存器地址  pdata=待写入数据的指针 len=数据长度
+* Return        :  I2C_FALSE = 失败  I2C_TRUE = 成功
+*********************************************************************************************************************/
+static uint8_t DRV_NCA9555_SendBytes( DRV_IIC_CHANNEL_E channel ,uint8_t deviceAddr, uint8_t startAddr, const uint8_t *pdata, uint16_t len ) 
+{
+   DRV_IIC_ERROR_E  ret = DRV_IICWrite( channel ,deviceAddr, startAddr, pdata, len);
+   if( I2C_SUCCESS != ret )
+	   return I2C_FALSE;
+
+   return I2C_TRUE;		
+}
+
+/*********************************************************************************************************************
+* Function Name :  DRV_NCA9555_GetBytes()
+* Description   :  扩展芯片通信之读取多个数据接口
+* Para          :  channel= IIC通道  deviceAddr= 设备地址  startAddr = 寄存器地址  pdata=待读取数据的指针 len=数据长度
+* Return        :  I2C_FALSE = 失败  I2C_TRUE = 成功
+*********************************************************************************************************************/
+static uint8_t DRV_NCA9555_GetBytes( DRV_IIC_CHANNEL_E channel ,uint8_t deviceAddr, uint8_t startAddr, uint8_t *pdata, uint16_t len ) 
+{
+   DRV_IIC_ERROR_E  ret = DRV_IICReadByte( channel ,deviceAddr, startAddr, pdata, len );
+   if( I2C_SUCCESS != ret )
+	   return I2C_FALSE;
+	
+   return I2C_TRUE;
+}
+
+/*********************************************************************************************************************
+* Function Name :  DRV_NCA9555_PinDirectConfig()
+* Description   :  所有引脚方向配置   
+* Para          :  channel= IIC通道  deviceAddr= 设备地址 portPin=引脚配置
+* Return        :  I2C_FALSE = 失败  I2C_TRUE = 成功
+*********************************************************************************************************************/
+static uint8_t DRV_NCA9555_PortDirectConfig( DRV_IIC_CHANNEL_E channel ,uint8_t deviceAddr, PinDefine_U portPin ) 
+{
+   uint8_t  ret;
+   ret = DRV_NCA9555_SendBytes( channel, deviceAddr, PCA9555_REG_CFG0, portPin.tab, sizeof portPin.tab ); 
+   if( I2C_SUCCESS != ret )
+	   return I2C_FALSE;
+	
+   return I2C_TRUE;
+}
+
+/*********************************************************************************************************************
+* Function Name :  DRV_NCA9555_PinPoloConfig()
+* Description   :  所有输入引脚极性配置
+* Para          :  channel= IIC通道  deviceAddr= 设备地址  portPin=引脚配置
+* Return        :  I2C_FALSE = 失败  I2C_TRUE = 成功
+*********************************************************************************************************************/
+static uint8_t DRV_NCA9555_PortPoloConfig( DRV_IIC_CHANNEL_E channel ,uint8_t deviceAddr, PinDefine_U portPin ) 
+{
+   uint8_t  ret;
+   ret = DRV_NCA9555_SendBytes( channel, deviceAddr, PCA9555_REG_POL0, portPin.tab, sizeof portPin.tab ); 
+   if( I2C_SUCCESS != ret )
+	   return  I2C_FALSE;
+
+   return I2C_TRUE;
+}
+
+///*********************************************************************************************************************
+//* Function Name :  DRV_NCA9555_PortSet()
+//* Description   :  端口输出
+//* Para          :  channel= IIC通道  deviceAddr= 设备地址  portPin=引脚配置
+//* Return        :  I2C_FALSE = 失败  I2C_TRUE = 成功
+//*********************************************************************************************************************/
+//static uint8_t DRV_NCA9555_PortSet( DRV_IIC_CHANNEL_E channel ,uint8_t deviceAddr, PinDefine_U portPin ) 
+//{
+//   uint8_t  ret;
+//   ret = DRV_NCA9555_SendBytes( channel, deviceAddr, PCA9555_REG_OUT0, portPin.tab, 2 ); 
+//   if( I2C_SUCCESS != ret )
+//	   return  I2C_FALSE;
+
+//   return I2C_TRUE;
+//}
+ 
+/*********************************************************************************************************************
+* Function Name :  DRV_NCA9555_PinDirInit()
+* Description   :  单个引脚方向配置
+* Para          :  channel= IIC通道  deviceAddr= 设备地址  pinNo= 引脚编号  dirMode= 输入输出方向
+* Return        :  I2C_FALSE = 失败  I2C_TRUE = 成功
+*********************************************************************************************************************/
+uint8_t DRV_NCA9555_PinDirInit( CHIP_NO_E chipNo, DRV_IIC_CHANNEL_E channel ,uint8_t deviceAddr, uint16_t pinNo, PIN_DIR_E dirMode ) 
+{
+   PinDefine_U portPin;
+   PinDefine_U  *pdata;
+
+   if( pinNo >= PIN_OFFSET )
+   {
+	  return 0xff; 
+   }
+	
+   pdata = PPinDirSet + chipNo;               
+	
+   if( DIR_OUT == dirMode )
+   {
+	  pdata->data &= ~(1 << pinNo);  
+   }
+   else 
+   {
+	  pdata->data |= (1 << pinNo);   
+   }
+   portPin.data = pdata->data;
+	
+   return DRV_NCA9555_PortDirectConfig( channel, deviceAddr, portPin ); 
+}
+
+/*********************************************************************************************************************
+* Function Name :  DRV_NCA9555_PinPoloInit()
+* Description   :  单个引脚极性设置   输入时后可配置
+* Para          :  channel= IIC通道  deviceAddr= 设备地址  pinNo= 引脚编号  poloMode= 输入极性配置
+* Return        :  I2C_FALSE = 失败  I2C_TRUE = 成功
+*********************************************************************************************************************/
+uint8_t DRV_NCA9555_PinPoloInit( CHIP_NO_E chipNo, DRV_IIC_CHANNEL_E channel ,uint8_t deviceAddr, uint16_t pinNo, PIN_POLO_E poloMode ) 
+{
+   PinDefine_U  portPin;
+   PinDefine_U  *pdata;
+	
+   if( pinNo >= PIN_OFFSET )
+   {
+	  return 0xff; 
+   }
+	
+   pdata = PPinPoloSet + chipNo;
+   if( POLO_RETTAIN == poloMode )
+   {
+	  pdata->data &= ~(1 << pinNo);  
+   }
+   else 
+   {
+	  pdata->data |= (1 << pinNo);   
+   }
+   portPin.data = pdata->data;
+	
+   return DRV_NCA9555_PortPoloConfig( channel, deviceAddr, portPin ); 
+}
+
+/*********************************************************************************************************************
+* Function Name :  DRV_NCA9555_PinSet()
+* Description   :  单个引脚控制
+* Para          :  channel= IIC通道  deviceAddr= 设备地址  pinNo= 引脚编号  pinSet= 输出类型
+* Return        :  I2C_FALSE = 失败  I2C_TRUE = 成功
+*********************************************************************************************************************/
+uint8_t DRV_NCA9555_PinSet( CHIP_NO_E chipNo, DRV_IIC_CHANNEL_E channel ,uint8_t deviceAddr, uint16_t pinNo, PIN_SET_E pinSet ) 
+{
+   PinDefine_U portPin;
+   PinDefine_U  *pdata;
+   if( pinNo >= PIN_OFFSET )
+   {
+	  return 0xff; 
+   }
+   pdata = PPinCtrlSet + chipNo;
+   if( OUT_LOW == pinSet )
+   {
+	  pdata->data &= ~(1 << pinNo);  
+   }
+   else 
+   {
+	  pdata->data |= (1 << pinNo);   
+   }
+   portPin.data = pdata->data;
+	
+   uint8_t ret = DRV_NCA9555_SendBytes( channel, deviceAddr, PCA9555_REG_OUT0, portPin.tab, 2 );
+	
+   return ret;
+}
+
+/*********************************************************************************************************************
+* Function Name :  DRV_NCA9555_PinGet()
+* Description   :  获取引脚状态
+* Para          :  channel= IIC通道  deviceAddr= 设备地址  pinNo= 引脚编号 
+* Return        :  IN_LOW = 低电平  IN_HIGH = 高电平
+*********************************************************************************************************************/
+PIN_GET_E DRV_NCA9555_PinGet( DRV_IIC_CHANNEL_E channel ,uint8_t deviceAddr, uint16_t pinNo ) 
+{
+   PinDefine_U portPin;
+   if( pinNo >= PIN_OFFSET )
+   {
+	  return IN_DEFAULT; 
+   }
+   uint8_t ret = DRV_NCA9555_GetBytes( channel, deviceAddr, PCA9555_REG_IN0, portPin.tab, 2 ); 
+   if( ret == I2C_FALSE )
+	   return IN_DEFAULT;
+   
+   portPin.data &= (1 << pinNo);  
+   if( portPin.data )
+	   return IN_HIGH;
+   
+   return IN_LOW; 
+}
+ 
+ 
+/*----------------------------------------------THE FILE END--------------------------------------------------------*/ 
+

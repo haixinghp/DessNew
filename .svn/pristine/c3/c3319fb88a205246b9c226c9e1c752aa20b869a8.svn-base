@@ -1,0 +1,956 @@
+/**************************************************************************** 
+* Copyright (C), 2008-2021,德施曼机电（中国）有限公司 
+* 文件名: FACE.c 
+* 作者：邓业豪
+* 版本：V01
+* 时间：20211017
+* 内容简述：  人脸模组协议及驱动
+****************************************************************************/
+
+/* 标准头文件 */
+#include "stdint.h"
+#include "string.h"
+
+/* 内部头文件 */
+ 
+#include "DRV_GPIO.h"
+#include "..\DRV\DRV_EXPORT\DRV_74HC4052.h"
+#include "..\HAL\HAL_EXPORT\HAL_EXPORT.h"
+#include "..\HAL\HAL_RTC\HAL_RTC.h"
+#include "..\HAL\HAL_UART\HAL_UART.h"
+#include "..\APP\System.h"
+#include "LockConfig.h"
+
+#include "Face.h"
+#include "Encrypto.h"
+#include "App_WIFI.h" 
+#if defined FACE_FUNCTION_ON  || defined IRIS_FUNCTION_ON
+
+
+/*-------------------------------------------------宏定义-----------------------------------------------------------*/
+//硬件串口及电源
+#define FACE_RX_PIN       M_UART_RX_GPIO_PIN     //RX引脚
+#define FACE_TX_PIN       M_UART_TX_GPIO_PIN     //TX引脚
+#define FACE_RX_SlEEP     DRV_GpioDisconnect( FACE_RX_PIN)     //RX引脚
+#define FACE_TX_SlEEP     DRV_GpioDisconnect( FACE_TX_PIN)    //TX引脚
+#if defined OB_CAM_FUNCTION_ON
+#define CAM_POW_INIT     HAL_EXPORT_PinInit(EM_POW_OBCAM,DIR_OUT,POLO_RETTAIN)
+#define CAM_POW_OFF       HAL_EXPORT_PinSet( EM_POW_OBCAM, OUT_LOW)
+#define CAM_POW_ON      HAL_EXPORT_PinSet( EM_POW_OBCAM, OUT_HIGH)
+#elif defined ST_CAM_FUNCTION_ON
+#define CAM_POW_INIT     HAL_EXPORT_PinInit(EM_POW_STCAM,DIR_OUT,POLO_RETTAIN)
+#define CAM_POW_OFF       HAL_EXPORT_PinSet( EM_POW_STCAM, OUT_HIGH)
+#define CAM_POW_ON      HAL_EXPORT_PinSet( EM_POW_STCAM, OUT_LOW)
+#define STWIFI_POW_INIT     HAL_EXPORT_PinInit(EM_POW_STWIFI,DIR_OUT,POLO_RETTAIN)
+#define STWIFI_POW_OFF       HAL_EXPORT_PinSet( EM_POW_STWIFI, OUT_LOW)
+#define STWIFI_POW_ON      HAL_EXPORT_PinSet( EM_POW_STWIFI, OUT_HIGH)
+#endif
+#define FACE_POW_INIT     HAL_EXPORT_PinInit(EM_POW_FACE,DIR_OUT,POLO_RETTAIN)
+#define FACE_POW_ON       HAL_EXPORT_PinSet( EM_POW_FACE, OUT_LOW)
+#define FACE_POW_OFF      HAL_EXPORT_PinSet( EM_POW_FACE, OUT_HIGH)
+#define FACE_CAM_CHANGE_INIT     	HAL_EXPORT_PinInit(EM_CAM_CHANGE,DIR_OUT,POLO_RETTAIN)
+#define FACE_CAM_CHANGE_TO_FACE     HAL_EXPORT_PinSet( EM_CAM_CHANGE, OUT_HIGH)     //默认拉高
+#define FACE_CAM_CHANGE_TO_CAM      HAL_EXPORT_PinSet( EM_CAM_CHANGE, OUT_LOW)
+#define FACE_BAUDRATE     UART_BAUD_RATE_115200   //波特率
+#define FACE_UTRT_SWITCH_ON       DRV_74HC0452_UartSelect(HW_74HC4052_UART_FACE)    //模拟开关切换 
+#define FACE_UTRT_SWITCH_OFF      DRV_74HC0452_UartSelect(HW_74HC4052_UART_OFF)
+
+//包头-------------------------------------
+#define FACE_HEAD_H         0
+#define FACE_HEAD_L         1
+//密文接收协议格式-------------------------
+#define FACE_ALL_LEN_H      	2
+#define FACE_ALL_LEN_L      	3
+#define FACE_MSG_ID         	4
+#define FACE_REPLY_LEN_H    	5  //REPLY 包序
+#define FACE_REPLY_LEN_L    	6
+#define FACE_REPLY_MID      	7
+#define FACE_REPLY_RESULT   	8
+#define FACE_REPLY_DATA     	9
+#define FACE_NOTE_LEN_H     	5  //NOTE 包序
+#define FACE_NOTE_LEN_L     	6
+#define FACE_NOTE_NID       	7  
+#define FACE_NOTE_DATA      	8
+#define FACE_IMAGE_LEN_H     	5  //IMAGE 包序
+#define FACE_IMAGE_LEN_L     	6
+#define FACE_IMAGE_DATA      	7
+//明文接收协议格式-------------------------
+#define FACE_DIR_MSG_ID         2  
+#define FACE_DIR_LEN_H          3  
+#define FACE_DIR_LEN_L          4
+#define FACE_DIR_REPLY_MID      5 //REPLY 包序
+#define FACE_DIR_REPLY_RESULT   6
+#define FACE_DIR_REPLY_DATA     7
+#define FACE_DIR_NOTE_NID       5  
+#define FACE_DIR_NOTE_DATA      6
+//明文发送协议格式-------------------------
+#define FACE_TX_ALL_LEN_H       2  //发送 包序
+#define FACE_TX_ALL_LEN_L       3
+#define FACE_TX_MID             4 
+#define FACE_TX_DATA_H    	    5  //REPLY 包序
+#define FACE_TX_DATA_L       	6
+#define FACE_TX_DATA         	7
+/*-------------------------------------------------结构体-----------------------------------------------------------*/
+static FACE_CONTROL  FaceControl;    //数据收发
+FACE_MSGTYPE  FaceMsgType;           //消息解析
+APP_FACE_WORK_PRO  AppFaceWorkPro;   //工作流程
+FACE_WIFISTATUS FaceWifiStatus;      //网络状态
+
+static uint8_t NetWorkState=MEDIA_STATE_ERROR; //默认断网
+
+uint8_t FaceErrorSystick = 0;
+uint16_t TimeoutSystick = 0;
+MODUAL_STATE_E Modual_State;
+FACE_IMAGE FaceImage;
+/***************************************************************************************
+**函数名:       DRV_FACE_Tim10Ms
+**功能描述:     计时处理，用于应答包时间控制
+**输入参数:     
+**输出参数:    
+**备注:         注意需要放在10ms定时器中断中
+****************************************************************************************/
+void ServerFaceTim10Ms (void)
+{
+	if(FaceControl.Systick)
+	{
+		FaceControl.Systick--;
+	}
+	if(TimeoutSystick)
+	{
+		TimeoutSystick--;
+	}
+}
+
+
+
+/***************************************************************************************
+**函数名:       FaceUartWakeUp
+**功能描述:     串口开启、切换模拟开关
+**输入参数:      
+**输出参数:     
+**备注:        
+****************************************************************************************/
+void FaceUartWakeUp (void)
+{
+	//串口模拟开关切换
+	FACE_UTRT_SWITCH_ON;	
+
+	//串口初始化
+	//串口初始化
+	UartCfg_S uartCfg={0};
+	uartCfg.BaudRate = FACE_BAUDRATE;
+	uartCfg.DataBit = DATA_8_BIT;
+	uartCfg.StopBit = STOP_1_BIT;
+	uartCfg.ParityType = PARITY_NONE;
+	uartCfg.RxInerruptEn = INT_ENABLE;
+	uartCfg.TxInerruptEn = INT_DISENABLE;
+	HAL_Uart_ConfigInit( E_FACE_UART, uartCfg );
+	
+	#if defined OB_CAM_FUNCTION_ON//二代人脸格式(奥比)
+	FACE_CAM_CHANGE_INIT;    //奥比猫眼串口及供电切换
+	if(FaceWifiStatus.Networking)
+	{
+		if(AppFaceWorkPro.TaskNum == FACE_CMD_START_OTA)
+		{
+			FACE_POW_ON;//OTA模组是给人脸电源上电
+		}
+		CAM_POW_ON;
+		FACE_CAM_CHANGE_TO_CAM;
+		my_printf("OBFaceWifiStatus.Networking FACE_CAM_CHANGE_TO_CAM\n");
+	}
+	else
+	{
+		//上电
+		FACE_CAM_CHANGE_TO_FACE;
+		FACE_POW_INIT;
+		FACE_POW_ON;
+		my_printf("OBFACE_CAM_CHANGE_TO_FACE\n");
+		my_printf("FACE_UartWakeUp \n");
+	}
+	#elif defined ST_CAM_FUNCTION_ON //二代人脸格式（商汤）
+	FACE_CAM_CHANGE_INIT;    //商汤猫眼串口及供电切换
+	if(FaceWifiStatus.Networking)
+	{
+//		FACE_CAM_CHANGE_TO_CAM;
+		STWIFI_POW_INIT;
+		CAM_POW_INIT;
+		CAM_POW_ON;
+		STWIFI_POW_ON;
+		my_printf("STFaceWifiStatus.Networking FACE_CAM_CHANGE_TO_CAM\n");
+	}
+	else
+	{
+		//上电
+		FACE_CAM_CHANGE_TO_FACE;
+		FACE_POW_INIT;
+		FACE_POW_ON;
+		my_printf("STFACE_CAM_CHANGE_TO_FACE\n");
+		my_printf("FACE_UartWakeUp \n");
+	}
+	#elif defined FACE_FUNCTION_ON || defined IRIS_FUNCTION_ON
+		//上电
+		FACE_POW_INIT;
+		FACE_POW_ON;
+	#endif
+
+	FaceControl.State=FACE_WAIT_READY; //等模组ready
+//	FaceControl.Systick=FACE_READY_TIMEOUT_2S/10; //唤醒2秒超时
+	FaceControl.Systick=500; //唤醒2秒超时
+} 
+
+
+/***************************************************************************************
+**函数名:       FacePowerDown
+**功能描述:     串口释放、切换模拟开关
+**输入参数:      
+**输出参数:     
+**备注:        
+****************************************************************************************/
+void FacePowerDown (void)
+{
+	//关串口
+	HAL_Uart_DeInit( E_FACE_UART );
+	
+	//断电
+	FACE_POW_INIT;
+	FACE_POW_OFF;
+	#if defined OB_CAM_FUNCTION_ON//二代人脸格式(奥比)
+	FACE_CAM_CHANGE_TO_FACE;
+	if((SystemSeting.SysWifiSingle) || (SystemSeting.SysWifiMainSw == FUNCTION_DISABLE))//门铃单双向或wifi未配网打开
+	{
+		CAM_POW_INIT;
+		CAM_POW_OFF;//关闭wifi电源
+		my_printf("CAM_POW_OFF\n");
+	}
+	#elif defined ST_CAM_FUNCTION_ON //二代人脸格式（商汤）
+	FACE_CAM_CHANGE_TO_FACE;
+	CAM_POW_OFF;
+	if((SystemSeting.SysWifiSingle) || (SystemSeting.SysWifiMainSw == FUNCTION_DISABLE))//门铃单双向或wifi未配网打开
+	{
+		STWIFI_POW_INIT;
+		STWIFI_POW_OFF;//关闭wifi电源
+		my_printf("STWIFI_POW_OFF\n");
+	}
+	#endif
+	FACE_TX_SlEEP;
+	FACE_RX_SlEEP;
+	//串口模拟开关切换
+	FACE_UTRT_SWITCH_OFF;	
+	
+	my_printf("FacePowerDown \n");
+	memset(&FaceControl,0,sizeof(FaceControl));//清BUF	
+	memset(&FaceMsgType,0,sizeof(FaceMsgType));//清BUF	
+	memset(&AppFaceWorkPro,0,sizeof(AppFaceWorkPro));//清BUF	
+	memset(&FaceWifiStatus,0,sizeof(FaceWifiStatus));//清BUF
+}
+
+/***************************************************************************************
+**函数名:       FacePowerDown
+**功能描述:     串口释放、切换模拟开关
+**输入参数:      
+**输出参数:     
+**备注:        
+****************************************************************************************/
+void CamWifiPowerDown(void)
+{
+	#if defined OB_CAM_FUNCTION_ON || defined ST_CAM_FUNCTION_ON //二代人脸格式
+	CAM_POW_OFF;
+	#endif
+}
+
+/***************************************************************************************
+**函数名:       FaceSecretKey
+**功能描述:     根据随机数计算密钥
+**输入参数:     
+**输出参数:    
+**备注:        
+****************************************************************************************/
+static void FaceSecretKey (uint8_t *random )
+{
+	uint8_t key_temp[16], key_temp_b[32];
+	Encrypto_my_md5(random,4,key_temp); //计算MD5
+	for ( uint8_t i = 0; i < 32; i++)
+    {
+        if(i%2) //低字节
+        {
+            key_temp_b[i]=key_temp[i/2]&0x0f;
+        }
+        else
+        {
+            key_temp_b[i]=key_temp[i/2]>>4;
+        }
+    }
+	//默认KEY，后续需要更改KEY
+	const uint8_t key[16]= { 6,18,7, 3, 13,13,23,4, 8,1,0, 25, 9,2, 2, 7};
+	
+    for ( uint8_t i = 0; i < 16; i++)
+    {
+        FaceControl.AesKey[i]=key_temp_b[key[i]];
+        if(FaceControl.AesKey[i]<=9)
+        {
+            FaceControl.AesKey[i]+=0x30;
+        }
+        else
+        {
+            FaceControl.AesKey[i]+=87;
+        }
+    }
+	memcpy(WifiLockMeg.PhotoAES,FaceControl.AesKey,16);
+	FaceControl.encryption=1; //使能加密
+}
+
+/***************************************************************************************
+**函数名:       FaceSendInit
+**功能描述:     握手初始化，约定密钥
+**输入参数:     
+**输出参数:    
+**备注:        
+****************************************************************************************/
+static void FaceSendInit (void)
+{
+	uint8_t i=0;
+	uint8_t tx_data[22] = {0};      
+	
+	//一代人脸长度10 二代人脸长度22
+	tx_data[i++]=0xEF;
+	tx_data[i++]=0xAA;
+	tx_data[i++]=FACE_CMD_INIT; //MID_INIT code:人脸0x50 人脸+猫眼0x25	
+	tx_data[i++]=0;
+	tx_data[i++]=4; //长度
+	PUBLIC_GenerateRandVec(&tx_data[5],4); //随机数4字节
+	i+=4;
+	#if defined OB_CAM_FUNCTION_ON || defined ST_CAM_FUNCTION_ON //二代人脸格式
+	tx_data[4]=16; //长度
+	tx_data[2]=FACE_CMD_CAM_INIT ; //MID_INIT code:人脸0x50 人脸+猫眼0x25	
+	tx_data[i++]= 1; // 1：AES 加密（默认）
+	tx_data[i++]= Rtc_Real_Time.timestamp >>24; //当前时间，用于同步模组的系统时间
+	tx_data[i++]= Rtc_Real_Time.timestamp >>16;
+	tx_data[i++]= Rtc_Real_Time.timestamp >>8;
+	tx_data[i++]= Rtc_Real_Time.timestamp >>0;
+	tx_data[i++]= FaceWifiStatus.Networking; //网络状态
+	tx_data[i++]= 10;// 云业务完成后的等待时间 固定10秒
+	tx_data[i++]= 0; // 商汤预留  enable nr process, 1:enable, 0:disable, default 0
+	tx_data[i++]= 0; // 商汤预留  0:PM_DEFAULT 1:PM_LOW 2:PM_HIGH
+	tx_data[i++]= 95;// 商汤专用  effective value:10-99,crop ratio = crop_ratio / 100, other values:not crop
+	tx_data[i++]= 0; // 商汤预留
+	tx_data[i++]= 0; // 商汤预留
+	#endif
+    for (uint8_t crc = 2; crc < i; crc++) 
+    {
+        tx_data[i]^=tx_data[crc]; //计算校验
+    }
+	HAL_Uart_TxMessage(FACE_UART_COM,tx_data,i+1); //发送数据，长度i
+	PUBLIC_PrintHex("DRV_FaceSendInit.DRV_UartTX = ",tx_data,i+1);
+	FaceSecretKey(&tx_data[5]); //计算密钥
+}
+
+/***************************************************************************************
+**函数名:       FaceSendCommand
+**功能描述:     发送数据
+**输入参数:     cmd  命令
+                *data 数据指针
+				ValidLen  数据有效长度
+**输出参数:    
+**备注:        
+****************************************************************************************/
+static void FaceSendCommand (void )
+{	
+	uint16_t AllLen=0; //加密总长
+	uint16_t temp_data;
+	uint8_t SendData[256]={FACE_TYPE_HEAD_H,FACE_TYPE_HEAD_L};
+	memset(&SendData[FACE_TX_ALL_LEN_H],0,sizeof(SendData)-2); //清空
+	switch (FaceControl.TxCdm)
+    {
+		//固定参数----------------------------------------
+		case IRIS_CMD_VERIFY: 
+			SendData[FACE_TX_DATA] = 0;//保留字
+			SendData[FACE_TX_DATA+1] = 1; //双眼识别
+			SendData[FACE_TX_DATA+2] = 0; //保留字
+			SendData[FACE_TX_DATA+3] = 11; //10秒超时
+			FaceControl.Txlen=4;
+			break;
+    	case FACE_CMD_VERIFY: 
+			SendData[FACE_TX_DATA]=0;
+			SendData[FACE_TX_DATA+1]=10; //10秒超时
+			FaceControl.Txlen=2;
+			break;
+		case FACE_CMD_SNAPIMAGE: 	
+			SendData[FACE_TX_DATA]=1;   //起始地址
+			SendData[FACE_TX_DATA+1]=1; //数量
+			FaceControl.Txlen=2;
+    		break;
+		case FACE_CMD_GETSAVEDIMAGE:
+			SendData[FACE_TX_DATA]=1;   //获取地址
+			FaceControl.Txlen=1;
+			break;
+		case FACE_CMD_UPLOADIMAGE:
+			SendData[FACE_TX_DATA] = FaceImage.LenOffset>>24;
+			SendData[FACE_TX_DATA + 1] = FaceImage.LenOffset>>16;
+			SendData[FACE_TX_DATA + 2] = FaceImage.LenOffset>>8;
+			SendData[FACE_TX_DATA + 3] = FaceImage.LenOffset&0xff;
+			if(FaceImage.LenSur > FACE_IMAGE_LEN)
+			{
+				SendData[FACE_TX_DATA + 4] = 0;
+				SendData[FACE_TX_DATA + 5] = 0;
+				SendData[FACE_TX_DATA + 6] = FACE_IMAGE_LEN>>8;
+				SendData[FACE_TX_DATA + 7] = FACE_IMAGE_LEN&0xff;
+				FaceImage.LenOffset += FACE_IMAGE_LEN;
+				FaceImage.LenSur -= FACE_IMAGE_LEN;
+			}
+			else
+			{
+				SendData[FACE_TX_DATA + 4] = FaceImage.LenSur>>24;
+				SendData[FACE_TX_DATA + 5] = FaceImage.LenSur>>16;
+				SendData[FACE_TX_DATA + 6] = FaceImage.LenSur>>8;
+				SendData[FACE_TX_DATA + 7] = FaceImage.LenSur&0xff;
+				FaceImage.LenOffset += FaceImage.LenSur;
+			}
+			FaceControl.Txlen=8;
+			break;
+		case FACE_CMD_SET_LIGHTSENSOR://设置商汤猫眼光敏灵敏度
+			temp_data = CAM_IR_SET_LIGHTSENSOR; //写死
+			SendData[FACE_TX_DATA] = (uint8_t)(temp_data >> 8);
+			SendData[FACE_TX_DATA + 1] = (uint8_t)(temp_data &0xff);
+			FaceControl.Txlen = 2;
+			break;
+		case FACE_CMD_DEMO:
+			SendData[FACE_TX_DATA]=1; //使能
+			FaceControl.Txlen=1;
+			break;
+		
+		case FACE_CMD_POWERDOWN:
+			#if defined OB_CAM_FUNCTION_ON ||  defined ST_CAM_FUNCTION_ON 
+			SendData[FACE_TX_DATA]=FaceWifiStatus.Networking; //使能联网
+			FaceControl.Txlen=1;
+			FaceControl.TxTimeout=1000;
+			#else
+			FaceControl.Txlen=0;
+			#endif
+			break;
+		
+		//无参数----------------------------------------
+		case IRIS_CMD_CANCEL:
+		case FACE_CMD_DEL_ALL: 
+		case FACE_CMD_GETVERSION: 
+			FaceControl.Txlen=0;
+    		break;
+		//传参输入----------------------------------------
+		case FACE_CMD_ENROLL://输入方向和时间	
+		case IRIS_CMD_ENROLL://输入方向和时间
+		case FACE_CMD_HIJACK_MODE: 	
+		case FACE_CMD_SET_THRESHOLD_LEVEL: 
+		case FACE_CMD_ENC_KEY:
+		case FACE_CMD_DEL_USER:
+		case FACE_CMD_START_OTA:	
+		case FACE_CMD_PASS_DATA:
+    	default:
+			//偏移地址和长度
+			memcpy(&SendData[FACE_TX_DATA],FaceControl.TxDataBuf,FaceControl.Txlen); 
+			break;
+    }
+	AllLen=((FaceControl.Txlen+3)%16)? (16*(1+(FaceControl.Txlen+3)/16)):(FaceControl.Txlen+3);//计算总长度16倍数  后面开始加密
+	SendData[FACE_TX_ALL_LEN_H]=AllLen>>8;
+	SendData[FACE_TX_ALL_LEN_L]=AllLen&0xff ; //总长度
+	SendData[FACE_TX_MID]=FaceControl.TxCdm ; //拷贝命令
+	SendData[FACE_TX_DATA_H]=FaceControl.Txlen>>8;
+	SendData[FACE_TX_DATA_L]=FaceControl.Txlen&0xff ; //有效数据长度
+	PUBLIC_PrintHex("DRV_FaceSendCommand.DRV_UartTX = ",SendData ,AllLen + 4);
+	Encrypto_my_aes(ENCRYPTION, &SendData[4], AllLen, FaceControl.AesKey);  //加密数据		
+	for ( uint16_t i = 4; i < (AllLen+4); i++) //校验 加密区间
+    {
+        SendData[AllLen+4]^=SendData[i];
+    }
+	//串口发送
+	HAL_Uart_TxMessage(FACE_UART_COM,SendData, AllLen +4+1); //串口发送  2+2+长度+1	
+	
+	memset(&FaceMsgType,0,sizeof(FaceMsgType));//清接收数据包	
+	FaceControl.State=FACE_WAIT_RESPONSE; 
+	FaceControl.Systick=FaceControl.TxTimeout; //当前指令超时时间
+	
+}
+
+/***************************************************************************************
+**函数名:       FaceGetFifoData
+**功能描述:     数据收包（明文）
+**输入参数:      
+**输出参数:     结果1：成功收包
+**备注:         通过Init加密标志判断接收密文或明文 
+               //READY EF AA 01 00 01 00 00
+****************************************************************************************/
+static uint8_t FaceGetFifoData (void)
+{
+	uint8_t pdata=0;
+	uint16_t len; //包长
+	while(UART_SUCCESS == HAL_Uart_PopByteFromQueue( FACE_UART_COM, &pdata )) //串口队列取数据
+	{
+		if(FaceControl.RxPos==0) //无数据
+		{
+			if(FACE_TYPE_HEAD_H==pdata) //包头
+			{
+				FaceControl.RxDataBuf[FaceControl.RxPos++]=pdata; //开始接受
+			}				
+			else
+			{
+				FaceControl.RxPos=0; //清零
+			}
+		}
+		else if(FaceControl.RxPos==1) 
+		{
+			if(FACE_TYPE_HEAD_L==pdata) //包头
+			{
+				FaceControl.RxDataBuf[FaceControl.RxPos++]=pdata; //开始接受
+			}				
+			else
+			{
+				FaceControl.RxPos=0; //清零
+			}
+		}
+		else
+		{
+			FaceControl.RxDataBuf[FaceControl.RxPos++]=pdata; //开始接受
+			if(FaceControl.encryption) //使能加密 //密文接收
+			{
+				if(FaceControl.RxPos>FACE_ALL_LEN_L)//密文数据长度第3字节
+				{
+					//长度应为16倍数
+					len=FaceControl.RxDataBuf[FACE_ALL_LEN_H]<<8 | FaceControl.RxDataBuf[FACE_ALL_LEN_L];
+					if((4+len+1) ==FaceControl.RxPos)//一包接完 头+长度+校验
+					{
+						FaceControl.RxPos=0; //数据接收完成长度清除		//开始解析
+						return 1;
+					}					
+				}			
+		    }
+			else  //明文
+			{			
+				if(FaceControl.RxPos>FACE_DIR_LEN_L) //明文数据长度第4字节
+				{
+					len=FaceControl.RxDataBuf[FACE_DIR_LEN_H]<<8 |   FaceControl.RxDataBuf[FACE_DIR_LEN_L]; //明文
+					if((2+1+2+len+1) ==FaceControl.RxPos)//一包明文数据 头+MID+长度+校验
+					{
+						PUBLIC_PrintHex("Face RxDataBuf",FaceControl.RxDataBuf,FaceControl.RxPos);
+						FaceControl.RxPos=0; //清零
+						return 1 ;
+					}					
+				}
+		    }
+		}	
+	}
+	return 0 ;
+}
+
+/***************************************************************************************
+**函数名:       FACE_ParseData
+**功能描述:     人脸数据解析
+**输入参数:      
+**输出参数:     结果1：成功收包
+**备注:       
+****************************************************************************************/
+static void  DRV_FaceParseData (void)
+{
+	if(FaceGetFifoData()==0) //收包是否完成
+	{
+		return ;
+	}
+	if(FaceControl.TxCdm == FACE_CMD_UPLOADIMAGE)
+	{
+		FaceMsgType.Reply.MsgMid = FACE_CMD_UPLOADIMAGE;
+		my_printf("FaceMsgType.Reply.MsgMid = FACE_CMD_UPLOADIMAGE;\n" );
+		FaceMsgType.Image.MsgLen=FaceControl.RxDataBuf[FACE_ALL_LEN_H]<<8 | FaceControl.RxDataBuf[FACE_ALL_LEN_L];//有效长度
+		memcpy(&FaceMsgType.Image.Data,&FaceControl.RxDataBuf[FACE_ALL_LEN_H],FaceMsgType.Image.MsgLen + 2); //拷贝数据结构体
+		WifiLockMeg.DataLenth = FaceMsgType.Image.MsgLen;
+	}
+	else if(FaceControl.encryption)
+	{
+		uint16_t MsgLen=FaceControl.RxDataBuf[FACE_ALL_LEN_H]<<8 | FaceControl.RxDataBuf[FACE_ALL_LEN_L] ;//有效长度
+		Encrypto_my_aes(DECRYPTION, &FaceControl.RxDataBuf[FACE_MSG_ID], (MsgLen/16)*16, FaceControl.AesKey); //AES解密
+		FaceMsgType.MsgID=FaceControl.RxDataBuf[FACE_MSG_ID]; //包类型
+		if(FACE_MID_REPLY==FaceMsgType.MsgID) //包类型 ==REPLY
+		{
+			FaceMsgType.Reply.MsgLen=FaceControl.RxDataBuf[FACE_REPLY_LEN_H]<<8 | FaceControl.RxDataBuf[FACE_REPLY_LEN_L];//有效长度
+			FaceMsgType.Reply.MsgMid=FaceControl.RxDataBuf[FACE_REPLY_MID];   //命令
+			FaceMsgType.Reply.Msgresult=FaceControl.RxDataBuf[FACE_REPLY_RESULT]; //结果
+			memcpy(&FaceMsgType.Reply.DataPack.Data,&FaceControl.RxDataBuf[FACE_REPLY_DATA],FaceMsgType.Reply.MsgLen-2); //拷贝数据结构体
+			
+			my_printf("Reply.MsgMid = %x   " ,FaceMsgType.Reply.MsgMid);
+			my_printf("Reply.Msgresult = %d   " ,FaceMsgType.Reply.Msgresult);
+			PUBLIC_PrintHex("FACE_REPLY_DATA",FaceMsgType.Reply.DataPack.Data,FaceMsgType.Reply.MsgLen-2);
+			switch(FaceMsgType.Reply.MsgMid) //回包命令
+            {
+            case FACE_CMD_VERIFY:
+				//u16大小端转换
+				//FaceMsgType.Reply.DataPack.Verify.UserId=EndianSwap(FaceMsgType.Reply.DataPack.Verify.UserId,2);
+                break;
+            case FACE_CMD_ENROLL:
+				//u16大小端转换
+				//FaceMsgType.Reply.DataPack.Enroll.UserId=EndianSwap(FaceMsgType.Reply.DataPack.Enroll.UserId,2);
+                break;		
+            case FACE_CMD_SNAPIMAGE :
+                break;
+            case FACE_CMD_GETSAVEDIMAGE :
+				//u32大小端转换
+				if(FaceMsgType.Reply.Msgresult == 0)
+				{
+					FaceMsgType.Reply.DataPack.ImageSize.Size=EndianSwap(FaceMsgType.Reply.DataPack.ImageSize.Size,4);
+					FaceImage.LenAll = FaceMsgType.Reply.DataPack.ImageSize.Size;
+					my_printf("FaceMsgType.Reply.DataPack.ImageSize.Size = %x   " ,FaceMsgType.Reply.DataPack.ImageSize.Size);
+				}
+                break;
+			case FACE_CMD_MODULE_STATUS :
+				FaceWifiStatus.media_state=FaceMsgType.Reply.DataPack.Data[1];//云业务状态
+				FaceWifiStatus.media_error=FaceMsgType.Reply.DataPack.Data[2];//错误类型
+				NetWorkStateUpdate(FaceWifiStatus.media_state);
+				break;
+			case FACE_CMD_POWERDOWN:
+				if(FaceMsgType.Reply.Msgresult)
+				{
+					NetWorkStateUpdate(MEDIA_STATE_ERROR);//下电失败
+				}
+				break;
+			case FACE_CMD_PASS_DATA:
+				break;
+            default:
+                break;
+            }
+		}	
+		else if(FACE_MID_NOTE==FaceMsgType.MsgID) //包类型
+		{		
+			FaceMsgType.Note.MsgLen=FaceControl.RxDataBuf[FACE_NOTE_LEN_H]<<8 | FaceControl.RxDataBuf[FACE_NOTE_LEN_L];//有效长度
+			FaceMsgType.Note.MsgNid=FaceControl.RxDataBuf[FACE_NOTE_NID];   //命令
+			memcpy(&FaceMsgType.Note.Data,&FaceControl.RxDataBuf[FACE_NOTE_DATA],FaceMsgType.Note.MsgLen-1); //拷贝数据结构体
+			my_printf("Reply.Msgnid = %x   " ,FaceMsgType.Note.MsgNid);
+			//PUBLIC_PrintHex("FACE_NOTE_DATA",FaceMsgType.Note.Data,FaceMsgType.Note.MsgLen-2);
+
+			switch(FaceMsgType.Note.MsgNid) //NOTE类型
+            {		
+				case FACE_ID_NID_FACE_STATE:     //算法执行成功，并且返回人脸信息
+					switch (FaceMsgType.Note.Data[0]|FaceMsgType.Note.Data[1])//人脸状态有的高位有的低位
+					{
+						case FACE_STATE_NOFACE:
+							FaceMsgType.NidFaceState.NoFace++;
+							break;
+						case FACE_STATE_TOOFAR:
+							FaceMsgType.NidFaceState.FaceFar++;
+							break;
+						case FACE_STATE_TOOCLOSE:
+							FaceMsgType.NidFaceState.FaceNear++;
+							break;
+						case FACE_STATE_EYEBROW_OCCLUSION:
+						case FACE_STATE_EYE_OCCLUSION:
+						case FACE_STATE_FACE_OCCLUSION:
+							FaceMsgType.NidFaceState.FaceOcc++;
+							break;
+						default:
+							break;
+					}
+					FaceMsgType.NidFaceState.Left=FaceMsgType.Note.Data[2]<<8 |FaceMsgType.Note.Data[3];
+					FaceMsgType.NidFaceState.Top=FaceMsgType.Note.Data[4]<<8 |FaceMsgType.Note.Data[5];
+					FaceMsgType.NidFaceState.Right=FaceMsgType.Note.Data[6]<<8 |FaceMsgType.Note.Data[7];
+					FaceMsgType.NidFaceState.Bottom=FaceMsgType.Note.Data[8]<<8 |FaceMsgType.Note.Data[9];
+					my_printf("NoFace = %d ",FaceMsgType.NidFaceState.NoFace);
+					my_printf("FaceFar = %d ",FaceMsgType.NidFaceState.FaceFar);
+					my_printf("FaceNear = %d ",FaceMsgType.NidFaceState.FaceNear);
+					my_printf("FaceOc = %d ",FaceMsgType.NidFaceState.FaceOcc);
+					my_printf("Left = %i ",FaceMsgType.NidFaceState.Left);
+					my_printf("Top = %i ",FaceMsgType.NidFaceState.Top);
+					my_printf("Right = %i ",FaceMsgType.NidFaceState.Right);
+					my_printf("Bottom = %i \n",FaceMsgType.NidFaceState.Bottom);
+					
+					break;
+				case FACE_ID_NID_UNKNOWNERROR: break;  //未知错误
+					
+				case FACE_ID_NID_OTA_STATE :      //OTA
+					PUBLIC_PrintHex("FACE_REPLY_DATA",FaceMsgType.Note.Data,FaceMsgType.Note.MsgLen-2);
+					FaceWifiStatus.ota_state=FaceMsgType.Note.Data[0];
+					FaceWifiStatus.ota_error=FaceMsgType.Note.Data[1];
+					FaceWifiStatus.ota_progress=FaceMsgType.Note.Data[2];
+					break;
+				case FACE_ID_NID_EYE_STATE :  break;    //解锁过程中睁闭眼状态
+				case FACE_ID_NID_MEDIA_CAP_STATE ://媒体类型
+					PUBLIC_PrintHex("CAP_STATE:",&FaceMsgType.Note.Data[1],5);
+					break;
+				case FACE_ID_NID_MEDIA_STATE:     //Media 业务.            
+					FaceWifiStatus.media_state=FaceMsgType.Note.Data[0];//云业务状态
+					FaceWifiStatus.media_error=FaceMsgType.Note.Data[1];//错误类型
+					PUBLIC_PrintHex("MEDIA_STATE",FaceMsgType.Note.Data,FaceMsgType.Note.MsgLen-2);
+					NetWorkStateUpdate(FaceWifiStatus.media_state);
+					break;
+				default:
+					break;
+			}
+		}
+	}
+}
+
+
+
+
+
+/***************************************************************************************
+**函数名:       FaceServerProcess
+**功能描述:     人脸模组工作状态
+**输入参数:     
+**输出参数:     DrvIrControl.State 当前状态
+**备注:         需主循环扫描
+****************************************************************************************/
+uint8_t FaceServerProcess(void)
+{
+	if(HAL_Uart_GetCurDeviceType( FACE_UART_COM ) !=E_FACE_UART) //检查串口状态
+	{
+		return 0;
+	}
+	DRV_FaceParseData();//串口循环收包
+	switch (FaceControl.State) //状态
+    {
+    	case FACE_WAKE_UP:  			
+    		break;	
+		case FACE_WAIT_READY	: //等待ready
+			if(FaceControl.Systick==0) //超时
+			{
+				FaceControl.State=FACE_ERROR; //出错
+				Modual_State = MODUAL_ERROR;//模组没插或故障
+				my_printf("FACE_WAIT_READY FACE_ERROR-- \n");
+			}			
+			else if((FaceControl.RxDataBuf[FACE_DIR_MSG_ID]==FACE_MID_NOTE)//确认note类型FACE_ID_NID_READY
+				&&(FaceControl.RxDataBuf[FACE_DIR_NOTE_NID]==FACE_ID_NID_READY)
+			    && (FaceControl.RxPos==0)) //收包完成
+			{
+				FaceSendInit(); //发送初始化开始加密握手
+				FaceControl.State=FACE_WAIT_UUID;
+				FaceControl.Systick=FACE_READY_TIMEOUT_2S/10;
+			}
+			break;	
+		case FACE_WAIT_UUID:
+//			if(FaceControl.Systick==0) //超时,,升级老二代K1S猫眼固件时用
+//			{
+//				FaceSendCommand();	//直接发送命令
+//				FaceControl.State=FACE_WAIT_RESPONSE;
+//				my_printf("FaceControl.Systick = %d\n", FaceControl.Systick);
+//			}
+			if(FaceControl.Systick==0) //超时
+			{
+				FaceControl.State=FACE_ERROR; //出错
+				my_printf("FACE_WAIT_UUID FACE_ERROR-- \n");
+			}
+			#if defined OB_CAM_FUNCTION_ON || defined ST_CAM_FUNCTION_ON
+			else if(FaceMsgType.Reply.MsgMid==FACE_CMD_CAM_INIT) //接收成功
+			#else
+			else if(FaceMsgType.Reply.MsgMid==FACE_CMD_INIT) //接收成功
+			#endif
+			{
+				if( MR_SUCCESS == FaceMsgType.Reply.Msgresult)
+				{
+					//读取EE ID比对校验省略
+					FaceSendCommand();	//直接发送命令
+					FaceControl.State=FACE_WAIT_RESPONSE;
+					my_printf("FaceControl.Systick = %d\n", FaceControl.Systick);
+				}
+			}
+			break;	
+		case FACE_WAIT_RESPONSE:  //等应答，同时解析NOTE
+			if(FaceControl.Systick==0) //超时
+			{
+				FaceControl.State=FACE_ERROR; //出错
+				my_printf("FACE_WAIT_RESPONSE FACE_ERROR-- \n");
+			}			
+			else if(FaceMsgType.Reply.MsgMid==FaceControl.TxCdm) //接收成功
+			{
+				if(FaceMsgType.Reply.MsgMid==FACE_CMD_POWERDOWN)
+				{
+					FaceControl.State=FACE_POWERDOWM; //断电流程
+					my_printf("FaceControl.State=FACE_POWERDOWM;\n");
+				}
+				else
+				{
+					FaceControl.State=FACE_STANDBY; //完成空闲
+					my_printf("FaceControl.State=FACE_STANDBY ---- \n");
+				}
+			}
+			break;
+		case FACE_STANDBY: //空闲 可直接发起下个指令
+			break;
+		case FACE_POWERDOWM:
+		case FACE_ERROR:
+			break;
+    	default:
+    		break;
+    }	
+	return  FaceControl.State;
+}
+
+
+/***************************************************************************************
+**函数名:       FaceGneralTaskFlow
+**功能描述:     通用任务流接口
+**输入参数:     **输入参数:     cmd  命令
+                *data 数据指针
+				Len  数据有效长度
+				time_ms 指令超时时间
+**输出参数:     GneralState状态
+**备注:         自动上电及等模组空闲发送指令>
+				TASK_SUCCESS后应用层可通过FaceMsgType.Reply取数据结果
+				最后执行下电，当TASK_POWERDOWN时流程结束
+				（模组异常/通信超时 等TASK_FAIL失败）
+****************************************************************************************/
+uint8_t FaceGneralTaskFlow(uint8_t cmd , uint8_t *data , uint8_t Len, uint16_t time_ms)
+{
+	if(AppFaceWorkPro.TaskNum !=cmd ) //新任务
+	{
+		AppFaceWorkPro.TaskNum =cmd;
+		AppFaceWorkPro.TaskFlow=TASK_START;
+		#if defined OB_CAM_FUNCTION_ON ||  defined ST_CAM_FUNCTION_ON 
+		switch (AppFaceWorkPro.TaskNum)
+        { 	
+			case 	FACE_CMD_BELL	:         
+			case 	FACE_CMD_DEVICENAME    :
+			case 	FACE_CMD_SET_LINKKEY   : 	
+			case 	FACE_CMD_SET_SSID  	   :  
+			case 	FACE_CMD_DELETE_FILE   :  
+			case 	FACE_CMD_MID_CAPTURE   :  
+			case 	FACE_CMD_PASS_DATA     : 
+			case 	FACE_CMD_GET_WIFISTATUS:
+			case 	FACE_CMD_MODULE_STATUS :
+			case 	FACE_CMD_START_OTA 	   :
+			case 	FACE_CMD_STOP_OTA 	   :
+			#if defined OB_CAM_FUNCTION_ON || defined ST_CAM_FUNCTION_ON //二代人脸格式
+			#endif
+				FaceWifiStatus.Networking=1;  //联网
+        		break;
+        	default:
+        		break;
+        }
+		#endif
+	}
+	switch (AppFaceWorkPro.TaskFlow)
+	{
+		case TASK_START://开始任务			
+			FaceControl.TxCdm=cmd; //命令
+			FaceControl.Txlen=Len;   //长度
+			memcpy(FaceControl.TxDataBuf,&data[0],Len); //数据
+			FaceControl.TxTimeout=time_ms/10 ;//单位毫秒
+			if((FaceControl.State==FACE_ERROR)||(FaceControl.State==FACE_POWERDOWM))
+			{
+				if(cmd==FACE_CMD_POWERDOWN) //断电状态不用执行
+				{
+					AppFaceWorkPro.TaskFlow =TASK_POWERDOWN;
+				}
+				else //上电
+				{
+					FaceUartWakeUp(); //上电，开始等ready
+					AppFaceWorkPro.TaskFlow =TASK_WORKING; //模组工作中
+				}
+			}
+			else if(FaceControl.State==FACE_STANDBY) //空闲直接发送
+			{
+				FaceSendCommand();	//直接发送命令
+				my_printf("FACE_STANDBY FaceSendCommand\n");
+				AppFaceWorkPro.TaskFlow =TASK_WORKING; //模组工作中
+				break;
+			}
+			else if(cmd==FACE_CMD_POWERDOWN) 
+			{
+				my_printf("cmd==FACE_CMD_POWERDOWN TASK_WORKING FacePowerDown\n");
+				FacePowerDown();//强制断电
+			}
+			break;
+		case TASK_WORKING: //等待任务完成	
+			if(FACE_STANDBY==FaceControl.State) //模组执行完成
+			{
+				AppFaceWorkPro.TaskFlow = TASK_SUCCESS; //成功后应用层拿结果
+				my_printf("AppFaceWorkPro.TaskFlow = TASK_SUCCESS;\n");
+			}
+			else if(FACE_POWERDOWM==FaceControl.State)
+			{
+				my_printf("TASK_WORKING FacePowerDown\n");
+				FacePowerDown();  //单独执行下电指令
+			}
+			break;
+		case TASK_SUCCESS:
+			FaceControl.TxCdm=FACE_CMD_POWERDOWN; //命令
+			FaceControl.Txlen=0;   //长度
+			FaceControl.TxTimeout=FACE_POWERSOWN_TIMEOUT_1S/10 ;//单位毫秒，下电超时
+			FaceSendCommand();	//直接发送命令
+			my_printf("TASK_SUCCESS FaceSendCommand\n");
+			AppFaceWorkPro.TaskFlow=TASK_WAITDOWN;
+			break;
+		case TASK_WAITDOWN:
+			if(FACE_POWERDOWM==FaceControl.State) //下电完成
+			{
+				my_printf("TASK_WAITDOWN FacePowerDown\n");
+				FacePowerDown(); 
+			}
+			break;
+		case TASK_POWERDOWN: //最终状态
+			break;
+		default:
+			break;
+	}
+	
+	if(FACE_ERROR==FaceControl.State)//模组执行出错
+	{
+		if(FaceControl.TxCdm==FACE_CMD_POWERDOWN)//下电异常
+		{
+			my_printf("FACE_ERROR==FaceControl.State FaceControl.TxCdm==FACE_CMD_POWERDOWN\n");
+			FacePowerDown();
+			NetWorkStateUpdate(MEDIA_STATE_ERROR);//跟新网络
+			return TASK_POWERDOWN;
+		}
+		FacePowerDown();
+		return TASK_FAIL;
+	}
+	else
+	{
+		return AppFaceWorkPro.TaskFlow;
+	}
+}
+
+
+/***************************************************************************************
+**函数名:       FaceClearTask
+**功能描述:     清除任务
+**输入参数:     
+**输出参数:    
+**备注:         相同指令需要通过FaceGneralTaskFlow重复执行时
+****************************************************************************************/
+void FaceClearTask(void)
+{
+	AppFaceWorkPro.TaskNum=0;//清除本次任务
+}
+
+void FaceUartInit(void)//串口初始化
+{
+	UartCfg_S uartCfg={0};
+	uartCfg.BaudRate = FACE_BAUDRATE;
+	uartCfg.DataBit = DATA_8_BIT;
+	uartCfg.StopBit = STOP_1_BIT;
+	uartCfg.ParityType = PARITY_NONE;
+	uartCfg.RxInerruptEn = INT_ENABLE;
+	uartCfg.TxInerruptEn = INT_DISENABLE;
+	HAL_Uart_ConfigInit( E_FACE_UART, uartCfg );
+}
+
+/***************************************************************************************
+**函数名:       NetWorkStateUpdate
+**功能描述:     跟新网络状态
+**输入参数:     
+**输出参数:    
+**备注:         #define MEDIA_STATE_IDLE                      0    // Module is idle, can be powered off immediately
+				#define MEDIA_STATE_WAITING                   1    // Module is waiting for the next command
+				#define MEDIA_STATE_WORKING                   2    // Module is working on media business
+				#define MEDIA_STATE_ERROR                     3    // An error occurred in the Module 
+****************************************************************************************/
+void NetWorkStateUpdate (uint8_t State)
+{
+	NetWorkState=State;
+}
+
+uint8_t NetWorkStateGet (void)
+{
+	return NetWorkState;
+}
+
+
+#endif
+
+
+//.end of the file.

@@ -1,0 +1,31 @@
+#ifndef _DEVICETYPE_H_
+#define _DEVICETYPE_H_
+
+#ifdef __cplusplus
+extern "C"
+{
+#endif
+
+/* 头文件设计JENKINS打包，请需要添加宏的在下方#else 添加 LINE1 - LINE17 请勿修改 */
+
+#ifdef JENKINS_RELEASE
+
+
+
+
+
+
+
+
+
+
+
+#endif
+
+#ifdef __cplusplus
+}
+#endif
+
+#endif
+
+

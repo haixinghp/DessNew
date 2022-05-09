@@ -1,0 +1,45 @@
+#ifndef _DRV_IIC_H_
+#define _DRV_IIC_H_
+#ifdef __cplusplus
+extern "C"
+{
+#endif
+
+#include "stdint.h"
+
+#define I2C_FALSE 0
+#define I2C_TRUE 1
+
+//IIC总线通道类型枚举
+typedef enum
+{
+    I2C_CHANNEL0,          //第一路总线
+    I2C_CHANNEL1,          //第二路总线
+    I2C_CHANNEL2,          //第三路总线
+} DRV_IIC_CHANNEL_E;
+
+//IIC错误类型枚举
+typedef enum
+{
+    I2C_SUCCESS,              //执行成功
+    I2C_START_ERROR,          //IIC start 失败
+    I2C_SLAVE_ACK_ERROR,      // 从器件无应答
+} DRV_IIC_ERROR_E;
+
+DRV_IIC_ERROR_E DRV_IICReadByte(DRV_IIC_CHANNEL_E channel ,uint8_t slave_addr, uint8_t reg_addr, uint8_t *read_data, uint16_t len);
+DRV_IIC_ERROR_E DRV_IICWriteByte(DRV_IIC_CHANNEL_E channel ,uint8_t slave_addr,uint8_t reg_addr, const uint8_t write_data);
+DRV_IIC_ERROR_E DRV_IICWrite(DRV_IIC_CHANNEL_E channel ,uint8_t slave_addr,uint8_t reg_addr, const uint8_t *write_data, uint16_t len);
+DRV_IIC_ERROR_E DRV_IICHWCheck(DRV_IIC_CHANNEL_E channel ,uint8_t slave_addr);
+DRV_IIC_ERROR_E DRV_IICReadByteEeprom(DRV_IIC_CHANNEL_E channel ,uint8_t slave_addr, uint32_t reg_addr, uint8_t *read_data, uint16_t len);
+DRV_IIC_ERROR_E DRV_IICWriteEeprom(DRV_IIC_CHANNEL_E channel ,uint8_t slave_addr,uint32_t reg_addr, const uint8_t *write_data, uint16_t len);
+
+void DRV_I2CWriteSoft(uint8_t *data ,uint32_t len);
+void DRV_I2CStopUpdateI2C(void);
+void DRV_IICVoiceHandShake(void);
+uint8_t DRV_IICVoicePairing(void);
+
+#ifdef __cplusplus
+}
+#endif
+#endif
+//.end of the file.

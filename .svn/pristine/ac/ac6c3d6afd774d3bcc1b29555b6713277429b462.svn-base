@@ -1,0 +1,45 @@
+#ifndef _DRV_MIB5024_H
+#define _DRV_MIB5024_H
+
+
+#include <stdint.h>
+
+
+
+
+/*--------------------------------------------------宏定义-----------------------------------------------------------*/
+
+/*--------------------------------------------------枚举声明---------------------------------------------------------*/
+
+typedef enum
+{
+   MIB5024_OUT_LOW = 0, 	
+   MIB5024_OUT_HIGH, 
+   MIB5024_OUT_DEFAULT = 0xFF, 		
+}MIB5024_PIN_SET_E;
+
+
+
+#define BUS1_FALSE 0
+#define BUS1_TRUE 1
+
+//错误类型枚举
+typedef enum
+{
+    BUS1_SUCCESS,              //执行成功
+    BUS1_START_ERROR,          //IIC start 失败
+    BUS1_SLAVE_ACK_ERROR,      // 从器件无应答
+} DRV_ERROR_E;
+/*--------------------------------------------------常量声明---------------------------------------------------------*/
+
+
+/*--------------------------------------------------变量声明---------------------------------------------------------*/             
+
+
+uint8_t DRV_MIB5024_PinSet(uint16_t pinNo, uint16_t pinSet );
+void DRV_MIB5024_FileInit( void );
+void DRV_MIB5024_WakeupInit( void );
+void DRV_MIB5024_SleepInit( void );
+
+
+#endif // __DRV_MIB5024_H

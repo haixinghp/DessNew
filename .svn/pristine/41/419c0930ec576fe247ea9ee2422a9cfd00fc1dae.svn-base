@@ -1,0 +1,2109 @@
+/********************************************************************************************************************
+ * @file:      DRV_Motor_218.c
+ * @author:    zhanglin
+ * @version:   V01.00
+ * @date:      2021-09-23
+ * @brief:     218快开检测锁体  
+  2021-10-09   三个传感器 主舌：out= low  in= high  斜舌：out= high  in= low  三角舌：out= high  in= low 
+*********************************************************************************************************************/
+
+/*-------------------------------------------------文件包含---------------------------------------------------------*/
+#include "DRV_Motor_218.h"
+#include "System.h"
+#include "Public.h"
+#include "DRV_ADC.h"
+#include "DRV_GPIO.h"   
+#include "ISR.h"
+/*-------------------------------------------------宏定义-----------------------------------------------------------*/
+#if defined LOCK_BODY_218_MOTOR || defined LOCK_BODY_AUTO_MOTOR
+
+#define MOTOR_POWER_PIN                 M_MOTOR_POW_GPIO_PIN
+#define MOTOR_M1_PIN                    M_MOTOR_M1_GPIO_PIN
+#define MOTOR_M2_PIN                    M_MOTOR_M2_GPIO_PIN
+
+#define  MOTOR_POWER_ON()      DRV_GpioHighOut1( MOTOR_POWER_PIN ); 
+#define  MOTOR_POWER_OFF()     DRV_GpioHighOut0( MOTOR_POWER_PIN ); 
+#define  MOTOR_M1_ON()         DRV_GpioHighOut1( MOTOR_M1_PIN ); 
+#define  MOTOR_M1_OFF()        DRV_GpioHighOut0( MOTOR_M1_PIN ); 
+#define  MOTOR_M2_ON()         DRV_GpioHighOut1( MOTOR_M2_PIN ); 
+#define  MOTOR_M2_OFF()        DRV_GpioHighOut0( MOTOR_M2_PIN );
+
+	
+#define M_BOLT_INIT()                   DRV_GpioInputPullnull(M_BOLT_GPIO_PIN);
+#define M_BOLT_IN_READ()                DRV_GpioRead(M_BOLT_GPIO_PIN)
+#define M_TRIGGER_INIT()                DRV_GpioInputPullnull(M_TRIGGER_GPIO_PIN);
+#define M_TRIGGER_IN_READ()             DRV_GpioRead(M_TRIGGER_GPIO_PIN)
+#define M_LATCH_INIT()     		        DRV_GpioInputPullnull(M_LATCH_GPIO_PIN);
+#define M_LATCH_IN_READ()			    DRV_GpioRead(M_LATCH_GPIO_PIN)
+
+ 
+#define LEFT_OPEN_TYPE        LEFT_HAND_DOOR      //左开门
+#define RIGHT_OPEN_TYPE       RIGHT_HAND_DOOR     //右开门 
+ 
+#define HIGH_MOTOR_TORQUE     HIGH_TORQUE         //高电机扭力
+#define LOW_MOTOR_TORQUE      LOW_TORQUE     	  //低电机扭力
+ 
+#define HIGH_TORQUE_STOP_AMP  CFG_HIGH_TORQUE_AMP //高扭力对应电流 精度1mA
+#define LOW_TORQUE_STOP_AMP   CFG_LOW_TORQUE_AMP  //低扭力对应电流 精度1mA 
+
+#define BOLT_LEVEL_OUT        0   //主舌伸出电平信号
+#define BOLT_LEVEL_IN         1   //主舌缩进电平信号
+
+#define TRIGGER_LEVEL_OUT     1   //三角舌伸出电平信号
+#define TRIGGER_LEVEL_IN      0   //三角舌缩进电平信号
+
+#define LATCH_LEVEL_OUT       1   //斜舌伸出电平信号
+#define LATCH_LEVEL_IN        0   //斜舌缩进电平信号
+
+#define SENSE_STATE_OUT       0   //传感器的当前状态  伸出
+#define SENSE_STATE_IN        1   //传感器的当前状态  缩进
+
+#define TIME_10_MS            1
+#define TIME_20_MS            2
+#define TIME_50_MS            5
+#define TIME_100_MS           10 
+#define TIME_170_MS           17 
+#define TIME_200_MS           20 
+#define TIME_300_MS           30 
+#define TIME_380_MS           38
+#define TIME_390_MS           39
+#define TIME_450_MS           45 
+#define TIME_460_MS           46 
+#define TIME_500_MS           50 
+#define TIME_700_MS           70 
+#define TIME_1000_MS          100 
+#define TIME_2000_MS          200 
+#define TIME_2500_MS          250 
+#define TIME_3000_MS          300 
+#define TIME_3500_MS          350
+#define TIME_5000_MS          500
+#define TIME_7000_MS          700
+
+#define SENSE_CHECK_TIME      TIME_200_MS    //传感器状态检测持续时间
+#define MOTOR_STOP_TIME       TIME_20_MS     //电机停止刹车时间
+#define PUSH_DOOR_WAIT_TIME   TIME_7000_MS   //开门成功后等待门内推门时间
+#define MOTOR_TURN_BACK_TIME  TIME_300_MS    //开门失败电机回转时间
+#define LATCH_OUT_WAIT_TIMEE  TIME_1000_MS   //推门三角舌弹出后斜舌弹出前等待时间
+#define LATCH_OUT_ACT_TIMEE   TIME_380_MS    //斜舌弹出动作时间
+#define MOTOR_CLOSE_BACK_TIME TIME_390_MS    //上锁电机释放扭力
+#define AMP_ADC_FILTER_TIMEE  TIME_300_MS    //避开电机启动电流检测时间
+#define MOTOR_WORK_TIMEE      TIME_3000_MS   //电机空转时间
+#define MOTOR_FORCE_WORK_TIME TIME_2000_MS  //强制上锁电机转动时间
+#define ADC_STOP_HOLD_WORK_TIME  TIME_170_MS  //ADC停止后持续开门时间
+
+#define MOTOR_STOP_HOLD_TIME  TIME_50_MS     //电机堵转后若主舌不到位等待时间刹车
+
+#define OPENING_HOLD_TIME         30    //单位S
+#define CLOSE_FALSE_HOLD_TIME     5     //单位S
+#define HANDLER_TRY_FORBIT_TIME   5     //单位S
+
+#define OPEN_DOOR_FAIL_TOP_CNT    3         //开门失败判定次数上限
+
+#define MOTOR_LOCK_ADJUST  
+
+/*-------------------------------------------------枚举定义---------------------------------------------------------*/
+typedef enum
+{
+   EM_TURN_LEFT_CMD,       //左开 
+   EM_TURN_RIGH_CMD,       //右开 
+   EM_STOP_BOTH_ON_CMD,    //停转 M1 M2 都输出高
+   EM_STOP_BOTH_OFF_CMD,   //停转 M1 M2 都输出低
+	 	
+}MOTOR_CTRL_CMD_E;  //电机控制方式  
+
+typedef enum
+{
+   E_SENSE_BOLT,          //主舌
+   E_SENSE_TRIGGER,       //三角舌 
+   E_SENSE_LATCH,         //斜舌
+	 	
+}MOTOR_SENSE_TYPE_E; //传感器类型    
+
+typedef enum
+{
+   E_OPEN_FLOW_START,           //启动开门流程
+   E_OPEN_FLOW_DELAY1,          //延时1
+   E_OPEN_FLOW_DELAY2,          //延时2
+   E_OPEN_ADC_STOP,             //ADC检测堵转 
+   E_OPEN_RESULT_CHECK,         //开门是否成功判定  (主舌+斜舌的位置判断 ) 
+   E_OPEN_TRY_MORE,             //开门失败再次尝试	
+	
+   E_OPEN_PUSH_DOOR_CHECK,      //门内推门检测
+   E_OPEN_PUSH_DOOR_WAIT,       //等待门内推门 
+	
+   E_OPEN_LATCH_OUT_WAIT,       //等待斜舌弹出
+   E_OPEN_LATCH_OUT_ACTION,     //斜舌弹出	
+ 
+   E_OPEN_FLOW_SUCCESS,         //开门成功
+   E_OPEN_FLOW_FAIL,            //开门失败
+   E_OPEN_FLOW_FINISH,          //开门结束
+   E_OPEN_FLOW_LOCK,            //上锁流程
+   E_OPEN_FLOW_STOP,            //终止开门流程
+   E_OPEN_CONFIRM_UNLOCK,       //再次确认锁门是否开启
+	
+}MOTOR_OPEN_FLOW_E;  //开锁流程
+
+typedef enum
+{
+   E_CLOSE_FLOW_START,           //启动锁门流程
+   E_CLOSE_FLOW_DELAY1,          //延时1
+   E_CLOSE_ADC_STOP,             //ADC检测堵转 
+   E_CLOSE_RESULT_CHECK,         //上锁是否成功判定 
+   E_CLOSE_MOTOR_TOGGLE,         //电机反转
+   E_CLOSE_CONFIRM_LOCK,         //电机堵转后确认上锁
+   E_CLOSE_WAIT_STEADY,          //等待传感器状态稳定
+   E_CLOSE_FLOW_STOP,            //终止锁门流程
+	
+}MOTOR_CLOSE_FLOW_E;  //上锁锁流程
+
+/*-------------------------------------------------全局变量定义-----------------------------------------------------*/    
+
+
+/*-------------------------------------------------局部变量定义-----------------------------------------------------*/
+static uint32_t MotorDelayTimMs  = 0; 
+static uint32_t MotorDelayTimMs1 = 0; 
+static uint32_t MotorDelayTimMs2 = 0; 
+static uint32_t MotorDelayTimMs3 = 0; 
+static uint8_t  DoorOpeningHoldTimSec =0;    //门开持续时间
+static uint8_t  CloseFalseHoldTimSec  =0;    //假锁持续时间
+static uint8_t  HandleTryForbitTimSec =0;    //把手试玩检测持续时间
+static uint8_t  CloseActionCheckEn    =0;    //检测斜舌是否触发关门
+static uint8_t  TriggerOutputHoldTimMs = 0; 
+
+static bool FalseLockWarmSts  = false;       //假锁报警状态标志位
+static bool DoorUnlockWarmSts = false;       //门未关报警状态标志位
+static bool HandleTryForbitWarmSts = false;  //把手试玩警状态标志位
+
+static bool LatchInputActionFlg = false;     //斜舌缩进动作态标志位
+static bool LatchOutputActionFlg = false;    //斜舌伸出动作态标志位
+
+/*-------------------------------------------------函数定义---------------------------------------------------------*/
+/*********************************************************************************************************************
+* Function Name :  DRV_Motor_OutputCtrl()
+* Description   :  电机输出控制    
+* Para          :  cmd-控制命令       
+* Return        :  none
+*********************************************************************************************************************/
+static void DRV_Motor218_OutputCtrl( MOTOR_CTRL_CMD_E cmd )  
+{
+	switch( cmd )
+	{
+ 		case EM_TURN_LEFT_CMD:       //左开 
+		     MOTOR_M1_ON(); 
+		     MOTOR_M2_OFF();
+		break;	
+		
+		case EM_TURN_RIGH_CMD:       //右开
+		     MOTOR_M1_OFF();
+		     MOTOR_M2_ON();
+		break;
+			
+		case EM_STOP_BOTH_ON_CMD:    //停转 M1 M2 都输出高
+		     MOTOR_M1_ON();
+		     MOTOR_M2_ON();
+		break;
+		
+		case EM_STOP_BOTH_OFF_CMD:   //停转 M1 M2 都输出低
+		     MOTOR_M1_OFF();
+		     MOTOR_M2_OFF();
+		break;
+		
+		default:break;
+	}	
+}
+ 
+/*********************************************************************************************************************
+* Function Name :  DRV_Motor_GetTurnDirSts()
+* Description   :  获取电机旋转方向状态   
+* Para          :  none
+* Return        :  电机方向状态  1: 左开  0x55: 右开
+*********************************************************************************************************************/
+static uint8_t DRV_Motor218_GetTurnDirSts( void )  
+{
+	return SystemFixSeting.MotorDirection;
+}
+
+/*********************************************************************************************************************
+* Function Name :  DRV_Motor_GetTurnTorqueSts()
+* Description   :  电机扭力状态   
+* Para          :  none      
+* Return        :  LOW_MOTOR_TORQUE: 低扭力  HIGH_MOTOR_TORQUE: 高扭力
+*********************************************************************************************************************/
+static uint8_t DRV_Motor218_GetTurnTorqueSts( void )  
+{
+	return SystemFixSeting.MotorTorque;
+}
+
+/*********************************************************************************************************************
+* Function Name :  DRV_Motor_GetTurnDirFromFlash()
+* Description   :  从EEPROM中读取电机开门方向设置信息   
+* Para          :  none      
+* Return        :  0: 失败   1: 左开  0x55: 右开
+*********************************************************************************************************************/
+static uint8_t DRV_Motor218_GetTurnDirFromFlash( void )  
+{
+	if( 1 == SystemWriteFixSeting( &SystemFixSeting.MotorDirection, sizeof SystemFixSeting.MotorDirection ) )    //读取EEPROM
+	{
+		return SystemFixSeting.MotorDirection;
+	} 
+    return  0;
+}
+ 
+/*********************************************************************************************************************
+* Function Name :  DRV_Motor_GetAmpAdcVal()
+* Description   :  获取电流采样值   精度 1mA
+* Para          :  none    
+* Return        :  AD值  加权平均数  
+*********************************************************************************************************************/
+static uint32_t DRV_Motor218_GetAmpAdcVal( void )  
+{
+	uint32_t ret = 0;
+	uint32_t tp4 = DRV_ADC_GetAdcVal( MOTO_AMP_ADC_CH ); 
+	ret = tp4*3600*20/4096;
+	
+//	my_printf ( "MOTO VAL = %d\n", ret );	
+	
+	return ret;
+}
+
+/*********************************************************************************************************************
+* Function Name :  DRV_Motor218_GetSensorState()
+* Description   :  查询3个锁舌检测开关状态
+* Para          :  senseType - 检测开关类型      
+* Return        :  SENSE_STATE_IN = 缩进状态   SENSE_STATE_OUT = 伸出状态
+*********************************************************************************************************************/
+static uint8_t DRV_Motor218_GetSensorState( MOTOR_SENSE_TYPE_E senseType )     
+{
+	uint8_t _cn1 , _i ;
+    _cn1 = 0;
+	for( _i = 0; _i < 10; _i++ )
+	{
+		if( senseType == E_SENSE_BOLT )         //主舌
+		{ 
+			if(M_BOLT_IN_READ() == BOLT_LEVEL_IN) 
+				_cn1++;
+		}
+		else if( senseType == E_SENSE_TRIGGER ) //三角舌
+		{
+			if(M_TRIGGER_IN_READ() == TRIGGER_LEVEL_IN) 
+				_cn1++;
+		}
+		else if( senseType == E_SENSE_LATCH )   //斜舌
+		{
+			if(M_LATCH_IN_READ() == LATCH_LEVEL_IN)
+				_cn1++;
+		}
+		else
+		{
+			break;
+		}
+	}
+	if( _cn1 > 6 )
+	{
+		return SENSE_STATE_IN;
+	}
+	else
+		return SENSE_STATE_OUT;	
+}
+
+/*********************************************************************************************************************
+* Function Name :  DRV_Motor218_Tim10Ms()
+* Description   :  相关定时器    
+* Para          :  none   
+* Return        :  none
+*********************************************************************************************************************/
+void DRV_Motor218_Tim10Ms( void )  
+{
+	if( MotorDelayTimMs )
+	{
+		MotorDelayTimMs--;
+	}	
+	
+	if( MotorDelayTimMs1 )
+	{
+		MotorDelayTimMs1--;
+	}	
+	
+	if( MotorDelayTimMs3 )
+	{
+		MotorDelayTimMs3--;
+	}	
+	
+	if( MotorDelayTimMs2 < 0xfffffffe)
+	{
+		MotorDelayTimMs2++;
+	}
+	
+	if( TriggerOutputHoldTimMs )
+	{
+		TriggerOutputHoldTimMs--;
+	}	
+	
+	return;
+}
+
+/*********************************************************************************************************************
+* Function Name :  DRV_AutoMotor218_pin_handle()
+* Description   :  218锁体 锁舌信号中断
+* Para          :  null
+* Return        :  none
+*********************************************************************************************************************/
+void DRV_Motor218_PinSenseHandler(uint32_t singal_pin)
+{
+//	my_printf( "DRV_Motor218_PinIsrHandler()\n" );  
+    if( singal_pin == M_LATCH_GPIO_PIN )      //斜舌动作
+	{
+		if( M_LATCH_IN_READ() == LATCH_LEVEL_OUT )      //斜舌伸出动作
+		{
+		    LatchOutputActionFlg = true;
+			TriggerOutputHoldTimMs = 100;
+			LatchInputActionFlg = true;
+			CloseActionCheckEn = 1; //初步判定是关门触发
+			my_printf( "motor pin isr is latch out\n" );  
+			if( M_BOLT_IN_READ() == BOLT_LEVEL_IN )   
+			{
+			    if( FUNCTION_ENABLE == SystemSeting.DoorUnlockWarmSw )
+				{
+					DoorOpeningHoldTimSec = OPENING_HOLD_TIME;  //door is opening 
+				}
+			}
+		}
+		else if( M_LATCH_IN_READ() == LATCH_LEVEL_IN )  //斜舌缩进动作
+		{
+			my_printf( "motor pin isr is latch in\n" );  
+			CloseActionCheckEn = 1; //初步判定是关门触发
+			LatchOutputActionFlg = false;
+		}
+	}
+	else if( singal_pin == M_BOLT_GPIO_PIN )  //主舌弹出动作 
+	{
+		my_printf( "motor pin isr is bolt out\n" );  
+		if( SENSE_STATE_OUT == DRV_Motor218_GetSensorState( E_SENSE_TRIGGER )  \
+		&&  SENSE_STATE_OUT == DRV_Motor218_GetSensorState( E_SENSE_BOLT ) )      
+		{
+		    HandleTryForbitTimSec = HANDLER_TRY_FORBIT_TIME;
+		}
+	}
+	return;
+}
+
+/*********************************************************************************************************************
+* Function Name :  DRV_Motor218_PinInterruptEnable()
+* Description   :  引脚中断控制
+* Para          :  null
+* Return        :  none
+*********************************************************************************************************************/
+static void DRV_Motor218_PinInterruptEnable( void )
+{
+	my_printf( "DRV_Motor218_PinInterruptEnable()\n" );  
+ 
+	
+	#if LOCK_PROJECT_CHIP ==LOCK_PROJECT_RTL8762 
+	//唤醒模式下用GPIO中断
+	DRV_EdegInterruptEnable(WakeupISRhandler);
+
+	#else
+	/*------斜舌------*/
+	DRV_GpioInterruptEnable(M_LATCH_GPIO_PIN,DRV_GPIO_TOGGLE, WakeupISRhandler);
+	/*------主舌------*/
+	DRV_GpioInterruptEnable(M_BOLT_GPIO_PIN,DRV_GPIO_HITOLO, WakeupISRhandler);
+	#endif
+ 
+	/*------THE END---*/
+	
+	return;
+}
+
+/*********************************************************************************************************************
+* Function Name :  DRV_Motor218_PinInterruptDisable()
+* Description   :  关闭中断检测
+* Para          :  null
+* Return        :  none
+*********************************************************************************************************************/
+static void DRV_Motor218_PinInterruptDisable( void )
+{
+	my_printf( "DRV_Motor218_PinInterruptDisable()\n" );  
+	#if LOCK_PROJECT_CHIP ==LOCK_PROJECT_RTL8762 
+	
+	/*------斜舌------*/
+	DRV_EdegInterruptDisable( M_LATCH_GPIO_PIN );
+	
+	/*------主舌------*/
+	DRV_EdegInterruptDisable( M_BOLT_GPIO_PIN );
+	#else
+	/*------斜舌------*/
+	DRV_GpioInterruptDisable( M_LATCH_GPIO_PIN );
+	
+	/*------主舌------*/
+	DRV_GpioInterruptDisable( M_BOLT_GPIO_PIN );
+	#endif
+	
+	/*------THE END---*/
+	return;
+}
+
+/*********************************************************************************************************************
+* Function Name :  DRV_Motor218_Tim1000Ms()
+* Description   :  1S定时器
+* Para          :  none
+* Return        :  none
+*********************************************************************************************************************/
+void DRV_Motor218_Tim1000Ms( void )
+{
+	if( CloseFalseHoldTimSec )
+	{
+		CloseFalseHoldTimSec--;
+		if( CloseFalseHoldTimSec == 0 )
+		{
+			FalseLockWarmSts = true;    //假锁报警
+		}
+	}
+	
+    if( FUNCTION_DISABLE == SystemSeting.DoorUnlockWarmSw )
+	{
+		DoorOpeningHoldTimSec = 0;
+	}
+	if( DoorOpeningHoldTimSec )
+	{
+		DoorOpeningHoldTimSec--;	
+		if( DoorOpeningHoldTimSec == 0 )
+		{
+			DoorUnlockWarmSts = true;   //门未关报警
+		}
+	}
+	
+	if( HandleTryForbitTimSec )
+	{
+		HandleTryForbitTimSec--;	
+		if( HandleTryForbitTimSec == 0 )
+		{
+			HandleTryForbitWarmSts = true;   //把手试玩报警
+		}
+	}
+	return;
+}
+
+/*********************************************************************************************************************
+* Function Name :  DRV_Motor218_OpenDoorThread()
+* Description   :  开门流程    
+* Para          :  none   
+* Return        :  执行结果   -1=失败  0=执行中  1=执行完成  2=主锁舌已缩进(语音可播报)  3=开门动作执行后未推开门  
+*********************************************************************************************************************/
+int8_t DRV_Motor218_OpenDoorThread( void )  
+{
+	uint8_t  tp1, tm1;
+	uint32_t tp4;
+	static bool autoLockBody;
+	static int8_t  result;
+	static uint8_t errcnt, firstflg1, firstflg2;
+	static uint32_t dettime;
+	static MOTOR_CTRL_CMD_E actionDir;
+	static MOTOR_OPEN_FLOW_E step;
+	
+#ifdef MOTOR_LOCK_ADJUST
+	switch( step )
+	{
+		case E_OPEN_FLOW_START:  //获取电机动作方向+电机动作   左开 OR 右开   + 电机动作500ms
+		{      
+			   my_printf( "motor open start\n" ); 
+			   errcnt = 0;
+			   tp1 = DRV_Motor218_GetTurnDirSts();  
+               tm1 = DRV_Motor218_GetTurnDirFromFlash();
+		       if( tp1 != tm1 )	  //电机动作方向数据异常
+			   {
+                  return (-1); 
+			   }
+			   if( LEFT_OPEN_TYPE == tp1 )       //左开
+			   {
+				  actionDir = EM_TURN_LEFT_CMD; 
+			   }
+			   else if( RIGHT_OPEN_TYPE == tp1 ) //右开
+			   {
+				  actionDir = EM_TURN_RIGH_CMD;  
+			   }
+			   else   //再次确认开门方向的可靠性
+			   {
+				  return (-1);  
+			   }
+			   firstflg1 = 0;
+			   firstflg2 = 0;
+			   autoLockBody =false;
+			   result = 0;
+			   DRV_Motor218_PinInterruptDisable(); //disable interrupt
+			   CloseFalseHoldTimSec  =0;
+			   FalseLockWarmSts = false;
+			   DoorOpeningHoldTimSec =0;
+			   DoorUnlockWarmSts = false;
+			   HandleTryForbitTimSec = 0;
+			   HandleTryForbitWarmSts = false;
+			   MotorDelayTimMs2 = 0;
+			   MotorDelayTimMs3 = 0;
+			   dettime = 0;
+			   MOTOR_POWER_ON();
+			   DRV_Motor218_OutputCtrl( actionDir ); //电机动作
+			   MotorDelayTimMs = MOTOR_WORK_TIMEE;
+			   step = E_OPEN_ADC_STOP;
+		}
+		break;
+			   
+		case E_OPEN_FLOW_DELAY1:  //持续300ms
+			   if( 0 == MotorDelayTimMs )
+			   {
+				   tp1 = (actionDir == EM_TURN_LEFT_CMD) ? EM_TURN_LEFT_CMD : EM_TURN_RIGH_CMD; 
+				   DRV_Motor218_OutputCtrl( (MOTOR_CTRL_CMD_E)tp1 );
+				   MotorDelayTimMs2 = 0;	
+				   MotorDelayTimMs3 = 0;
+				   firstflg1= 0;	
+				   firstflg2=0;		
+				   dettime = 0;				   
+				   MotorDelayTimMs = MOTOR_WORK_TIMEE;
+				   step = E_OPEN_ADC_STOP;  
+			   }
+		break;	
+		
+		case E_OPEN_ADC_STOP:    //持续3000ms内检查阻转
+			   tp1 = DRV_Motor218_GetTurnTorqueSts();
+			   tp4 = (tp1 == HIGH_MOTOR_TORQUE) ? HIGH_TORQUE_STOP_AMP : LOW_TORQUE_STOP_AMP;
+		
+			   if( 0 == MotorDelayTimMs )
+			   {
+				   my_printf( "motor stop by timeout\n" );  
+				   DRV_Motor218_OutputCtrl( EM_STOP_BOTH_ON_CMD ); //电机停止动作
+				   MotorDelayTimMs = SENSE_CHECK_TIME;
+				   step = E_OPEN_RESULT_CHECK;  
+			   }
+			   else if( SENSE_STATE_IN == DRV_Motor218_GetSensorState( E_SENSE_LATCH )) 
+			   {
+				   if( firstflg1 == 0 )
+				   {
+					   firstflg1 = 1;
+					   dettime = MotorDelayTimMs2;
+					   my_printf( "motor latch is ok time= %d\n", MotorDelayTimMs2); 
+				   }
+				   if( DRV_Motor218_GetAmpAdcVal() > tp4 ) //阻转 
+				   {
+					   if( firstflg2 == 0 )
+					   {
+						   firstflg2 = 1;
+						   my_printf( "motor stop by adc\n" ); 
+						   my_printf( "motor adc stop time= %d\n", MotorDelayTimMs2); 
+						   if( MotorDelayTimMs2 <= dettime + 11 )
+						   {
+							  MotorDelayTimMs3 = ADC_STOP_HOLD_WORK_TIME; 
+						   }  
+						   else 
+						   {
+							  MotorDelayTimMs3 = 0;
+						   }
+					   }
+					   if( MotorDelayTimMs3 == 0 )
+					   {
+						   my_printf( "motor hold work time= %d\n", MotorDelayTimMs2); 
+						   DRV_Motor218_OutputCtrl( EM_STOP_BOTH_ON_CMD ); //电机停止动作
+						   MotorDelayTimMs = SENSE_CHECK_TIME;
+						   step = E_OPEN_RESULT_CHECK;   
+					   }
+				   }
+			   }
+		break;	 
+	   
+		case E_OPEN_RESULT_CHECK:  //电机堵转后检查 斜舌+主舌 状态 
+		       if( (SENSE_STATE_IN == DRV_Motor218_GetSensorState( E_SENSE_BOLT )) 
+				 &&(SENSE_STATE_IN == DRV_Motor218_GetSensorState( E_SENSE_LATCH )) )	
+			   {
+			       MotorDelayTimMs = 0;
+                   step = E_OPEN_FLOW_SUCCESS; 
+			   }				   
+		       else if( 0 == MotorDelayTimMs )  //主舌超时错误 回转 重开
+			   {
+				   #ifdef LOCK_BODY_AUTO_MOTOR
+				   if( OpenDoorTimeCnt < 2 )    //前两次特殊处理
+				   {
+					   MotorDelayTimMs = 0;
+					   step = E_OPEN_FLOW_SUCCESS;  
+				   }
+				   else 
+				   {
+					   step = E_OPEN_TRY_MORE;  
+				   }
+				   #else
+				   step = E_OPEN_TRY_MORE; 
+				   #endif
+			   }
+			   #ifdef LOCK_BODY_AUTO_MOTOR
+			   /*-----上电前两次强制走218流程-------*/
+			   if( (SENSE_STATE_IN == DRV_Motor218_GetSensorState( E_SENSE_TRIGGER )) 
+				 ||(SENSE_STATE_IN == DRV_Motor218_GetSensorState( E_SENSE_LATCH )) )	
+			   {
+				   if( OpenDoorTimeCnt < 2 )
+				   {
+					   autoLockBody = true;
+					   my_printf( "LOCK BODY IS 218!\n" );  
+				   }
+			   }
+			   #endif
+		break;	
+		
+		case E_OPEN_TRY_MORE: //主舌超时错误 回转 重开  持续300ms  
+			   errcnt++;
+		       if( errcnt >= OPEN_DOOR_FAIL_TOP_CNT )
+			   {
+				   my_printf( "motor open error\n" );  
+				   MotorDelayTimMs = 0;
+				   step = E_OPEN_FLOW_FAIL;      
+			   }
+			   else 
+			   {
+				   tp1 = (actionDir == EM_TURN_LEFT_CMD) ? EM_TURN_RIGH_CMD : EM_TURN_LEFT_CMD; 
+				   DRV_Motor218_OutputCtrl( (MOTOR_CTRL_CMD_E)tp1 );  
+				   MotorDelayTimMs = MOTOR_TURN_BACK_TIME;  //重开反转300ms
+				   step = E_OPEN_PUSH_DOOR_CHECK; 
+			   }
+		break;	   
+			   
+		case E_OPEN_PUSH_DOOR_CHECK: //电机回转的过程中把手开门
+			   if( SENSE_STATE_OUT == DRV_Motor218_GetSensorState( E_SENSE_TRIGGER ) )
+			   {
+				   my_printf( "door is push break\n" ); 
+				   DRV_Motor218_OutputCtrl( EM_STOP_BOTH_ON_CMD ); //电机刹车	
+				   step = E_OPEN_FLOW_FINISH; 		   
+			   }
+			   else if( 0 == MotorDelayTimMs )
+			   {
+				   DRV_Motor218_OutputCtrl( EM_STOP_BOTH_ON_CMD ); //电机刹车	
+				   MotorDelayTimMs = MOTOR_STOP_TIME;
+				   step = E_OPEN_FLOW_DELAY1;       //再次开门流程
+			   }
+		break;	
+
+		case E_OPEN_PUSH_DOOR_WAIT: //开门成功 + 检测三角舌检测门是否被推开
+				if( SENSE_STATE_OUT == DRV_Motor218_GetSensorState( E_SENSE_TRIGGER ) )
+				{
+					my_printf( "door is push\n" );  
+					step = E_OPEN_FLOW_FINISH;  	
+				}
+				else if( 0 == MotorDelayTimMs )  //开门超时执行上锁
+				{
+					my_printf( "door is not push and timout\n" ); 
+					step = E_OPEN_FLOW_LOCK; 
+				}
+		break;	
+			   
+		case E_OPEN_LATCH_OUT_WAIT: //等待弹出斜舌
+			   if( 0 == MotorDelayTimMs )
+			   {
+				   tp1 = (actionDir == EM_TURN_LEFT_CMD) ? EM_TURN_RIGH_CMD : EM_TURN_LEFT_CMD; 
+				   DRV_Motor218_OutputCtrl( (MOTOR_CTRL_CMD_E)tp1 );  
+				   MotorDelayTimMs = LATCH_OUT_ACT_TIMEE;
+				   step = E_OPEN_LATCH_OUT_ACTION;  
+			   }
+		break;    
+			   
+		case E_OPEN_LATCH_OUT_ACTION: //检测斜舌是否弹出 + 电机刹车 
+			   if( 0 == MotorDelayTimMs )
+			   {
+				   DRV_Motor218_OutputCtrl( EM_STOP_BOTH_ON_CMD ); //电机刹车	
+				   MotorDelayTimMs = MOTOR_STOP_TIME;
+				   step = E_OPEN_FLOW_STOP;  
+			   }
+		break;	
+			   
+		case E_OPEN_FLOW_SUCCESS:   //开门成功   
+			   #ifdef LOCK_BODY_AUTO_MOTOR
+			   if( OpenDoorTimeCnt < 2 )    //前两次特殊处理
+			   {
+					if( autoLockBody == true )
+					{
+					   DoorOpeningHoldTimSec = OPENING_HOLD_TIME;  //door is opening  
+					}
+	      	        else 
+				    {
+					   DoorUnlockWarmSts = false;
+					   DoorOpeningHoldTimSec = 0;
+				    }
+			   }
+			   else 
+			   {
+				    DoorOpeningHoldTimSec = OPENING_HOLD_TIME;  //door is opening  
+			   }
+			   #else
+			   DoorOpeningHoldTimSec = OPENING_HOLD_TIME;  //door is opening 
+			   #endif	
+			   MotorDelayTimMs = PUSH_DOOR_WAIT_TIME;
+			   step = E_OPEN_PUSH_DOOR_WAIT; 
+			   result = 2;    
+			   return result;
+			    
+		case E_OPEN_FLOW_FAIL:     //开门失败   
+		       MotorDelayTimMs = 0;
+		       result = -1;    
+		       step = E_OPEN_FLOW_STOP;      
+		break;	  
+
+		case E_OPEN_FLOW_FINISH:   //开门完成 + 执行斜舌头弹出流程
+			   MotorDelayTimMs = LATCH_OUT_WAIT_TIMEE;
+			   step = E_OPEN_LATCH_OUT_WAIT; 
+			   result = 1;  			   
+		break;	
+
+		case E_OPEN_FLOW_LOCK:     //上锁流程 
+			   MotorDelayTimMs = 0;
+			   step = E_OPEN_LATCH_OUT_WAIT;    
+               result = 3;   //开门动作执行后未推开门			   
+		break;
+
+		case E_OPEN_FLOW_STOP:     //关闭电机 结束流程
+			   if( 0 == MotorDelayTimMs )
+			   {
+				   my_printf( "motor open stop\n" ); 
+				   DRV_Motor218_OutputCtrl( EM_STOP_BOTH_OFF_CMD ); //电机停止
+				   MOTOR_POWER_OFF();
+				   #ifdef LOCK_BODY_AUTO_MOTOR
+				   if( autoLockBody == true )
+				   {
+					   if( 1 == SystemReadSeting (&SystemSeting.LockBodyMode, 1 ) )
+					   {
+						   if( SystemSeting.LockBodyMode != LOCK_BODY_218 )
+						   {
+							   SystemSeting.LockBodyMode = LOCK_BODY_218;
+							   SystemWriteSeting(&SystemSeting.LockBodyMode,1);//写配置
+						   }
+					   } 
+				   }
+				   if( OpenDoorTimeCnt <= 2 )  //第二次开完门 
+				   {
+					   if( 1 == SystemReadSeting (&SystemSeting.LockBodyMode, 1 ) )
+					   {
+						   LockConfigMode = SystemSeting.LockBodyMode;
+						   if( SystemSeting.LockBodyMode == LOCK_BODY_218 )
+						   {
+							   DRV_Motor218_PinInterruptEnable();  //enable interrupt
+						   }
+						   else 
+						   {
+							   if( OpenDoorTimeCnt <= 1 ) 
+							   {
+								   LockConfigMode =  LOCK_BODY_218;
+							   }
+						   }
+					   }  
+				   }
+				   else if( OpenDoorTimeCnt > 2 )  //第二次开完门以后
+				   {
+					   if( LockConfigMode == LOCK_BODY_218 )
+					   {
+						   DRV_Motor218_PinInterruptEnable();  //enable interrupt
+					   }	
+				   }
+				   #else
+				   DRV_Motor218_PinInterruptEnable();  //enable interrupt
+				   #endif
+				   step = E_OPEN_FLOW_START;  
+				   return result;
+			   }
+		break;		   
+		default:break;	
+	}
+#else
+	switch( step )
+	{
+		case E_OPEN_FLOW_START:  //获取电机动作方向+电机动作   左开 OR 右开   + 电机动作500ms
+		{      
+			   my_printf( "motor open start\n" ); 
+			   errcnt = 0;
+			   tp1 = DRV_Motor218_GetTurnDirSts();  
+               tm1 = DRV_Motor218_GetTurnDirFromFlash();
+		       if( tp1 != tm1 )	  //电机动作方向数据异常
+			   {
+                  return (-1); 
+			   }
+			   if( LEFT_OPEN_TYPE == tp1 )       //左开
+			   {
+				  actionDir = EM_TURN_LEFT_CMD; 
+			   }
+			   else if( RIGHT_OPEN_TYPE == tp1 ) //右开
+			   {
+				  actionDir = EM_TURN_RIGH_CMD;  
+			   }
+			   else   //再次确认开门方向的可靠性
+			   {
+				  return (-1);  
+			   }
+			   result = 0;
+			   DRV_Motor218_PinInterruptDisable(); //disable interrupt
+			   CloseFalseHoldTimSec  =0;
+			   FalseLockWarmSts = false;
+			   DoorOpeningHoldTimSec =0;
+			   DoorUnlockWarmSts = false;
+			   HandleTryForbitTimSec = 0;
+			   HandleTryForbitWarmSts = false;
+			   
+			   MOTOR_POWER_ON();
+			   DRV_Motor218_OutputCtrl( actionDir ); //电机动作
+			   MotorDelayTimMs = AMP_ADC_FILTER_TIMEE;
+			   step = E_OPEN_FLOW_DELAY1;
+		}
+		break;
+			   
+		case E_OPEN_FLOW_DELAY1:  //持续300ms
+			   if( 0 == MotorDelayTimMs )
+			   {
+				   MotorDelayTimMs = MOTOR_WORK_TIMEE;
+				   step = E_OPEN_ADC_STOP;  
+			   }
+		break;	
+			   
+		case E_OPEN_ADC_STOP:    //持续3000ms内检查阻转
+			   tp1 = DRV_Motor218_GetTurnTorqueSts();
+			   tp4 = (tp1 == HIGH_MOTOR_TORQUE) ? HIGH_TORQUE_STOP_AMP : LOW_TORQUE_STOP_AMP;
+			   if( DRV_Motor218_GetAmpAdcVal() > tp4 ) //阻转 
+			   {
+				   my_printf( "motor stop by adc\n" );  
+				   DRV_Motor218_OutputCtrl( EM_STOP_BOTH_ON_CMD ); //电机停止动作
+				   MotorDelayTimMs = SENSE_CHECK_TIME;
+				   step = E_OPEN_RESULT_CHECK;  
+			   }
+			   else if( 0 == MotorDelayTimMs )
+			   {
+				   my_printf( "motor stop by timeout\n" );  
+				   DRV_Motor218_OutputCtrl( EM_STOP_BOTH_ON_CMD ); //电机停止动作
+				   MotorDelayTimMs = SENSE_CHECK_TIME;
+				   step = E_OPEN_RESULT_CHECK;  
+			   }
+		break;	 
+
+		case E_OPEN_RESULT_CHECK:  //电机堵转后检查 斜舌+主舌 状态 
+		       if( (SENSE_STATE_IN == DRV_Motor218_GetSensorState( E_SENSE_BOLT )) 
+				 &&(SENSE_STATE_IN == DRV_Motor218_GetSensorState( E_SENSE_LATCH )) )	
+			   {
+			       MotorDelayTimMs = 0;
+                   step = E_OPEN_FLOW_SUCCESS; 
+			   }				   
+		       else if( 0 == MotorDelayTimMs )  //主舌超时错误 回转 重开
+			   {
+				   step = E_OPEN_TRY_MORE;  
+			   }
+		break;	
+		
+		case E_OPEN_TRY_MORE: //主舌超时错误 回转 重开  持续300ms  
+			   errcnt++;
+		       if( errcnt >= OPEN_DOOR_FAIL_TOP_CNT )
+			   {
+				   my_printf( "motor open error\n" );  
+				   MotorDelayTimMs = 0;
+				   step = E_OPEN_FLOW_FAIL;      
+			   }
+			   else 
+			   {
+				   tp1 = (actionDir == EM_TURN_LEFT_CMD) ? EM_TURN_RIGH_CMD : EM_TURN_LEFT_CMD; 
+				   DRV_Motor218_OutputCtrl( (MOTOR_CTRL_CMD_E)tp1 );  
+				   MotorDelayTimMs = MOTOR_TURN_BACK_TIME;  //重开反转300ms
+				   step = E_OPEN_PUSH_DOOR_CHECK; 
+			   }
+		break;	   
+			   
+		case E_OPEN_PUSH_DOOR_CHECK: //电机回转的过程中把手开门
+			   if( SENSE_STATE_OUT == DRV_Motor218_GetSensorState( E_SENSE_TRIGGER ) )
+			   {
+				   my_printf( "door is push break\n" ); 
+				   DRV_Motor218_OutputCtrl( EM_STOP_BOTH_ON_CMD ); //电机刹车	
+				   step = E_OPEN_FLOW_FINISH; 		   
+			   }
+			   else if( 0 == MotorDelayTimMs )
+			   {
+				   DRV_Motor218_OutputCtrl( EM_STOP_BOTH_ON_CMD ); //电机刹车	
+				   MotorDelayTimMs = MOTOR_STOP_TIME;
+				   step = E_OPEN_FLOW_DELAY2;       //再次开门流程
+			   }
+		break;	
+		
+		case E_OPEN_FLOW_DELAY2: //电机回转的过程中把手开门
+			   if( 0 == MotorDelayTimMs )
+			   {
+				   tp1 = (actionDir == EM_TURN_LEFT_CMD) ? EM_TURN_LEFT_CMD : EM_TURN_RIGH_CMD; 
+				   DRV_Motor218_OutputCtrl( (MOTOR_CTRL_CMD_E)tp1 );  
+				   MotorDelayTimMs = AMP_ADC_FILTER_TIMEE;
+				   step = E_OPEN_FLOW_DELAY1;       //再次开门流程
+			   }
+		break;  
+		
+		case E_OPEN_PUSH_DOOR_WAIT: //开门成功 + 检测三角舌检测门是否被推开
+				if( SENSE_STATE_OUT == DRV_Motor218_GetSensorState( E_SENSE_TRIGGER ) )
+				{
+					my_printf( "door is push\n" );  
+					step = E_OPEN_FLOW_FINISH;  	
+				}
+				else if( 0 == MotorDelayTimMs )  //开门超时执行上锁
+				{
+					my_printf( "door is not push and timout\n" ); 
+					step = E_OPEN_FLOW_LOCK; 
+				}
+		break;	
+			   
+		case E_OPEN_LATCH_OUT_WAIT: //等待弹出斜舌
+			   if( 0 == MotorDelayTimMs )
+			   {
+				   tp1 = (actionDir == EM_TURN_LEFT_CMD) ? EM_TURN_RIGH_CMD : EM_TURN_LEFT_CMD; 
+				   DRV_Motor218_OutputCtrl( (MOTOR_CTRL_CMD_E)tp1 );  
+				   MotorDelayTimMs = LATCH_OUT_ACT_TIMEE;
+				   step = E_OPEN_LATCH_OUT_ACTION;  
+			   }
+		break;    
+			   
+		case E_OPEN_LATCH_OUT_ACTION: //检测斜舌是否弹出 + 电机刹车 
+			   if( 0 == MotorDelayTimMs )
+			   {
+				   DRV_Motor218_OutputCtrl( EM_STOP_BOTH_ON_CMD ); //电机刹车	
+				   MotorDelayTimMs = MOTOR_STOP_TIME;
+				   step = E_OPEN_FLOW_STOP;  
+			   }
+		break;	
+			   
+		case E_OPEN_FLOW_SUCCESS:   //开门成功   
+			   DoorOpeningHoldTimSec = OPENING_HOLD_TIME;  //door is opening 
+			   MotorDelayTimMs = PUSH_DOOR_WAIT_TIME;
+			   step = E_OPEN_PUSH_DOOR_WAIT; 
+			   result = 2;    
+			   return result;
+		break;
+			    
+		case E_OPEN_FLOW_FAIL:     //开门失败   
+		       MotorDelayTimMs = 0;
+		       result = -1;    
+		       step = E_OPEN_FLOW_STOP;      
+		break;	  
+
+		case E_OPEN_FLOW_FINISH:   //开门完成 + 执行斜舌头弹出流程
+			   MotorDelayTimMs = LATCH_OUT_WAIT_TIMEE;
+			   step = E_OPEN_LATCH_OUT_WAIT; 
+			   result = 1;  			   
+		break;	
+
+		case E_OPEN_FLOW_LOCK:     //上锁流程 
+			   MotorDelayTimMs = 0;
+			   step = E_OPEN_LATCH_OUT_WAIT;    
+               result = 3;   //开门动作执行后未推开门			   
+		break;
+
+		case E_OPEN_FLOW_STOP:     //关闭电机 结束流程
+			   if( 0 == MotorDelayTimMs )
+			   {
+				   my_printf( "motor open stop\n" ); 
+				   DRV_Motor218_OutputCtrl( EM_STOP_BOTH_OFF_CMD ); //电机停止
+				   MOTOR_POWER_OFF();
+				   DRV_Motor218_PinInterruptEnable();  //enable interrupt
+				   step = E_OPEN_FLOW_START;  
+				   return result;
+			   }
+		break;		   
+		default:break;	
+	}
+#endif
+	
+ 
+	return 0;
+}
+
+/*********************************************************************************************************************
+* Function Name :  DRV_Motor218_ForceOpenDoorThread()
+* Description   :  强制执行开门?   鞒?   
+* Para          :  none   
+* Return        :  执行结果   -1=失败  0=执行中  1=执行完成  2=主锁舌已缩进(语音可播报)  3=开门动作执行后未推开门  
+*********************************************************************************************************************/
+int8_t DRV_Motor218_ForceOpenDoorThread( void )  
+{
+	uint8_t  tp1;
+	uint32_t tp4;
+	static MOTOR_CTRL_CMD_E actionDir;
+	static MOTOR_OPEN_FLOW_E step;
+	
+	switch( step )
+	{
+		case E_OPEN_FLOW_START:  //获取电机动作方向+电机动作   左开 OR 右开   + 电机动作500ms
+		{      
+			   my_printf( "motor open start\n" ); 
+			   tp1 = DRV_Motor218_GetTurnDirSts();  
+               uint8_t tm1 = DRV_Motor218_GetTurnDirFromFlash();
+		       if( tp1 != tm1 )	  //电机动作方向数据异常
+			   {
+                  return (-1); 
+			   }
+			   if( LEFT_OPEN_TYPE == tp1 )       //左开
+			   {
+				  actionDir = EM_TURN_LEFT_CMD; 
+			   }
+			   else if( RIGHT_OPEN_TYPE == tp1 ) //右开
+			   {
+				  actionDir = EM_TURN_RIGH_CMD;  
+			   }
+			   else   //再次确认开门方向的可靠性
+			   {
+				  return (-1);  
+			   }
+			   DRV_Motor218_PinInterruptDisable(); //disable interrupt
+			   CloseFalseHoldTimSec  =0;
+			   FalseLockWarmSts = false;
+			   DoorOpeningHoldTimSec =0;
+			   DoorUnlockWarmSts = false;
+			   HandleTryForbitTimSec = 0;
+			   HandleTryForbitWarmSts = false;
+			   
+			   MOTOR_POWER_ON();
+			   DRV_Motor218_OutputCtrl( actionDir ); //电机动作
+			   MotorDelayTimMs = AMP_ADC_FILTER_TIMEE;
+			   step = E_OPEN_FLOW_DELAY1;
+		}
+		break;
+			   
+		case E_OPEN_FLOW_DELAY1:  //持续300ms
+			   if( 0 == MotorDelayTimMs )
+			   {
+				   MotorDelayTimMs = MOTOR_WORK_TIMEE;
+				   step = E_OPEN_ADC_STOP;  
+			   }
+		break;	
+			   
+		case E_OPEN_ADC_STOP:    //持续3000ms内检查阻转
+			   tp1 = DRV_Motor218_GetTurnTorqueSts();
+			   tp4 = (tp1 == HIGH_MOTOR_TORQUE) ? HIGH_TORQUE_STOP_AMP : LOW_TORQUE_STOP_AMP;
+			   if( DRV_Motor218_GetAmpAdcVal() > tp4 ) //阻转 
+			   {
+				   my_printf( "motor stop by adc\n" );  
+				   DRV_Motor218_OutputCtrl( EM_STOP_BOTH_ON_CMD ); //电机停止动作
+				   MotorDelayTimMs = TIME_3000_MS;
+				   step = E_OPEN_LATCH_OUT_WAIT;  
+				   return 2;
+			   }				   
+			   else if( 0 == MotorDelayTimMs )
+			   {
+				   my_printf( "motor stop by timeout\n" );  
+				   DRV_Motor218_OutputCtrl( EM_STOP_BOTH_ON_CMD ); //电机停止动作
+				   MotorDelayTimMs = TIME_3000_MS;
+				   step = E_OPEN_LATCH_OUT_WAIT;  
+				   return 2;
+			   }
+		break;	 
+ 
+		case E_OPEN_LATCH_OUT_WAIT: //等待弹出斜舌
+			   if( 0 == MotorDelayTimMs )
+			   {
+				   tp1 = (actionDir == EM_TURN_LEFT_CMD) ? EM_TURN_RIGH_CMD : EM_TURN_LEFT_CMD; 
+				   DRV_Motor218_OutputCtrl( (MOTOR_CTRL_CMD_E)tp1 );  
+				   MotorDelayTimMs = LATCH_OUT_ACT_TIMEE;
+				   step = E_OPEN_LATCH_OUT_ACTION;  
+			   }
+		break;    
+			   
+		case E_OPEN_LATCH_OUT_ACTION: //检测斜舌是否弹出 + 电机刹车 
+               if( 0 == MotorDelayTimMs )
+			   {
+				   DRV_Motor218_OutputCtrl( EM_STOP_BOTH_ON_CMD ); //电机刹车	
+				   MotorDelayTimMs = MOTOR_STOP_TIME;
+				   step = E_OPEN_FLOW_STOP;  
+			   }
+		break;	
+	 
+		case E_OPEN_FLOW_STOP:     //关闭电机 结束流程
+			   if( 0 == MotorDelayTimMs )
+			   {
+				   my_printf( "motor open stop\n" ); 
+				   DRV_Motor218_OutputCtrl( EM_STOP_BOTH_OFF_CMD ); //电机停止
+				   MOTOR_POWER_OFF();
+				   DRV_Motor218_PinInterruptEnable();  //enable interrupt
+				   step = E_OPEN_FLOW_START;  
+				   return 1;
+			   }
+		break;		   
+		default:break;	
+	}
+	
+	
+	return 0;
+}
+
+/*********************************************************************************************************************
+* Function Name :  DRV_Motor218_CloseDoorThread()
+* Description   :  开门流程    
+* Para          :  none   
+* Return        :  执行结果   -2=假锁 -1=失败  0=执行中  1=执行完成  
+*********************************************************************************************************************/
+int8_t DRV_Motor218_CloseDoorThread( void )  
+{
+	uint8_t  tp1, tm1;
+	//uint32_t tp4;
+	static int8_t  result;
+	static MOTOR_CTRL_CMD_E actionDir;
+	static MOTOR_CLOSE_FLOW_E step;
+	
+#ifdef MOTOR_LOCK_ADJUST
+	switch( step )
+	{
+		case E_CLOSE_FLOW_START:  //获取电机动作方向+电机动作   左开 OR 右开   + 电机动作500ms
+		{      
+			   tp1 = DRV_Motor218_GetTurnDirSts();  
+               tm1 = DRV_Motor218_GetTurnDirFromFlash();
+		       if( tp1 != tm1 )	  //电机动作方向数据异常
+			   {
+                  return (-1); 
+			   }
+ 
+			   if( LEFT_OPEN_TYPE == tp1 )       //左开
+			   {
+				  actionDir = EM_TURN_RIGH_CMD; 
+			   }
+			   else if( RIGHT_OPEN_TYPE == tp1 ) //右开
+			   {
+				  actionDir = EM_TURN_LEFT_CMD; 				   
+			   }
+			   else   //再次确认开门方向的可靠性
+			   {
+				  return (-1);  
+			   }
+			   result = 0;
+			   DRV_Motor218_PinInterruptDisable(); //disable interrupt
+			   CloseFalseHoldTimSec  =0;
+			   FalseLockWarmSts = false;
+			   DoorOpeningHoldTimSec =0;
+			   DoorUnlockWarmSts = false;
+			   HandleTryForbitTimSec = 0;
+			   HandleTryForbitWarmSts = false;
+			   
+			   MOTOR_POWER_ON();
+			   DRV_Motor218_OutputCtrl( actionDir ); //电机动作
+//			   MotorDelayTimMs = AMP_ADC_FILTER_TIMEE;
+//			   step = E_CLOSE_FLOW_DELAY1;
+			   MotorDelayTimMs = MOTOR_WORK_TIMEE;
+			   step = E_CLOSE_ADC_STOP;  
+		}
+		break;
+			   
+		case E_CLOSE_FLOW_DELAY1:  //持续300ms
+			   if( 0 == MotorDelayTimMs )
+			   {
+				   my_printf( "motor adc filter timeout\n" ); 
+				   MotorDelayTimMs = MOTOR_WORK_TIMEE;
+				   step = E_CLOSE_ADC_STOP;  
+			   }
+		break;	
+			   
+		case E_CLOSE_ADC_STOP:    //持续3500ms内检查阻转
+//			   tp1 = DRV_Motor218_GetTurnTorqueSts();
+//			   tp4 = (tp1 == HIGH_MOTOR_TORQUE) ? HIGH_TORQUE_STOP_AMP : LOW_TORQUE_STOP_AMP;
+//			   if( DRV_Motor218_GetAmpAdcVal() > tp4 ) //阻转 
+//			   {
+//				   my_printf( "motor stop by adc\n" );  
+//				   #if 0
+//				   if( SENSE_STATE_OUT == DRV_Motor218_GetSensorState( E_SENSE_BOLT ))
+//				   {
+//					   my_printf( "motor bolt sense is outside!\n" ); 
+//					   DRV_Motor218_OutputCtrl( EM_STOP_BOTH_ON_CMD ); //电机停止动作
+//	 				   MotorDelayTimMs = MOTOR_STOP_TIME;
+//	 				   step = E_CLOSE_MOTOR_TOGGLE;    
+//				   }
+//				   else 
+//				   #endif
+//				   {
+//					   MotorDelayTimMs = MOTOR_STOP_HOLD_TIME;
+//					   step = E_CLOSE_CONFIRM_LOCK;    
+//				   }
+//			   }	
+			   if( SENSE_STATE_OUT == DRV_Motor218_GetSensorState( E_SENSE_BOLT ) )
+			   {
+				   MotorDelayTimMs = MOTOR_STOP_HOLD_TIME;
+				   step = E_CLOSE_CONFIRM_LOCK;  
+			   }
+			   else if( 0 == MotorDelayTimMs )
+			   {
+				   my_printf( "motor stop by timeout\n" );  
+				   DRV_Motor218_OutputCtrl( EM_STOP_BOTH_ON_CMD ); //电机停止动作
+				   MotorDelayTimMs = MOTOR_STOP_TIME;
+				   step = E_CLOSE_MOTOR_TOGGLE; 	   
+			   }
+		break;	 
+
+		case E_CLOSE_CONFIRM_LOCK: //堵转后再次确认，避免扭力不够
+			   if( 0 == MotorDelayTimMs )
+			   {
+				   DRV_Motor218_OutputCtrl( EM_STOP_BOTH_ON_CMD ); //电机停止动作
+				   MotorDelayTimMs = MOTOR_STOP_TIME;
+				   step = E_CLOSE_MOTOR_TOGGLE;  
+			   }
+		break;		   
+			      
+		case E_CLOSE_MOTOR_TOGGLE: //电机回转
+			   if( 0 == MotorDelayTimMs )
+			   {
+				   my_printf( "motor turn back\n" );  
+				   tp1 = (actionDir == EM_TURN_LEFT_CMD) ? EM_TURN_RIGH_CMD : EM_TURN_LEFT_CMD; 
+				   DRV_Motor218_OutputCtrl( (MOTOR_CTRL_CMD_E)tp1 );  
+				   MotorDelayTimMs = MOTOR_CLOSE_BACK_TIME;   
+				   step = E_CLOSE_RESULT_CHECK;  
+			   }
+		break;	
+  	   
+		case E_CLOSE_RESULT_CHECK:  //刹车 + 三角舌 & 斜舌 & 主舌 状态检测
+	           if( 0 == MotorDelayTimMs )  
+			   {
+				   if( (SENSE_STATE_OUT == DRV_Motor218_GetSensorState( E_SENSE_BOLT )) 
+					 &&(SENSE_STATE_IN == DRV_Motor218_GetSensorState( E_SENSE_TRIGGER )) 
+					 )	
+				   {
+					   my_printf( "close door is ok\n" );  
+					   DRV_Motor218_OutputCtrl( EM_STOP_BOTH_ON_CMD ); //电机停止动作
+					   MotorDelayTimMs = MOTOR_STOP_TIME;
+					   step = E_CLOSE_FLOW_STOP; 
+					   result = 1;   //上锁成功
+				   }				   
+				   else  
+				   {
+					   DRV_Motor218_OutputCtrl( EM_STOP_BOTH_ON_CMD ); //电机停止动作
+					   MotorDelayTimMs = SENSE_CHECK_TIME;
+					   step = E_CLOSE_WAIT_STEADY;  
+				   } 
+			   }
+		break;	
+
+		case E_CLOSE_WAIT_STEADY: //等待传感器状态稳定  再次确认传感器状态
+			   if( (SENSE_STATE_OUT == DRV_Motor218_GetSensorState( E_SENSE_BOLT )) 
+				 &&(SENSE_STATE_IN == DRV_Motor218_GetSensorState( E_SENSE_TRIGGER )) 
+				 )	
+			   {
+				   my_printf( "close door is end\n" );  
+				   MotorDelayTimMs = MOTOR_STOP_TIME;
+				   step = E_CLOSE_FLOW_STOP; 
+				   result = 1;   //上锁成功
+			   }
+			   else if( 0 == MotorDelayTimMs )
+			   {
+				   my_printf( "motor sesen check timeout\n" );  
+				   MotorDelayTimMs = MOTOR_STOP_TIME;   
+				   step = E_CLOSE_FLOW_STOP;  
+				   result = -2;   //门未锁好
+			   }
+		break;  	   
+ 	   
+		case E_CLOSE_FLOW_STOP: //关闭电机 结束流程
+			   if( 0 == MotorDelayTimMs )
+			   {
+				   DRV_Motor218_OutputCtrl( EM_STOP_BOTH_OFF_CMD ); //电机刹车	
+				   MOTOR_POWER_OFF();
+				   DRV_Motor218_PinInterruptEnable();  //enable interrupt
+				   step = E_CLOSE_FLOW_START;  		   
+				   return result;
+			   }
+		break;		   
+
+		default:break;	
+	}
+ 
+#else
+	switch( step )
+	{
+		case E_CLOSE_FLOW_START:  //获取电机动作方向+电机动作   左开 OR 右开   + 电机动作500ms
+		{      
+			   tp1 = DRV_Motor218_GetTurnDirSts();  
+               tm1 = DRV_Motor218_GetTurnDirFromFlash();
+		       if( tp1 != tm1 )	  //电机动作方向数据异常
+			   {
+                  return (-1); 
+			   }
+ 
+			   if( LEFT_OPEN_TYPE == tp1 )       //左开
+			   {
+				  actionDir = EM_TURN_RIGH_CMD; 
+			   }
+			   else if( RIGHT_OPEN_TYPE == tp1 ) //右开
+			   {
+				  actionDir = EM_TURN_LEFT_CMD; 				   
+			   }
+			   else   //再次确认开门方向的可靠性
+			   {
+				  return (-1);  
+			   }
+			   result = 0;
+			   DRV_Motor218_PinInterruptDisable(); //disable interrupt
+			   CloseFalseHoldTimSec  =0;
+			   FalseLockWarmSts = false;
+			   DoorOpeningHoldTimSec =0;
+			   DoorUnlockWarmSts = false;
+			   HandleTryForbitTimSec = 0;
+			   HandleTryForbitWarmSts = false;
+			   
+			   MOTOR_POWER_ON();
+			   DRV_Motor218_OutputCtrl( actionDir ); //电机动作
+			   MotorDelayTimMs = AMP_ADC_FILTER_TIMEE;
+			   step = E_CLOSE_FLOW_DELAY1;  
+		}
+		break;
+			   
+		case E_CLOSE_FLOW_DELAY1:  //持续300ms
+			   if( 0 == MotorDelayTimMs )
+			   {
+				   my_printf( "motor adc filter timeout\n" ); 
+				   MotorDelayTimMs = MOTOR_WORK_TIMEE;
+				   step = E_CLOSE_ADC_STOP;  
+			   }
+		break;	
+			   
+		case E_CLOSE_ADC_STOP:    //持续3500ms内检查阻转
+			   tp1 = DRV_Motor218_GetTurnTorqueSts();
+			   tp4 = (tp1 == HIGH_MOTOR_TORQUE) ? HIGH_TORQUE_STOP_AMP : LOW_TORQUE_STOP_AMP;
+			   if( DRV_Motor218_GetAmpAdcVal() > tp4 ) //阻转 
+			   {
+				   my_printf( "motor stop by adc\n" );  
+				   DRV_Motor218_OutputCtrl( EM_STOP_BOTH_ON_CMD ); //电机停止动作
+				   MotorDelayTimMs = MOTOR_STOP_TIME;
+				   step = E_CLOSE_MOTOR_TOGGLE;    
+			   }	
+			   else if( 0 == MotorDelayTimMs )
+			   {
+				   my_printf( "motor stop by timeout\n" );  
+				   DRV_Motor218_OutputCtrl( EM_STOP_BOTH_ON_CMD ); //电机停止动作
+				   MotorDelayTimMs = MOTOR_STOP_TIME;
+				   step = E_CLOSE_MOTOR_TOGGLE; 	   
+			   }
+		break;	 
+	      
+		case E_CLOSE_MOTOR_TOGGLE: //电机回转
+			   if( 0 == MotorDelayTimMs )
+			   {
+				   my_printf( "motor turn back\n" );  
+				   tp1 = (actionDir == EM_TURN_LEFT_CMD) ? EM_TURN_RIGH_CMD : EM_TURN_LEFT_CMD; 
+				   DRV_Motor218_OutputCtrl( (MOTOR_CTRL_CMD_E)tp1 );  
+				   MotorDelayTimMs = MOTOR_CLOSE_BACK_TIME;   
+				   step = E_CLOSE_RESULT_CHECK;  
+			   }
+		break;	
+  	   
+		case E_CLOSE_RESULT_CHECK:  //刹车 + 三角舌 & 斜舌 & 主舌 状态检测
+	           if( 0 == MotorDelayTimMs )  
+			   {
+				   if( (SENSE_STATE_OUT == DRV_Motor218_GetSensorState( E_SENSE_BOLT )) 
+					 &&(SENSE_STATE_OUT == DRV_Motor218_GetSensorState( E_SENSE_LATCH )) 
+					 &&(SENSE_STATE_IN == DRV_Motor218_GetSensorState( E_SENSE_TRIGGER )) 
+					 )	
+				   {
+					   my_printf( "close door is ok\n" );  
+					   DRV_Motor218_OutputCtrl( EM_STOP_BOTH_ON_CMD ); //电机停止动作
+					   MotorDelayTimMs = MOTOR_STOP_TIME;
+					   step = E_CLOSE_FLOW_STOP; 
+					   result = 1;   //上锁成功
+				   }				   
+				   else  
+				   {
+					   DRV_Motor218_OutputCtrl( EM_STOP_BOTH_ON_CMD ); //电机停止动作
+					   MotorDelayTimMs = SENSE_CHECK_TIME;
+					   step = E_CLOSE_WAIT_STEADY;  
+				   } 
+			   }
+		break;	
+
+		case E_CLOSE_WAIT_STEADY: //等待传感器状态稳定  再次确认传感器状态
+			   if( (SENSE_STATE_OUT == DRV_Motor218_GetSensorState( E_SENSE_BOLT )) 
+				 &&(SENSE_STATE_OUT == DRV_Motor218_GetSensorState( E_SENSE_LATCH )) 
+				 &&(SENSE_STATE_IN == DRV_Motor218_GetSensorState( E_SENSE_TRIGGER )) 
+				 )	
+			   {
+				   my_printf( "close door is end\n" );  
+				   MotorDelayTimMs = MOTOR_STOP_TIME;
+				   step = E_CLOSE_FLOW_STOP; 
+				   result = 1;   //上锁成功
+			   }
+			   else if( 0 == MotorDelayTimMs )
+			   {
+				   my_printf( "motor sesen check timeout\n" );  
+				   MotorDelayTimMs = MOTOR_STOP_TIME;   
+				   step = E_CLOSE_FLOW_STOP;  
+				   result = -2;   //门未锁好
+			   }
+		break;  	   
+ 	   
+		case E_CLOSE_FLOW_STOP: //关闭电机 结束流程
+			   if( 0 == MotorDelayTimMs )
+			   {
+				   DRV_Motor218_OutputCtrl( EM_STOP_BOTH_OFF_CMD ); //电机刹车	
+				   MOTOR_POWER_OFF();
+				   DRV_Motor218_PinInterruptEnable();  //enable interrupt
+				   step = E_CLOSE_FLOW_START;  	   
+				   return result;
+			   }
+		break;		   
+
+		default:break;	
+	}
+ 
+#endif
+ 
+ 
+	return 0;
+}
+
+/*********************************************************************************************************************
+* Function Name :  DRV_Motor218_ForceCloseDoorThread()
+* Description   :  强制执行开门流程  传感器不做检测    
+* Para          :  none   
+* Return        :  执行结果    -1=失败  0=执行中  1=执行完成  
+*********************************************************************************************************************/
+int8_t DRV_Motor218_ForceCloseDoorThread( void )  
+{
+	uint8_t  tp1, tm1;
+#ifndef MOTOR_LOCK_ADJUST
+	uint32_t tp4;
+#endif
+	static MOTOR_CTRL_CMD_E actionDir;
+	static MOTOR_CLOSE_FLOW_E step;
+
+#ifdef MOTOR_LOCK_ADJUST
+	switch( step )
+	{
+		case E_CLOSE_FLOW_START:  //获取电机动作方向+电机动作   左开 OR 右开   + 电机动作500ms
+		{      
+			   tp1 = DRV_Motor218_GetTurnDirSts();  
+               tm1 = DRV_Motor218_GetTurnDirFromFlash();
+		       if( tp1 != tm1 )	  //电机动作方向数据异常
+			   {
+                  return (-1); 
+			   }
+ 
+			   if( LEFT_OPEN_TYPE == tp1 )       //左开
+			   {
+				  actionDir = EM_TURN_RIGH_CMD; 
+			   }
+			   else if( RIGHT_OPEN_TYPE == tp1 ) //右开
+			   {
+				  actionDir = EM_TURN_LEFT_CMD; 				   
+			   }
+			   else   //再次确认开门方向的可靠性
+			   {
+				  return (-1);  
+			   }
+			   DRV_Motor218_PinInterruptDisable(); //disable interrupt
+			   CloseFalseHoldTimSec  =0;
+			   FalseLockWarmSts = false;
+			   DoorOpeningHoldTimSec =0;
+			   DoorUnlockWarmSts = false;
+			   HandleTryForbitTimSec = 0;
+			   HandleTryForbitWarmSts = false;
+			   
+			   MOTOR_POWER_ON();
+			   DRV_Motor218_OutputCtrl( actionDir ); //电机动作
+			   MotorDelayTimMs = MOTOR_FORCE_WORK_TIME;
+			   step = E_CLOSE_ADC_STOP;
+		}
+		break;
+	   
+		case E_CLOSE_ADC_STOP:    //持续3500ms内检查阻转
+			   if( 0 == MotorDelayTimMs )
+			   {
+				   my_printf( "motor stop by timeout\n" );  
+				   DRV_Motor218_OutputCtrl( EM_STOP_BOTH_ON_CMD ); //电机停止动作
+				   MotorDelayTimMs = MOTOR_STOP_TIME;
+				   step = E_CLOSE_MOTOR_TOGGLE; 	   
+			   }
+		break;	 
+
+		case E_CLOSE_MOTOR_TOGGLE: //电机回转
+			   if( 0 == MotorDelayTimMs )
+			   {
+				   my_printf( "motor turn back\n" );  
+				   tp1 = (actionDir == EM_TURN_LEFT_CMD) ? EM_TURN_RIGH_CMD : EM_TURN_LEFT_CMD; 
+				   DRV_Motor218_OutputCtrl( (MOTOR_CTRL_CMD_E)tp1 );  
+				   MotorDelayTimMs = MOTOR_CLOSE_BACK_TIME;   
+				   step = E_CLOSE_RESULT_CHECK;  
+			   }
+		break;	
+  	   
+		case E_CLOSE_RESULT_CHECK:  //刹车 + 三角舌 & 斜舌 & 主舌 状态检测
+	           if( 0 == MotorDelayTimMs )  
+			   {
+				   my_printf( "close door is ok\n" );  
+				   DRV_Motor218_OutputCtrl( EM_STOP_BOTH_ON_CMD ); //电机停止动作
+				   MotorDelayTimMs = MOTOR_STOP_TIME;
+				   step = E_CLOSE_FLOW_STOP; 
+			   }
+		break;	
+  
+		case E_CLOSE_FLOW_STOP: //关闭电机 结束流程
+			   if( 0 == MotorDelayTimMs )
+			   {
+				   DRV_Motor218_OutputCtrl( EM_STOP_BOTH_OFF_CMD ); //电机刹车	
+				   MOTOR_POWER_OFF();
+				   DRV_Motor218_PinInterruptEnable();  //enable interrupt
+				   step = E_CLOSE_FLOW_START;  
+				   CloseActionCheckEn = 0; 				   
+				   return 1;
+			   }
+		break;		   
+
+		default:break;	
+	}
+ 
+#else
+	switch( step )
+	{
+		case E_CLOSE_FLOW_START:  //获取电机动作方向+电机动作   左开 OR 右开   + 电机动作500ms
+		{      
+			   tp1 = DRV_Motor218_GetTurnDirSts();  
+               tm1 = DRV_Motor218_GetTurnDirFromFlash();
+		       if( tp1 != tm1 )	  //电机动作方向数据异常
+			   {
+                  return (-1); 
+			   }
+ 
+			   if( LEFT_OPEN_TYPE == tp1 )       //左开
+			   {
+				  actionDir = EM_TURN_RIGH_CMD; 
+			   }
+			   else if( RIGHT_OPEN_TYPE == tp1 ) //右开
+			   {
+				  actionDir = EM_TURN_LEFT_CMD; 				   
+			   }
+			   else   //再次确认开门方向的可靠性
+			   {
+				  return (-1);  
+			   }
+			   DRV_Motor218_PinInterruptDisable(); //disable interrupt
+			   CloseFalseHoldTimSec  =0;
+			   FalseLockWarmSts = false;
+			   DoorOpeningHoldTimSec =0;
+			   DoorUnlockWarmSts = false;
+			   HandleTryForbitTimSec = 0;
+			   HandleTryForbitWarmSts = false;
+			   
+			   MOTOR_POWER_ON();
+			   DRV_Motor218_OutputCtrl( actionDir ); //电机动作
+			   MotorDelayTimMs = AMP_ADC_FILTER_TIMEE;
+			   step = E_CLOSE_FLOW_DELAY1;
+		}
+		break;
+			   
+		case E_CLOSE_FLOW_DELAY1:  //持续500ms
+			   if( 0 == MotorDelayTimMs )
+			   {
+				   MotorDelayTimMs = MOTOR_WORK_TIMEE;
+				   step = E_CLOSE_ADC_STOP;  
+			   }
+		break;	
+			   
+		case E_CLOSE_ADC_STOP:    //持续3500ms内检查阻转
+			   tp1 = DRV_Motor218_GetTurnTorqueSts();
+			   tp4 = (tp1 == HIGH_MOTOR_TORQUE) ? HIGH_TORQUE_STOP_AMP : LOW_TORQUE_STOP_AMP;
+			   if( DRV_Motor218_GetAmpAdcVal() > tp4 ) //阻转 
+			   {
+				   my_printf( "motor stop by adc\n" );  
+				   DRV_Motor218_OutputCtrl( EM_STOP_BOTH_ON_CMD ); //电机停止动作
+				   MotorDelayTimMs = MOTOR_STOP_TIME;
+				   step = E_CLOSE_MOTOR_TOGGLE;  
+			   }				   
+			   else if( 0 == MotorDelayTimMs )
+			   {
+				   my_printf( "motor stop by timeout\n" );  
+				   DRV_Motor218_OutputCtrl( EM_STOP_BOTH_ON_CMD ); //电机停止动作
+				   MotorDelayTimMs = MOTOR_STOP_TIME;
+				   step = E_CLOSE_MOTOR_TOGGLE; 	   
+			   }
+		break;	 
+
+		case E_CLOSE_MOTOR_TOGGLE: //电机回转
+			   if( 0 == MotorDelayTimMs )
+			   {
+				   my_printf( "motor turn back\n" );  
+				   tp1 = (actionDir == EM_TURN_LEFT_CMD) ? EM_TURN_RIGH_CMD : EM_TURN_LEFT_CMD; 
+				   DRV_Motor218_OutputCtrl( (MOTOR_CTRL_CMD_E)tp1 );  
+				   MotorDelayTimMs = MOTOR_CLOSE_BACK_TIME;   
+				   step = E_CLOSE_RESULT_CHECK;  
+			   }
+		break;	
+  	   
+		case E_CLOSE_RESULT_CHECK:  //刹车 + 三角舌 & 斜舌 & 主舌 状态检测
+	           if( 0 == MotorDelayTimMs )  
+			   {
+				   my_printf( "close door is ok\n" );  
+				   DRV_Motor218_OutputCtrl( EM_STOP_BOTH_ON_CMD ); //电机停止动作
+				   MotorDelayTimMs = MOTOR_STOP_TIME;
+				   step = E_CLOSE_FLOW_STOP; 
+			   }
+		break;	
+  
+		case E_CLOSE_FLOW_STOP: //关闭电机 结束流程
+			   if( 0 == MotorDelayTimMs )
+			   {
+				   DRV_Motor218_OutputCtrl( EM_STOP_BOTH_OFF_CMD ); //电机刹车	
+				   MOTOR_POWER_OFF();
+				   DRV_Motor218_PinInterruptEnable();  //enable interrupt
+				   step = E_CLOSE_FLOW_START;  
+				   CloseActionCheckEn = 0; 				   
+				   return 1;
+			   }
+		break;		   
+
+		default:break;	
+	}
+ 	
+#endif
+	
+	return 0;
+}
+
+
+/*********************************************************************************************************************
+* Function Name :  DRV_Motor218_BurnTestCloseDoorThread()
+* Description   :  老化测试强制执行开门流程  传感器不做检测    
+* Para          :  none   
+* Return        :  执行结果    -1=失败  0=执行中  1=执行完成  
+*********************************************************************************************************************/
+int8_t DRV_Motor218_BurnTestCloseDoorThread( void )  
+{
+	uint8_t  tp1;
+	uint32_t tp4;
+	static MOTOR_CTRL_CMD_E actionDir;
+	static MOTOR_CLOSE_FLOW_E step;
+
+	switch( step )
+	{
+		case E_CLOSE_FLOW_START:  //获取电机动作方向+电机动作   左开 OR 右开   + 电机动作500ms
+		{      
+			   tp1 = DRV_Motor218_GetTurnDirSts();  
+               uint8_t tm1 = DRV_Motor218_GetTurnDirFromFlash();
+		       if( tp1 != tm1 )	  //电机动作方向数据异常
+			   {
+                  return (-1); 
+			   }
+ 
+			   if( LEFT_OPEN_TYPE == tp1 )       //左开
+			   {
+				  actionDir = EM_TURN_RIGH_CMD; 
+			   }
+			   else if( RIGHT_OPEN_TYPE == tp1 ) //右开
+			   {
+				  actionDir = EM_TURN_LEFT_CMD; 				   
+			   }
+			   else   //再次确认开门方向的可靠性
+			   {
+				  return (-1);  
+			   }
+			   DRV_Motor218_PinInterruptDisable(); //disable interrupt
+			   CloseFalseHoldTimSec  =0;
+			   FalseLockWarmSts = false;
+			   DoorOpeningHoldTimSec =0;
+			   DoorUnlockWarmSts = false;
+			   HandleTryForbitTimSec = 0;
+			   HandleTryForbitWarmSts = false;
+			   
+			   MOTOR_POWER_ON();
+			   DRV_Motor218_OutputCtrl( actionDir ); //电机动作
+			   MotorDelayTimMs = AMP_ADC_FILTER_TIMEE;
+			   step = E_CLOSE_FLOW_DELAY1;
+		}
+		break;
+			   
+		case E_CLOSE_FLOW_DELAY1:  //持续500ms
+			   if( 0 == MotorDelayTimMs )
+			   {
+				   MotorDelayTimMs = MOTOR_WORK_TIMEE;
+				   step = E_CLOSE_ADC_STOP;  
+			   }
+		break;	
+			   
+		case E_CLOSE_ADC_STOP:    //持续3500ms内检查阻转
+			   tp1 = DRV_Motor218_GetTurnTorqueSts();
+			   tp4 = (tp1 == HIGH_MOTOR_TORQUE) ? HIGH_TORQUE_STOP_AMP : LOW_TORQUE_STOP_AMP;
+			   if( DRV_Motor218_GetAmpAdcVal() > tp4 ) //阻转 
+			   {
+				   my_printf( "motor stop by adc\n" );  
+				   DRV_Motor218_OutputCtrl( EM_STOP_BOTH_ON_CMD ); //电机停止动作
+				   MotorDelayTimMs = MOTOR_STOP_TIME;
+				   step = E_CLOSE_MOTOR_TOGGLE;  
+			   }				   
+			   else if( 0 == MotorDelayTimMs )
+			   {
+				   my_printf( "motor stop by timeout\n" );  
+				   DRV_Motor218_OutputCtrl( EM_STOP_BOTH_ON_CMD ); //电机停止动作
+				   MotorDelayTimMs = MOTOR_STOP_TIME;
+				   step = E_CLOSE_MOTOR_TOGGLE; 	   
+			   }
+		break;	 
+
+		case E_CLOSE_MOTOR_TOGGLE: //电机回转
+			   if( 0 == MotorDelayTimMs )
+			   {
+				   my_printf( "motor turn back\n" );  
+				   tp1 = (actionDir == EM_TURN_LEFT_CMD) ? EM_TURN_RIGH_CMD : EM_TURN_LEFT_CMD; 
+				   DRV_Motor218_OutputCtrl( (MOTOR_CTRL_CMD_E)tp1 );  
+				   MotorDelayTimMs = MOTOR_CLOSE_BACK_TIME;   
+				   step = E_CLOSE_RESULT_CHECK;  
+			   }
+		break;	
+  	   
+		case E_CLOSE_RESULT_CHECK:  //刹车 + 三角舌 & 斜舌 & 主舌 状态检测
+	           if( 0 == MotorDelayTimMs )  
+			   {
+				   my_printf( "close door is ok\n" );  
+				   DRV_Motor218_OutputCtrl( EM_STOP_BOTH_ON_CMD ); //电机停止动作
+				   MotorDelayTimMs = MOTOR_STOP_TIME;
+				   step = E_CLOSE_FLOW_STOP; 
+			   }
+		break;	
+  
+		case E_CLOSE_FLOW_STOP: //关闭电机 结束流程
+			   if( 0 == MotorDelayTimMs )
+			   {
+				   DRV_Motor218_OutputCtrl( EM_STOP_BOTH_OFF_CMD ); //电机刹车	
+				   MOTOR_POWER_OFF();
+				   DRV_Motor218_PinInterruptEnable();  //enable interrupt
+				   step = E_CLOSE_FLOW_START;  
+				   CloseActionCheckEn = 0; 				   
+				   return 1;
+			   }
+		break;		   
+
+		default:break;	
+	}
+
+	return 0;
+}
+ 
+/*********************************************************************************************************************
+* Function Name :  DRV_Motor218_AutoLockCheck()
+* Description   :  自动锁体上锁检测
+* Para          :  none 
+* Return        :  0= 执行中  1= 可启动锁门  2= 检测结束
+*********************************************************************************************************************/
+uint8_t DRV_Motor218_AutoLockCheck( bool *pfirstflg )
+{
+   static uint8_t step;
+	
+   if( *pfirstflg == false )
+   {
+	   *pfirstflg = true;
+	   step = 0;
+   }
+	
+   switch( step )
+   {
+	   case 0:  //再次确认是否上锁
+		      if( CloseActionCheckEn == 1 )   //上锁动作触发
+			  {
+				  if( (SENSE_STATE_IN == DRV_Motor218_GetSensorState( E_SENSE_TRIGGER ))  \
+				   && (SENSE_STATE_IN == DRV_Motor218_GetSensorState( E_SENSE_BOLT ))     \
+				   && (SENSE_STATE_OUT == DRV_Motor218_GetSensorState( E_SENSE_LATCH ))   \
+					)	  
+				  {
+					  my_printf( "atuo lock by latch action\n" ); 
+					  CloseActionCheckEn = 0; 
+					  return 1; 
+				  }	 
+				  else 
+				  {
+					  step = 1; 
+				  }  
+			  }
+			  else 
+			  {
+				  return 2; 
+			  } 
+	   break;
+	   
+	   case 1:  //确认主舌+三角舌的状态
+			  if( (SENSE_STATE_IN == DRV_Motor218_GetSensorState( E_SENSE_TRIGGER ))  \
+			   && (SENSE_STATE_IN == DRV_Motor218_GetSensorState( E_SENSE_BOLT ))     \
+				)	  
+			  {
+				  MotorDelayTimMs1 = TIME_3000_MS;
+				  step = 2;
+			  }
+			  else if( SENSE_STATE_OUT == DRV_Motor218_GetSensorState( E_SENSE_LATCH ) )  //斜舌弹出
+			  {
+				  CloseActionCheckEn = 0; 
+				  step = 0;  
+				  return 2;
+			  }
+	   break;	  
+			  
+	   case 2:  //再次确认斜舌的状态
+	          if( SENSE_STATE_OUT == DRV_Motor218_GetSensorState( E_SENSE_TRIGGER ) )  //门被推开结束本次动作
+			  {
+				  CloseActionCheckEn = 0; 
+				  step = 0;  
+				  return 2;
+			  }
+	          else if( SENSE_STATE_OUT == DRV_Motor218_GetSensorState( E_SENSE_LATCH ) )  
+			  {
+				  MotorDelayTimMs1 = TIME_500_MS;
+				  step = 3;
+			  }
+			  else if( 0 == MotorDelayTimMs1 )
+			  {
+				  my_printf( "atuo lock by latch action timeout\n" ); 
+				  CloseActionCheckEn = 0; 
+				  step = 0;
+				  return 1;
+			  }
+	   break;
+			  
+	   case 3:   
+	          if( SENSE_STATE_OUT == DRV_Motor218_GetSensorState( E_SENSE_TRIGGER ) )  //门被推开结束本次动作
+			  {
+				  CloseActionCheckEn = 0; 
+				  step = 0;  
+				  return 2;
+			  }
+			  else if( 0 == MotorDelayTimMs1 )
+			  {
+				  my_printf( "atuo lock by latch action outside\n" ); 
+				  CloseActionCheckEn = 0; 
+				  step = 0;
+				  return 1;
+			  }
+	   break;	  
+	   default:break;
+   }
+	
+   return 0;
+}
+
+/*********************************************************************************************************************
+* Function Name :  DRV_Motor218_ForgetLockWarmCheck()
+* Description   :  门未关告警检测
+* Para          :  none
+* Return        :  0= 执行中  1= 门未关报警
+*********************************************************************************************************************/
+uint8_t DRV_Motor218_ForgetLockWarmCheck( void )
+{
+    if( FUNCTION_DISABLE == SystemSeting.DoorUnlockWarmSw )
+	{
+		DoorUnlockWarmSts = false;
+		DoorOpeningHoldTimSec = 0;
+		return 0;
+	}
+
+	if( SENSE_STATE_OUT == DRV_Motor218_GetSensorState( E_SENSE_BOLT ) )  //主舌伸出状态
+	{
+		DoorUnlockWarmSts = false;
+		DoorOpeningHoldTimSec = 0;
+	}
+	else if( DoorUnlockWarmSts == true )
+	{
+		DoorUnlockWarmSts = false;
+		DoorOpeningHoldTimSec = 0;
+		return 1;
+	}
+    return 0;
+}
+
+/*********************************************************************************************************************
+* Function Name :  DRV_Motor218_HandleTryForbitWarmCheck()
+* Description   :  把手试玩告警检测
+* Para          :  none
+* Return        :  0= 执行中  1= 假锁报警
+*********************************************************************************************************************/
+uint8_t DRV_Motor218_HandleTryForbitWarmCheck( void )
+{
+	if( SENSE_STATE_IN == DRV_Motor218_GetSensorState( E_SENSE_BOLT )   \
+	 || SENSE_STATE_IN == DRV_Motor218_GetSensorState( E_SENSE_TRIGGER ) )  //主舌头伸出状态
+	{
+		HandleTryForbitTimSec = 0;
+		HandleTryForbitWarmSts = false;
+	}
+	else if( HandleTryForbitWarmSts == true )
+	{
+		HandleTryForbitWarmSts = false;
+		HandleTryForbitTimSec = 0;
+		if( SENSE_STATE_OUT == DRV_Motor218_GetSensorState( E_SENSE_BOLT )   \
+		 && SENSE_STATE_OUT == DRV_Motor218_GetSensorState( E_SENSE_TRIGGER ) )  //主舌头伸出状态
+		{
+			return 1;
+		}
+	}
+    return 0;
+}
+
+/*********************************************************************************************************************
+* Function Name :  DRV_Motor218_FalseLockWarmCheck()
+* Description   :  假锁告警检测
+* Para          :  none
+* Return        :  0= 执行中  1= 假锁报警
+*********************************************************************************************************************/
+uint8_t DRV_Motor218_FalseLockWarmCheck( void )
+{
+	return 0;
+}
+
+/*********************************************************************************************************************
+* Function Name :  DRV_Motor218_ReleaseTryProtectCheck()
+* Description   :  禁试解除信号检测
+* Para          :  none
+* Return        :  0= 未检测到  1= 已检测到
+*********************************************************************************************************************/
+uint8_t DRV_Motor218_ReleaseTryProtectCheck( void )
+{
+	if( LatchInputActionFlg == true )
+	{
+		LatchInputActionFlg = false;
+		return 1;
+	}
+	return 0;
+}
+
+/*********************************************************************************************************************
+* Function Name :  DRV_Motor218_DefendActionCheck()
+* Description   :  触发一键布防告警信号检测
+* Para          :  none
+* Return        :  0= 未检测到  1= 已检测到
+*********************************************************************************************************************/
+uint8_t DRV_Motor218_DefendActionCheck( bool resetflg )
+{
+    if( resetflg == true )
+	{
+	    LatchOutputActionFlg = false;
+	}
+
+	if( LatchOutputActionFlg == true )
+	{
+		if( TriggerOutputHoldTimMs == 0 )
+		{
+		    LatchOutputActionFlg = false;
+			if( SENSE_STATE_OUT == DRV_Motor218_GetSensorState( E_SENSE_TRIGGER ) )
+			{
+			    return 1;
+			}
+			else 
+			{
+			    return 0;
+			}
+		}
+	}
+	return 0;
+}
+
+/*********************************************************************************************************************
+* Function Name :  DRV_Motor218_GetForgetLockWarmState()
+* Description   :  获取门未关告警状态  休眠唤醒使用
+* Para          :  none
+* Return        :  0= normal  1= 门未关报警
+*********************************************************************************************************************/
+bool DRV_Motor218_GetForgetLockWarmState( void )
+{  
+    if( FUNCTION_DISABLE == SystemSeting.DoorUnlockWarmSw )
+	{
+		DoorUnlockWarmSts = false;
+		DoorOpeningHoldTimSec = 0;
+		return 0;
+	}
+
+	bool tp1 = DoorUnlockWarmSts;
+    if( DoorUnlockWarmSts == true )
+	{
+		DoorUnlockWarmSts = false;
+	}
+	return tp1;
+}
+
+/*********************************************************************************************************************
+* Function Name :  DRV_Motor216_GetHandleTryForbitWarmState()
+* Description   : 把手试玩告警状态  休眠唤醒使用
+* Para          :  none
+* Return        :  0= normal  1= 假锁报警
+*********************************************************************************************************************/
+bool DRV_Motor218_GetHandleTryForbitWarmState( void )
+{
+	bool tp1 = HandleTryForbitWarmSts;
+    if( HandleTryForbitWarmSts == true )
+	{
+		HandleTryForbitWarmSts = false;
+	}
+	return tp1;
+}
+
+/*********************************************************************************************************************
+* Function Name :  DRV_Motor218_GetFalseLockWarmState()
+* Description   :  获取假锁告警状态  休眠唤醒使用
+* Para          :  none
+* Return        :  0= normal  1= 假锁报警
+*********************************************************************************************************************/
+bool DRV_Motor218_GetFalseLockWarmState( void )
+{
+	bool tp1 = FalseLockWarmSts;
+    if( FalseLockWarmSts == true )
+	{
+		FalseLockWarmSts = false;
+	}
+	return tp1;
+}
+
+/*********************************************************************************************************************
+* Function Name :  DRV_Motor218_FileInit()
+* Description   :  相关文件初始化    
+* Para          :  none   
+* Return        :  none
+*********************************************************************************************************************/
+void DRV_Motor218_FileInit( void )  
+{
+	M_BOLT_INIT();
+	M_TRIGGER_INIT();
+	M_LATCH_INIT(); 
+	DRV_Motor218_OutputCtrl( EM_STOP_BOTH_OFF_CMD );  
+	DRV_Motor218_PinInterruptEnable();
+	MOTOR_POWER_OFF();
+	return;
+}
+
+/*********************************************************************************************************************
+* Function Name :  DRV_Motor218_WakeupInit()
+* Description   :  唤醒初始化    
+* Para          :  none   
+* Return        :  none
+*********************************************************************************************************************/
+void DRV_Motor218_WakeupInit( void )  
+{
+	DRV_Motor218_FileInit();
+	return;
+}
+
+/*********************************************************************************************************************
+* Function Name :  DRV_Motor218_SleepInit()
+* Description   :  休眠初始化    
+* Para          :  none   
+* Return        :  none
+*********************************************************************************************************************/
+void DRV_Motor218_SleepInit( void )  
+{
+    LatchOutputActionFlg = false;
+	#if LOCK_PROJECT_CHIP ==LOCK_PROJECT_RTL8762 
+	//关闭GPIO边沿中断，使用PAD触发
+	/*------斜舌------*/
+	DRV_EdegInterruptDisable( M_LATCH_GPIO_PIN );
+	
+	/*------主舌------*/
+	DRV_EdegInterruptDisable( M_BOLT_GPIO_PIN );
+	
+	if( M_LATCH_IN_READ()) 
+	{ 
+		DRV_GpioInterruptEnable(M_LATCH_GPIO_PIN,DRV_GPIO_HITOLO, WakeupISRhandler);
+	}
+	else
+	{
+		DRV_GpioInterruptEnable(M_LATCH_GPIO_PIN,DRV_GPIO_LOTOHI, WakeupISRhandler);
+	}	
+	if( M_BOLT_IN_READ() )  
+	{
+		DRV_GpioInterruptEnable(M_BOLT_GPIO_PIN,DRV_GPIO_HITOLO, WakeupISRhandler);
+	}
+	else
+	{
+		//不需要高电平触发
+		DRV_GpioSWMode(M_BOLT_GPIO_PIN); 
+	}
+	#endif
+	return;
+}
+
+
+#endif
+
+/*--------------------------------------------------THE FILE END-----------------------------------------------------*/
+
+
+
+
+//.end of the file.

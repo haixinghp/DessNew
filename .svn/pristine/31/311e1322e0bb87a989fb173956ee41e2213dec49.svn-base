@@ -1,0 +1,66 @@
+/********************************************************************************************************************
+ * @file:      DRV_Motor_216.c
+ * @author:    邓业豪
+ * @version:   V01.00
+ * @date:      2021-09-13
+ * @brief:     216锁体六浮版本
+*********************************************************************************************************************/
+  
+#ifndef  _DRV_MOTOR216_H
+#define  _DRV_MOTOR216_H
+
+/*--------------------------------------------------文件包含---------------------------------------------------------*/
+#include <stdint.h> 
+#include <stdbool.h> 
+#include "LockConfig.h"
+
+#ifdef LOCK_BODY_216_MOTOR
+/*--------------------------------------------------宏定义-----------------------------------------------------------*/
+#define MOTOR_POWER_PIN                 M_MOTOR_POW_GPIO_PIN        //电机电源控制
+#define MOTOR_M1_PIN                    M_MOTOR_M1_GPIO_PIN         //电机控制M1
+#define MOTOR_M2_PIN                    M_MOTOR_M2_GPIO_PIN  		//电机控制M2
+#define M_SCISSOR_LOCK_GPIO_PIN         M_LOCK_SCISSOR_GPIO_PIN     //剪刀舌锁定
+#define M_BOLT_RST_GPIO_PIN  	        M_LOCK_BOLT_RST_GPIO_PIN    //主舌复位信号
+#define M_BOLT_CLOSE_GPIO_PIN           M_LOCK_BOLT_CLOSE_GPIO_PIN  //主舌关门
+#define M_BOLT_OPEN_GPIO_PIN            M_LOCK_BOLT_OPEN_GPIO_PIN   //主舌开门
+#define M_FAM_TRIGGER_GPIO_PIN          M_LOCK_TRIGGER_GPIO_PIN     //三角舌压入信号,中断信号  
+
+/*--------------------------------------------------枚举声明---------------------------------------------------------*/
+
+
+/*--------------------------------------------------常量声明---------------------------------------------------------*/
+
+
+/*--------------------------------------------------变量声明---------------------------------------------------------*/             
+
+
+/*--------------------------------------------------函数声明---------------------------------------------------------*/
+void DRV_Motor216_FileInit( void );  
+void DRV_Motor216_WakeupInit( void ); 
+void DRV_Motor216_SleepInit( void );  
+void DRV_Motor216_Tim10Ms( void );  
+void DRV_Motor216_Tim1000Ms( void );
+
+void DRV_Motor216_PinSenseHandler( uint32_t singal_pin, bool wakeupType);
+
+uint8_t DRV_Motor216_ForgetLockWarmCheck( void );
+uint8_t DRV_Motor216_FalseLockWarmCheck( void );
+uint8_t DRV_Motor216_HandleTryForbitWarmCheck( void );
+
+bool DRV_Motor216_GetForgetLockWarmState( void );
+bool DRV_Motor216_GetFalseLockWarmState( void );
+bool DRV_Motor216_HandleTryForbitWarmState( void );
+ 
+uint8_t DRV_Motor216_AutoLockCheck( bool *pfirstflg );
+
+uint8_t DRV_Motor216_ReleaseTryProtectCheck( void );
+uint8_t DRV_Motor216_DefendActionCheck( bool resetflg );
+
+int8_t DRV_Motor216_OpenDoorThread( void );  
+int8_t DRV_Motor216_CloseDoorThread( void );  
+
+
+#endif
+#endif
+/*--------------------------------------------------THE FILE END-----------------------------------------------------*/
+

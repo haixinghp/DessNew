@@ -1,0 +1,601 @@
+/********************************************************************************************************************
+ * @file:      DRV_AM5BA340.c
+ * @author:    gushengchi
+ * @version:   V01.00
+ * @date:      2021-08-02
+ * @brief:     语音芯片 AM5BA340AX  单总线通信
+*********************************************************************************************************************/
+  
+/*-------------------------------------------------文件包含---------------------------------------------------------*/
+#include "Public.h"
+#include "LockConfig.h"
+#include "DRV_AM5BA340.h"
+#include "DRV_GPIO.h"
+/*-------------------------------------------------宏定义-----------------------------------------------------------*/
+#define SINGLE_BUS_DATA_PIN     M_VOICE_DATA_GPIO_PIN 
+#define SINGLE_BUS_DATA_OFF()   DRV_GpioOut0( SINGLE_BUS_DATA_PIN )   	 
+#define SINGLE_BUS_DATA_ON()    DRV_GpioOut1( SINGLE_BUS_DATA_PIN )   
+/*-------------------------------------------------枚举定义---------------------------------------------------------*/
+
+
+/*-------------------------------------------------常量定义---------------------------------------------------------*/
+
+
+/*-------------------------------------------------全局变量定义-----------------------------------------------------*/         
+
+
+/*-------------------------------------------------局部变量定义-----------------------------------------------------*/
+ 
+
+/*-------------------------------------------------函数声明---------------------------------------------------------*/
+ 
+
+/*-------------------------------------------------函数定义---------------------------------------------------------*/
+/*********************************************************************************************************************
+* Function Name :  DRV_AM5BA340_FileInit()
+* Description   :  相关初始化
+* Para          :  none
+* Return        :  none
+*********************************************************************************************************************/
+void DRV_AM5BA340_FileInit( void ) 
+{
+	SINGLE_BUS_DATA_ON();
+	return;
+}
+
+/*********************************************************************************************************************
+* Function Name :  DRV_AM5BA340_FileInit()
+* Description   :  相关初始化
+* Para          :  none
+* Return        :  none
+*********************************************************************************************************************/
+void DRV_AM5BA340_SleepInit( void ) 
+{
+	SINGLE_BUS_DATA_OFF();
+	return;
+}
+
+
+/*********************************************************************************************************************
+* Function Name :  DRV_AM5BA340_SendBytes()
+* Description   :  单总线通信发送函数
+* Para          :  pdata- 待发送的数据   len- 待发送数据的长度
+* Return        :  none
+*********************************************************************************************************************/
+static void DRV_AM5BA340_SendBytes( uint8_t *pdata, uint8_t len ) 
+{
+	uint8_t para;
+	uint8_t allSize = len;
+
+	SINGLE_BUS_DATA_OFF();
+	PUBLIC_Delayms( 5 );
+	
+	while( len-- )
+	{		 
+		if((allSize==3) && ((*pdata==0xf0)||(*pdata==0xf1)))
+		{
+		 
+		}
+		else
+		{	
+			 para = *pdata &0x01;
+			 for(uint8_t i=0; i<8; i++)
+			 {
+				if(para == 1)
+				{
+					SINGLE_BUS_DATA_ON();
+					PUBLIC_Delayus( 1200 );  //1.2ms
+					SINGLE_BUS_DATA_OFF();
+					PUBLIC_Delayus(400);     //0.4ms
+				}
+				else
+				{
+					SINGLE_BUS_DATA_ON();
+					PUBLIC_Delayus(400);   //0.4ms
+					SINGLE_BUS_DATA_OFF();
+					PUBLIC_Delayus(1200);  //1.2ms
+				}
+				*pdata = *pdata>>1;
+				para = *pdata&0X01; 
+			 }
+		}
+		pdata++;
+	}
+	SINGLE_BUS_DATA_ON();
+}
+ 
+/*********************************************************************************************************************
+* Function Name :  DRV_AM5BA340_PlayVoice()
+* Description   :  播放语音词条
+* Para          :  num- 待播放的语音词条
+* Return        :  none
+*********************************************************************************************************************/
+void DRV_AM5BA340_PlayVoice( uint8_t num )  
+{
+    uint8_t i=0;
+	uint8_t temp_data[ 100 ]={ 0xf0 };
+	temp_data[ i++ ] = 0xf0;
+	
+	switch( num )
+	{
+		/*------管理员菜单 1级------*/
+		case 0:  
+				#ifdef FACE_FUNCTION_ON  
+                    temp_data[i++]=106;temp_data[i++]=156;temp_data[i++]=147;                     //人脸信息设置请按1
+				    #ifdef  FINGER_FUNCTION_ON  
+				    temp_data[i++]=102;temp_data[i++]=156;temp_data[i++]=148;                     //指纹设置请按2
+				    #elif defined FINGER_VEIN_FUNCTION_ON  
+				    temp_data[i++]=194;temp_data[i++]=203;temp_data[i++]=156;temp_data[i++]=148;  //手指设置请按2
+				    #endif
+				    temp_data[i++]=126;temp_data[i++]=156;temp_data[i++]=149;                     //开锁密码设置请按3
+		            #ifndef LOCK_BODY_216_MOTOR
+				    temp_data[i++]=122;temp_data[i++]=156;temp_data[i++]=150;                     //系统设置请按4
+					#endif
+		
+		        #elif defined IRIS_FUNCTION_ON
+		            temp_data[i++]=195;temp_data[i++]=203;temp_data[i++]=156;temp_data[i++]=147;  //虹膜设置请按1
+				    #ifdef  FINGER_FUNCTION_ON  
+				    temp_data[i++]=102;temp_data[i++]=156;temp_data[i++]=148;                     //指纹设置请按2
+				    #elif defined FINGER_VEIN_FUNCTION_ON  
+				    temp_data[i++]=194;temp_data[i++]=203;temp_data[i++]=156;temp_data[i++]=148;  //手指设置请按2
+				    #endif
+				    temp_data[i++]=126;temp_data[i++]=156;temp_data[i++]=149;                     //开锁密码设置请按3
+					#ifndef LOCK_BODY_216_MOTOR
+				    temp_data[i++]=122;temp_data[i++]=156;temp_data[i++]=150;                     //系统设置请按4
+					#endif
+		
+		        #elif defined FINGER_FUNCTION_ON
+		            temp_data[i++]=102;temp_data[i++]=156;temp_data[i++]=147;                     //指纹设置请按1
+				    temp_data[i++]=126;temp_data[i++]=156;temp_data[i++]=148;                     //开锁密码设置请按2
+					#ifndef LOCK_BODY_216_MOTOR
+				    temp_data[i++]=122;temp_data[i++]=156;temp_data[i++]=149;                     //系统设置请按3
+					#endif
+					
+		        #elif defined FINGER_VEIN_FUNCTION_ON
+		            temp_data[i++]=194;temp_data[i++]=203;temp_data[i++]=156;temp_data[i++]=147;  //手指设置请按1
+				    temp_data[i++]=126;temp_data[i++]=156;temp_data[i++]=148;                     //开锁密码设置请按2
+					#ifndef LOCK_BODY_216_MOTOR
+				    temp_data[i++]=122;temp_data[i++]=156;temp_data[i++]=149;                     //系统设置请按3
+					#endif
+				#endif
+				
+				temp_data[i++]=144;temp_data[i++]=168;  		                   //返回请按X
+		break;
+		
+		/*---人脸信息菜单 2级---*/
+		case 2:          
+				temp_data[i++]=107;temp_data[i++]=172;temp_data[i++]=156;temp_data[i++]=147;   //增加管理员人脸请按1
+				temp_data[i++]=108;temp_data[i++]=156;temp_data[i++]=148;					   //增加普通用户人脸请按2
+				temp_data[i++]=109;temp_data[i++]=156;temp_data[i++]=149;                      //删除普通用户人脸请按3
+				temp_data[i++]=144;temp_data[i++]=168;  		                               //返回请按X
+		break;
+
+		/*---指纹设置菜单 2级---*/	
+		case 5:         
+			#if !(defined FACE_FUNCTION_ON || defined IRIS_FUNCTION_ON)
+				temp_data[i++]=103;temp_data[i++]=156;temp_data[i++]=147;		  //增加管理员指纹请按1
+				temp_data[i++]=104;temp_data[i++]=156;temp_data[i++]=148;		  //增加用户指纹请按2
+		        temp_data[i++]=105;temp_data[i++]=156;temp_data[i++]=149;		  //删除普通用户指纹请按3
+				temp_data[i++]=144;temp_data[i++]=168;  		                  //返回请按X
+			#else
+				temp_data[i++]=104;temp_data[i++]=156;temp_data[i++]=147;		  //增加用户指纹请按1
+		        temp_data[i++]=105;temp_data[i++]=156;temp_data[i++]=148;		  //删除普通用户指纹请按2
+				temp_data[i++]=144;temp_data[i++]=168;  		                  //返回请按X
+			#endif
+		break;
+		
+		/*---密码设置菜单 2级---*/	
+		case 8:       
+				temp_data[i++]=145;temp_data[i++]=156;temp_data[i++]=147;		  //修改密码请按1
+		
+//				temp_data[i++]=103;temp_data[i++]=156;temp_data[i++]=147;		  //增加管理员密码请按1
+//				temp_data[i++]=104;temp_data[i++]=156;temp_data[i++]=148;		  //增加用户密码请按2
+//				temp_data[i++]=144;temp_data[i++]=168;  		                  //返回请按X
+		break;
+
+		/*---智卡设置菜单 2级---*/	
+		case 11:          
+ 
+		break;
+		
+		/*---虹膜设置菜单 2级---*/	
+		case 14:          
+                temp_data[i++]=107;temp_data[i++]=192;temp_data[i++]=195;temp_data[i++]=156;temp_data[i++]=147;		  //增加管理员虹膜请按1
+                temp_data[i++]=107;temp_data[i++]=193;temp_data[i++]=195;temp_data[i++]=156;temp_data[i++]=148;		  //增加普通用户虹膜请按2
+                temp_data[i++]=202;temp_data[i++]=193;temp_data[i++]=195;temp_data[i++]=156;temp_data[i++]=149;		  //删除普通用户虹膜请按3
+                temp_data[i++]=144;temp_data[i++]=168;  		                  //返回请按X 
+		break;
+		
+		/*---静脉设置菜单 2级---*/	
+		case 17:    
+                temp_data[i++]=107;temp_data[i++]=192;temp_data[i++]=194;temp_data[i++]=156;temp_data[i++]=147;		  //增加管理员手指请按1
+                temp_data[i++]=107;temp_data[i++]=193;temp_data[i++]=194;temp_data[i++]=156;temp_data[i++]=148;		  //增加普通用户手指请按2
+                temp_data[i++]=202;temp_data[i++]=193;temp_data[i++]=194;temp_data[i++]=156;temp_data[i++]=149;		  //删除普通用户手指请按3
+                temp_data[i++]=144;temp_data[i++]=168;  		                  //返回请按X
+		break;
+
+		/*---系统设置菜单 2级---*/		
+		case 20:          
+				temp_data[i++]=113;temp_data[i++]=156;temp_data[i++]=147;      //开门方向设置请按1
+				temp_data[i++]=110;temp_data[i++]=156;temp_data[i++]=148;      //电机扭力调节请按2
+//				temp_data[i++]=177;temp_data[i++]=156;temp_data[i++]=149;      //自动落锁请按3
+//				temp_data[i++]=185;temp_data[i++]=156;temp_data[i++]=150;      //双重认证请按4
+//				temp_data[i++]=119;temp_data[i++]=156;temp_data[i++]=151;      //语音设置请按5
+//				temp_data[i++]=184;temp_data[i++]=156;temp_data[i++]=152;      //接近感应请按6
+//				temp_data[i++]=195;temp_data[i++]=202;
+//				temp_data[i++]=156;temp_data[i++]=153;                         //布防请按7  
+//				temp_data[i++]=196;temp_data[i++]=202;
+//				temp_data[i++]=156;temp_data[i++]=154;                         //逗留请按8   
+		
+				temp_data[i++]=144;temp_data[i++]=168;                         //返回请按X 
+		break;
+		/*---音量设置菜单 3级---*/		
+		case 21:          
+		        temp_data[i++]=118;temp_data[i++]=156;temp_data[i++]=147;      //高音量请按1	
+			    temp_data[i++]=117;temp_data[i++]=156;temp_data[i++]=148;      //中音量请按2	
+			    temp_data[i++]=116;temp_data[i++]=156;temp_data[i++]=149;      //低音量请按3	 
+		        temp_data[i++]=120;temp_data[i++]=156;temp_data[i++]=150;      //关闭语音请按4	 
+		        temp_data[i++]=144;temp_data[i++]=168;                         //返回请按X
+		break;
+		
+		/*---开门方向设置菜单 3级---*/		
+		case 23:          
+			    temp_data[i++]=114;temp_data[i++]=156;temp_data[i++]=147;  //左开门请按1
+				temp_data[i++]=115;temp_data[i++]=156;temp_data[i++]=148;  //右开门请按2
+				temp_data[i++]=144;temp_data[i++]=168;                     //返回请按X
+		break;
+		
+		/*---电机扭力设置菜单 3级---*/		
+		case 25:          
+			    temp_data[i++]=111;temp_data[i++]=156;temp_data[i++]=147;     //低电扭力请按1
+				temp_data[i++]=112;temp_data[i++]=156;temp_data[i++]=148;     //高电扭力请按2
+				temp_data[i++]=144;temp_data[i++]=168;                        //返回请按X
+		break;
+		
+		/*---自动上锁设置菜单 3级---*/		
+		case 27:          
+			    temp_data[i++]=177;temp_data[i++]=91;temp_data[i++]=156;temp_data[i++]=147;    //自动上锁时间设置请按1  	
+			    temp_data[i++]=143;temp_data[i++]=177;temp_data[i++]=156;temp_data[i++]=148;   //关闭自动上锁请按2  	
+				temp_data[i++]=144;temp_data[i++]=168;  		                               //返回请按X
+		break;
+		
+		/*---接近感应设置菜单 3级---*/		
+		case 29:          
+		        temp_data[i++]=142; temp_data[i++]=184;temp_data[i++]=156;temp_data[i++]=147;   //开启接近感应请按1     
+			    temp_data[i++]=143; temp_data[i++]=184;temp_data[i++]=156;temp_data[i++]=148;   //关闭接近感应请按2   
+		        temp_data[i++]=144;temp_data[i++]=168;  		                                //返回请按X
+		break;
+		
+		/*---设备组网设置菜单 3级---*/		
+		case 31:          
+
+		break;
+		
+		/*---布防设置菜单 3级---*/		
+		case 33:          
+				temp_data[i++]=142;temp_data[i++]=195;temp_data[i++]=156;temp_data[i++]=147;    //开启布防请按1   
+				temp_data[i++]=143;temp_data[i++]=195;temp_data[i++]=156;temp_data[i++]=148; 	//关闭布防请按2   
+			    temp_data[i++]=144;temp_data[i++]=168;                      		           	//返回请按*号键
+		break;
+		
+		/*---逗留设置菜单 3级---*/		
+		case 35:          
+				temp_data[i++]=142;temp_data[i++]=196;temp_data[i++]=156;temp_data[i++]=147; 	//开启逗留请按1   
+				temp_data[i++]=143;temp_data[i++]=196;temp_data[i++]=156;temp_data[i++]=148; 	//关闭逗留应请按2   
+				temp_data[i++]=144;temp_data[i++]=168;  		                               	//返回请按*号键
+		break;
+		
+		/*---双重认证设置菜单 3级---*/		
+		case 37:          
+		        temp_data[i++]=142; temp_data[i++]=185;temp_data[i++]=156;temp_data[i++]=147;   //开启双重认证请按1     
+			    temp_data[i++]=143; temp_data[i++]=185;temp_data[i++]=156;temp_data[i++]=148;   //关闭双重认证请按2   
+                temp_data[i++]=144;temp_data[i++]=168;  		                                //返回请按X		
+		break;
+ 
+		/*---恢复出厂设置菜单 1级---*/		
+		case 39:          
+				temp_data[i++]=129; temp_data[i++]=36;temp_data[i++]=168;  //恢复出厂设置请按确认键，取消请按返回键
+		break;
+
+		/*---其他语音词条---*/	
+		
+		case 60:    //删除用户方式选择  
+				 temp_data[i++]=135;temp_data[i++]=156;temp_data[i++]=147;		  //编号删除请按1
+				 temp_data[i++]=136;temp_data[i++]=156;temp_data[i++]=148;  	  //比对删除请按2       
+		break;
+		case 61: temp_data[i++]=51;temp_data[i++]=58;break;      //请输入3位数字编号 按确认键确认       
+		case 62: temp_data[i++]=144;temp_data[i++]=168;break;    //返回请按返回键    
+		case 63: temp_data[i++]=58;break;                        //按确认键结束     
+		
+		case 64:    //执行确认菜单
+				 temp_data[i++]=144;temp_data[i++]=168;           //返回请按返回键
+		         temp_data[i++]=58;                               //按确认键结束
+		break;
+		case 65: temp_data[i++]=46;break;                         //删除成功 
+		case 66: temp_data[i++]=47;break;                         //删除失败     
+		case 67: temp_data[i++]=44;break;                         //设定成功 
+		case 68: temp_data[i++]=45;break;                         //设定失败      
+		case 69: temp_data[i++]=35;break;                         //验证成功 
+		case 70: temp_data[i++]=34;break;                         //验证失败     
+		case 71: temp_data[i++]=49;break;                         //登记成功 
+		case 72: temp_data[i++]=50;break;                         //登记失败 
+		case 73: temp_data[i++]=2;break;                          //请输入指纹 
+		case 74: temp_data[i++]=3;break;                          //请拿开手指       
+		case 75: temp_data[i++]=146;break;                        // 0     
+		case 76: temp_data[i++]=147;break;                        // 1           
+		case 77: temp_data[i++]=148;break;                        // 2    
+		case 78: temp_data[i++]=149;break;                        // 3    
+		case 79: temp_data[i++]=150;break;                        // 4     
+		case 80: temp_data[i++]=151;break;                        // 5           
+		case 81: temp_data[i++]=152;break;                        // 6    
+		case 82: temp_data[i++]=153;break;                        // 7   
+		case 83: temp_data[i++]=154;break;                        // 8    
+		case 84: temp_data[i++]=155;break;                        // 9   
+		case 85: temp_data[i++]=86;break;                         // A            
+		case 86: temp_data[i++]=87;break;                         // 十    
+		case 87: temp_data[i++]=88;break;                         // 年  
+		case 88: temp_data[i++]=89;break;                         // 月    
+		case 89: temp_data[i++]=90;break;                         // 日   
+		case 90: temp_data[i++]=70;break;                         //开门成功
+		case 91: temp_data[i++]=63;break;                         //已上锁
+		case 92: temp_data[i++]=33;break;                         //APP功能已打开
+		case 93: temp_data[i++]=37;break;                         //恢复出厂设置中请稍后
+	    case 94: temp_data[i++]=71;break;                         //您好，我已通知主人
+	    case 95: temp_data[i++]=29;break;                         //非法操作系统已锁定，请等待3分钟再操作
+	    case 96: temp_data[i++]=41;break;                         //按键声“水滴声”
+		case 97: temp_data[i++]=52;break;                         //叮咚叮咚
+	    case 98: temp_data[i++]=64;break;                         //已布防
+	    case 99: temp_data[i++]=65;break;                         //已撤防
+	    case 100:temp_data[i++]=30;break;                         //电压低,无法工作
+	    case 101:temp_data[i++]=31;break;                         //电压低，请更换电池
+		case 102:temp_data[i++]=69;break;                         //充电中，请稍后
+		case 103:temp_data[i++]=75;break;                         //首次使用请录入管理员人脸
+		case 104:temp_data[i++]=22;break;                         //请输入密码
+		case 105:temp_data[i++]=15;break;                         //请输入指纹或密码
+		case 106:temp_data[i++]=43;break;                         //管理员不能删
+	    case 107:temp_data[i++]=53;break;                         //编号已存在
+	    case 108:temp_data[i++]=54;break;                         //登记数量已满
+	    case 109:temp_data[i++]=61;break;                         //体验模式请录入信息后才能使用
+	    case 110:temp_data[i++]=59;break;                         //欢迎使用
+	    case 111:temp_data[i++]=167;break;                        //已启用备用电池
+        case 112:temp_data[i++]=179;break;                        //配对成功
+        case 113:temp_data[i++]=180;break;                        //配对失败
+        case 114:temp_data[i++]=181;break;                        //刷卡成功
+        case 115:temp_data[i++]=182;break;                        //刷卡失败
+	    case 116:temp_data[i++]=183;break;                        //删除卡
+	    case 117:temp_data[i++]=137;break;                        //增加卡
+	    case 118:temp_data[i++]=25;break;                         //请刷卡
+	    case 119:temp_data[i++]=26;break;                         //请再刷卡
+	    case 120:temp_data[i++]=27;break;                         //卡已注册
+	    case 121:temp_data[i++]=28;break;                         //卡已满
+        case 122:temp_data[i++]=169;break;                        //请将手机靠近刷卡区域
+		
+	    case 123:temp_data[i++]=73;break;                         //请验证人脸
+        case 124:temp_data[i++]=76;break;                         //请录入正脸
+		case 125:temp_data[i++]=77;break;                         //请微微抬头
+		case 126:temp_data[i++]=78;break;                         //请微微低头
+		case 127:temp_data[i++]=79;break;                         //请把脸偏向右手边
+		case 128:temp_data[i++]=80;break;                         //请把脸偏向左手边
+		case 129:temp_data[i++]=81;break;                         //未识别成功，请调整位置重试
+		case 130:temp_data[i++]=82;break;                         //未检测到人脸
+		case 131:temp_data[i++]=83;break;                         //人脸距离太近
+        case 132:temp_data[i++]=84;break;                         //人脸距离太远
+        case 133:temp_data[i++]=85;break;                         //脸部有遮挡
+
+        case 134:temp_data[i++]=161;break;                        //呼叫中，请等待
+	    case 135:temp_data[i++]=163;temp_data[i++]=168;break;     //挂断请按返回键
+        case 136:temp_data[i++]=164;break;                        //呼叫失败
+ 
+        case 137:temp_data[i++]=13;break;                         //管理员指纹已满
+		case 138:temp_data[i++]=11;break;                         //指纹错误
+        case 139:temp_data[i++]=21;break;                         //修改密码失败，请确认输入的密码
+        case 140:temp_data[i++]=23;break;                         //密码过于简单
+		case 141:temp_data[i++]=24;break;                         //无密码，设置失败
+
+	    case 142:   //上方电池电压低，请充电
+			     temp_data[i++]=187;temp_data[i++]=189;temp_data[i++]=174; temp_data[i++]=170;     	
+		break;
+	    case 143:   //下方电池电压低，请充电
+			     temp_data[i++]=188;temp_data[i++]=189;temp_data[i++]=174; temp_data[i++]=170;    
+		break;
+	    case 144:   //请插入下方电池
+			    temp_data[i++]=191;temp_data[i++]=188;temp_data[i++]=189;    
+		break;
+	    case 145:   //请插入上方电池
+			    temp_data[i++]=191;temp_data[i++]=187;temp_data[i++]=189;    
+		break;
+
+	    case 146:  //“110警笛音”
+			    i=0;temp_data[i++]=0xF2;temp_data[i++]=32;      
+		break;
+		
+	    case 147:  
+			    temp_data[i++]=187;temp_data[i++]=189;temp_data[i++]=174; temp_data[i++]=170;    //上方电池电压低，请充电
+			    temp_data[i++]=188;temp_data[i++]=189;temp_data[i++]=174; temp_data[i++]=170;    //下方电池电压低，请充电 		
+		break;
+		
+	    case 148:  //请输入6位新开门密码，按#确认
+			    temp_data[i++]=19;temp_data[i++]=58;      
+		break;
+		
+	    case 149:  //请再输入一次
+			    temp_data[i++]=20;temp_data[i++]=58;      
+		break;
+		
+	    case 150:  //恢复出厂设置确认提醒（恢复出厂设置，按#确认，取消请按
+			    temp_data[i++]=129;temp_data[i++]=36;temp_data[i++]=168;      
+		break;
+		
+	    case 151:   
+			    temp_data[i++]=178;temp_data[i++]=58;  //请输入两位数字，按#键确认
+		        temp_data[i++]=144;temp_data[i++]=168; //返回请按*号键     
+		break;
+		
+	    case 152:  //自动上锁，当前时间为
+			    temp_data[i++]=177;temp_data[i++]=95;      
+		break;
+		
+	    case 153:  //时
+			    temp_data[i++]=97; 
+		break;
+		
+	    case 154:  //分
+			    temp_data[i++]=98;    
+		break;
+		
+	    case 155:  //秒
+			    temp_data[i++]=99;     
+		break;
+		
+	    case 156:   
+			    temp_data[i++]=100;                     //确认请按#号键
+				temp_data[i++]=101;temp_data[i++]=168;  //如需更改请按*号键
+		break;
+		
+	    case 157:  //格式不正确，请重新输入  
+			    temp_data[i++]=96;                     
+		break;
+
+	    case 158:  //首次使用请录入管理员指纹 
+			    temp_data[i++]=75;temp_data[i++]=171;                    
+		break;
+		
+	    case 159:  //请验证管理员人脸 
+			    temp_data[i++]=74;temp_data[i++]=172;                    
+		break;
+		
+ 	    case 160:  //请验证管理员指纹 
+			    temp_data[i++]=74;temp_data[i++]=171;                    
+		break;
+
+        case 161:  // 请用手指接触两端触点
+				temp_data[i++]=198; 
+		break;    
+		
+        case 162:  // 松开手指
+			    temp_data[i++]=200; 
+		break;   
+
+	    case 163:  //首次使用请录入管理员手指
+			    temp_data[i++]=75;temp_data[i++]=192;temp_data[i++]=194;                      
+		break;
+		
+	    case 164:  //请验证手指
+			    temp_data[i++]=74;temp_data[i++]=194;                   
+		break;
+		
+	    case 165:  //请验证管理员手指
+			    temp_data[i++]=74;temp_data[i++]=192;temp_data[i++]=194;                   
+		break;
+
+        case 166:  //左右缓慢滑动整根手指
+                temp_data[i++]=199;
+		break;
+		
+	    case 167:  //首次使用请录入管理员虹膜
+			    temp_data[i++]=75;temp_data[i++]=192;temp_data[i++]=195;                      
+		break;
+		
+	    case 168:  //请验证虹膜
+			    temp_data[i++]=74;temp_data[i++]=195;                
+		break;
+		
+	    case 169:  //请验证管理员虹膜
+			    temp_data[i++]=74;temp_data[i++]=192;temp_data[i++]=195;               
+		break;
+
+	    case 170:  //请输入虹膜
+			    temp_data[i++]=7;temp_data[i++]=195;               
+		break;
+
+		case 171:  //门未锁好  
+				temp_data[i++]=66;  
+        break;
+        
+		case 172:  //请放手指 
+				temp_data[i++]=1;  
+        break;
+		
+	    case 173:  //上方电池电压低，无法工作
+			     temp_data[i++]=187;temp_data[i++]=189;temp_data[i++]=174; temp_data[i++]=30;     	
+		break;
+		
+	    case 174:  //下方电池电压低，无法工作
+			     temp_data[i++]=188;temp_data[i++]=189;temp_data[i++]=174; temp_data[i++]=30;    
+		break;
+		
+	    case 175:  
+			    temp_data[i++]=187;temp_data[i++]=189;temp_data[i++]=174; temp_data[i++]=30;    //上方电池电压低，无法工作
+			    temp_data[i++]=188;temp_data[i++]=189;temp_data[i++]=174; temp_data[i++]=30;    //下方电池电压低，无法工作		
+		break;
+		
+	    case 176: //叮咚
+				temp_data[i++]=40;                        
+		break;
+		
+		case 177: //呼叫中，请等待, 挂断请按返回键  
+				temp_data[i++]=161;temp_data[i++]=163;temp_data[i++]=168;                      
+		break;
+		
+		case 178: //组网中，请稍后
+				temp_data[i++]=57;                   
+		break;
+		
+	    case 179: //“110警笛音”+验证失败   
+			    temp_data[i++]=32;temp_data[i++]=34;      
+		break;
+		
+	    case 180: //“110警笛音”+非法操作系统已锁定，请等待3分钟再操作   
+			    temp_data[i++]=32;temp_data[i++]=29;      
+		break;
+		
+		
+		case 0xFE: //按键打断
+		          temp_data[ i++ ] = 0xFE; 
+		break; 	
+
+        default: 
+			 if( num == 0xF2 )
+				 return;  
+			 temp_data[ i++ ] = num;
+		break;
+	}
+	temp_data[ i++ ]=0xF1;
+	DRV_AM5BA340_SendBytes( temp_data, i );
+}
+  
+/*********************************************************************************************************************
+* Function Name :  DRV_AM5BA340_VolumeSet()
+* Description   :  音量设置     
+* Para          :  volType-音量等级   0=关闭  1=低  2=中 3=高  
+* Return        :  none
+*********************************************************************************************************************/
+void DRV_AM5BA340_VolumeSet( CHIP_VOL_SET_E volType ) 
+{
+	 //调声音从E0最小 EF最大
+	switch( volType )
+	{
+		case EM_VOLUME_OFF:   //关闭
+			 DRV_AM5BA340_PlayVoice(0XE0);
+		break;
+		
+		case EM_VOLUME_LOW:   //低
+			 DRV_AM5BA340_PlayVoice(0XE4);
+		break;
+		
+		case EM_VOLUME_MEDIUM://中
+			 DRV_AM5BA340_PlayVoice(0XE9);
+		break;
+		
+		case EM_VOLUME_HIGH:  //高
+			 DRV_AM5BA340_PlayVoice(0XEF);
+		break;
+		
+		default:break; 
+	}
+}
+ 
+
+
+/*-------------------------------------------------THE FILE END-----------------------------------------------------*/
+

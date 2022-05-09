@@ -1,0 +1,215 @@
+/**
+ * \file des.h
+ *
+ * \brief DES block cipher
+ *
+ *  Copyright (C) 2006-2015, ARM Limited, All Rights Reserved
+ *  SPDX-License-Identifier: Apache-2.0
+ *
+ *  Licensed under the Apache License, Version 2.0 (the "License"); you may
+ *  not use this file except in compliance with the License.
+ *  You may obtain a copy of the License at
+ *
+ *  http://www.apache.org/licenses/LICENSE-2.0
+ *
+ *  Unless required by applicable law or agreed to in writing, software
+ *  distributed under the License is distributed on an "AS IS" BASIS, WITHOUT
+ *  WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ *  See the License for the specific language governing permissions and
+ *  limitations under the License.
+ *
+ *  This file is part of mbed TLS (https://tls.mbed.org)
+ */
+#ifndef MY_DES_H
+#define MY_DES_H
+
+#include <stdint.h>
+
+#define DES_ENCRYPT     1
+#define DES_DECRYPT     0
+
+#define ERR_DES_INVALID_INPUT_LENGTH              -0x0032  /**< The data input has an invalid length. */
+
+#define DES_KEY_SIZE    8
+
+typedef struct
+{
+    uint32_t sk[32];            /*!<  DES subkeys       */
+} des_context;
+
+/**
+ * \brief          Triple-DES context structure
+ */
+typedef struct
+{
+    uint32_t sk[96];            /*!<  3DES subkeys      */
+} des3_context;
+
+int des_key_check_weak( const unsigned char key[DES_KEY_SIZE] );
+void des_setkey( uint32_t SK[32], const unsigned char key[DES_KEY_SIZE] );
+/*
+ * DES key schedule (56-bit, encryption)
+ */
+int des_setkey_enc( des_context *ctx, const unsigned char key[DES_KEY_SIZE] );
+/*
+ * DES key schedule (56-bit, decryption)
+ */
+int des_setkey_dec( des_context *ctx, const unsigned char key[DES_KEY_SIZE] );
+/*
+ * Triple-DES key schedule (112-bit, encryption)
+ */
+int des3_set2key_enc( des3_context *ctx,
+                      const unsigned char key[DES_KEY_SIZE * 2] );
+/*
+ * Triple-DES key schedule (112-bit, decryption)
+ */
+int des3_set2key_dec( des3_context *ctx,
+                      const unsigned char key[DES_KEY_SIZE * 2] );
+
+
+/*
+ * Triple-DES key schedule (168-bit, encryption)
+ */
+int des3_set3key_enc( des3_context *ctx,
+                      const unsigned char key[DES_KEY_SIZE * 3] );
+/*
+ * Triple-DES key schedule (168-bit, decryption)
+ */
+int des3_set3key_dec( des3_context *ctx,
+                      const unsigned char key[DES_KEY_SIZE * 3] );
+
+/*
+ * DES-ECB block encryption/decryption
+ */
+
+int des_crypt_ecb( des_context *ctx,
+                   const unsigned char input[8],
+                   unsigned char output[8] );
+
+/*
+* DES-CBC buffer encryption/decryption
+*/
+int des_crypt_cbc( des_context *ctx,
+                   int mode,
+                   size_t length,
+                   unsigned char iv[8],
+                   const unsigned char *input,
+                   unsigned char *output );
+
+/*
+ * 3DES-ECB block encryption/decryption
+ */
+
+int des3_crypt_ecb( des3_context *ctx,
+                    const unsigned char input[8],
+                    unsigned char output[8] );
+/*
+ * 3DES-CBC buffer encryption/decryption
+ */
+int des3_crypt_cbc( des3_context *ctx,
+                    int mode,
+                    size_t length,
+                    unsigned char iv[8],
+                    const unsigned char *input,
+                    unsigned char *output );
+
+/*
+ * DES-ECB buffer encryption API
+ */
+unsigned int des_ecb_encrypt(unsigned char *pout,
+                             unsigned char *pdata,
+                             unsigned int nlen,
+                             unsigned char *pkey);
+/*
+ * DES-ECB buffer decryption API
+ */
+unsigned int des_ecb_decrypt(unsigned char *pout,
+                             unsigned char *pdata,
+                             unsigned int nlen,
+                             unsigned char *pkey);
+/*
+ * DES-CBC buffer encryption API
+ */
+unsigned int des_cbc_encrypt(unsigned char *pout,
+                             unsigned char *pdata,
+                             unsigned int nlen,
+                             unsigned char *pkey,
+                             unsigned char *piv);
+/*
+ * DES-CBC buffer decryption API
+ */
+unsigned int des_cbc_decrypt(unsigned char *pout,
+                             unsigned char *pdata,
+                             unsigned int nlen,
+                             unsigned char *pkey,
+                             unsigned char *piv);
+/*
+ * 3DES-ECB buffer encryption API
+ */
+unsigned int des3_ecb_encrypt(unsigned char *pout,
+                              unsigned char *pdata,
+                              unsigned int nlen,
+                              unsigned char *pkey,
+                              unsigned int klen);
+/*
+ * 3DES-ECB buffer decryption API
+ */
+unsigned int des3_ecb_decrypt(unsigned char *pout,
+                              unsigned char *pdata,
+                              unsigned int nlen,
+                              unsigned char *pkey,
+                              unsigned int klen);
+/*
+ * 3DES-CBC buffer encryption API
+ */
+unsigned int des3_cbc_encrypt(unsigned char *pout,
+                              unsigned char *pdata,
+                              unsigned int nlen,
+                              unsigned char *pkey,
+                              unsigned int klen,
+                              unsigned char *piv);
+/*
+ * 3DES-CBC buffer decryption API
+ */
+unsigned int des3_cbc_decrypt(unsigned char *pout,
+                              unsigned char *pdata,
+                              unsigned int nlen,
+                              unsigned char *pkey,
+                              unsigned int klen,
+                              unsigned char *piv);
+
+int des_test_self(void);
+
+/*
+ * DES-ECB buffer encryption API
+ */
+
+
+uint8_t dessmann_des_ecb_encrypt(unsigned char *pout,
+                                 unsigned int *pout_len,
+                                 unsigned char *pdata,
+                                 unsigned int pdata_len,
+                                 unsigned char *pkey);
+
+/*
+ * DES-ECB buffer decryption API
+ */
+uint8_t dessmann_des_ecb_decrypt(unsigned char *pout,
+                                 unsigned int *pout_len,
+                                 unsigned char *pdata,
+                                 unsigned int pdata_len,
+                                 unsigned char *pkey);
+
+/*
+ * dessmann_des_key_make API
+ *
+ *[in]raw_key 原始秘钥
+ *[out]key 处理后的秘钥
+ */
+void dessmann_des_key_make(const uint8_t  *raw_key,uint8_t *key);
+
+extern uint8_t des_key[8];
+
+
+
+#endif /* des.h */

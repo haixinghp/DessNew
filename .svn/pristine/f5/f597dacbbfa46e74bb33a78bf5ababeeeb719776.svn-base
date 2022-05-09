@@ -1,0 +1,113 @@
+/*********************************************************************************************************************
+ * @file:        HAL_EXPORT.c
+ * @author:      gushengchi
+ * @version:     V01.00
+ * @date:        2021-07-27
+ * @Description: 端口扩展接口功能文件   
+ * @ChangeList:  01. 初版
+**********************************************************************************************************************/
+  
+#ifndef  _HAL_EXPORT_H
+#define  _HAL_EXPORT_H
+
+/*--------------------------------------------------文件包含---------------------------------------------------------*/
+#include "..\DRV\DRV_EXPORT\DRV_NCA9555.h"
+#include "..\System\LockConfig.h"
+
+/*--------------------------------------------------宏定义-----------------------------------------------------------*/
+#define  EXPORT_INT_GPIO_PIN	 M_EXPORT_INT_GPIO_PIN    //扩展芯片唤醒引脚 
+
+/*--------------------------------------------------枚举声明---------------------------------------------------------*/
+typedef enum            //顺序为引脚编号顺序
+{
+    /*---CHIP 01---*/
+    EM_74HC_E = PIN_CONFIG_74HC_E, 	
+    EM_74HC_A0 = PIN_CONFIG_74HC_A0,
+    EM_74HC_A1 = PIN_CONFIG_74HC_A1,
+    EM_POW_FING = PIN_CONFIG_POW_FING,
+    EM_POW_FACE = PIN_CONFIG_POW_FACE,
+    EM_AUDIO_POW = PIN_CONFIG_POW_AUDIO,
+    EM_FING_IRQ = PIN_CONFIG_IRQ_FING,
+    EM_KEY_IRQ = PIN_CONFIG_IRQ_KEY,
+    
+    EM_IR_IRQ = PIN_CONFIG_IRQ_IR,
+    EM_CAMERA_IRQ = PIN_CONFIG_IRQ_CAMERA,
+    EM_CAMBELL_IRQ = PIN_CONFIG_IRQ_CAMBELL,
+    EM_PIN_ALARM = PIN_CONFIG_ALARM,
+    EM_RTC_INT = PIN_CONFIG_RTC_INT,
+    EM_TOUCH_RST = PIN_CONFIG_TOUCH_RST,
+    EM_EXPORT_I15 = PIN_CONFIG_RESERVED1,
+    EM_EXPORT_I16 = PIN_CONFIG_RESERVED2,
+
+  /*---CHIP 02---*/
+    EM_LED_01 = PIN_CONFIG_LED_01, 
+    EM_LED_02 = PIN_CONFIG_LED_02,
+    EM_LED_03 = PIN_CONFIG_LED_03,
+    EM_LED_04 = PIN_CONFIG_LED_04,
+    EM_LED_05 = PIN_CONFIG_LED_05,
+    EM_LED_06 = PIN_CONFIG_LED_06,
+    EM_LED_07 = PIN_CONFIG_LED_07,
+    EM_LED_08 = PIN_CONFIG_LED_08,
+
+    EM_LED_09 = PIN_CONFIG_LED_09,
+    EM_LED_00 = PIN_CONFIG_LED_00,
+    EM_LED_BACK = PIN_CONFIG_LED_BACK,
+    EM_LED_SURE = PIN_CONFIG_LED_SURE,
+    EM_LED_RGB_R = PIN_CONFIG_LED_RGB_R,
+    EM_LED_RGB_G = PIN_CONFIG_LED_RGB_G,
+    EM_LED_RGB_B = PIN_CONFIG_PIN_I16,
+    EM_PIN_I16 = PIN_CONFIG_PIN_I16,
+	
+	#if defined PIN_CONFIG_LED_BELL
+	EM_LED_BELL_PIN = PIN_CONFIG_LED_BELL,
+	#else
+	EM_LED_BELL_PIN = PIN_RERSVER,
+	#endif
+
+    /*---预留位置---*/
+    EM_POW_CAMERA = PIN_CONFIG_POW_FACE,
+    EM_9523_RST = PIN_RESERVED_OFFSET, 
+	EM_POW_WIFI = PIN_CONFIG_POW_WIFI,
+    EM_POW_LCM = PIN_CONFIG_LCM_POW,
+    EM_RF_LPCD = PIN_CONFIG_RF_LPCD,
+    EM_POW_OBCAM =  PIN_CONFIG_POW_OBCAM,
+    EM_CAM_CHANGE = PIN_CONFIG_CAM_CHANGE,
+    EM_POW_STCAM = PIN_CONFIG_POW_STCAM,
+    EM_POW_STWIFI = PIN_CONFIG_POW_STWIFI,
+
+#ifndef PIN_CONFIG_POW_RGB
+    EM_POW_RGB = PIN_RERSVER,
+#else
+    EM_POW_RGB = PIN_CONFIG_POW_RGB,
+#endif
+    
+    EM_UART_IRQ = PIN_RERSVER, 
+    EM_USB_FB, 
+    EM_BELL_IRQ, 
+    EM_X_FACE_POW_EN, 
+    EM_CAM_POW_EN, 
+    EM_CAM_WIFI_POW_EN,
+   
+}PIN_NO_E; 
+ 
+/*--------------------------------------------------常量声明---------------------------------------------------------*/
+
+
+/*--------------------------------------------------变量声明---------------------------------------------------------*/             
+ 
+ 
+/*--------------------------------------------------函数声明---------------------------------------------------------*/
+void HAL_EXPORT_FileInit( void ); 
+void HAL_EXPORT_WakeupInit( void ); 
+void HAL_EXPORT_SleepInit( void ); 
+
+uint8_t HAL_EXPORT_PinInit( PIN_NO_E pinNo, PIN_DIR_E dirMode, PIN_POLO_E poloMode );  
+uint8_t HAL_EXPORT_PinSet( PIN_NO_E pinNo, PIN_SET_E pinSet ); 
+uint8_t HAL_EXPORT_PinGet( PIN_NO_E pinNo );
+
+  
+
+
+#endif
+
+

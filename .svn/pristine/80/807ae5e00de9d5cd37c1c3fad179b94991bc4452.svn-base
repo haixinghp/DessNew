@@ -1,0 +1,30 @@
+#ifndef _DRV_RTC_BM8563_H_
+#define _DRV_RTC_BM8563_H_
+#ifdef __cplusplus
+extern "C"
+{
+#endif
+
+/* 标准头文件 */
+#include "stdint.h"
+
+/* 内部头文件 */
+#include "..\HAL\HAL_RTC\HAL_RTC.h"
+#include "..\DRV\DRV_IIC\DRV_IIC.h"
+
+
+
+
+uint8_t DRV_BM8563_ShutDowFlag(void);
+void DRV_BM8563_Init(void);
+void DRV_BM8563_WriteTime(RTCType  *Time );
+void DRV_BM8563_ReadTime(RTCType  *Time );
+void DRV_BM8563_CLK_OUT(uint8_t frequency);
+uint8_t DRV_BM8563_HWCheck(void);
+
+
+#ifdef __cplusplus
+}
+#endif
+#endif
+//.end of the file.

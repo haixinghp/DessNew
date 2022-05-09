@@ -1,0 +1,178 @@
+/**************************************************************************** 
+* Copyright (C), 2008-2021,德施曼机电（中国）有限公司 
+* 文件名: DRV_UART.c 
+* 作者：邓业豪
+* 版本：V01
+* 时间：20210724
+* 内容简述：NRF 串口驱动文件
+****************************************************************************/
+/*-------------------------------------------------文件包含---------------------------------------------------------*/
+#include "app_uart.h"
+#include "DRV_UART.h"
+#include "LockConfig.h"
+#include "DRV_GPIO.h"  
+/*-------------------------------------------------宏定义-----------------------------------------------------------*/
+ 
+ 
+/*-------------------------------------------------枚举定义---------------------------------------------------------*/
+
+
+/*-------------------------------------------------常量定义---------------------------------------------------------*/
+
+
+/*-------------------------------------------------全局变量定义-----------------------------------------------------*/         
+PushQueueCallBack_PTR       PtrPushQueue0HandlerCallBack = NULL;
+PushQueueCallBack_PTR       PtrPushQueue1HandlerCallBack = NULL;
+
+/*-------------------------------------------------局部变量定义-----------------------------------------------------*/
+
+
+/*-------------------------------------------------函数声明---------------------------------------------------------*/
+ 
+
+/*-------------------------------------------------函数定义---------------------------------------------------------*/
+ 
+/*********************************************************************************************************************
+* Function Name :  DRV_Uart_SleepInit()
+* Description   :  休眠前的处理 
+* Para          :  无
+* Return        :  void
+*********************************************************************************************************************/
+void DRV_Uart_SleepInit( void ) 
+{
+	DRV_GpioOut0(M_WIFI_RX_GPIO_PIN);
+	DRV_GpioOut0(M_WIFI_TX_GPIO_PIN);
+	
+	DRV_GpioOut0(M_UART_RX_GPIO_PIN);
+	DRV_GpioOut0(M_UART_TX_GPIO_PIN);
+}
+ 
+/*********************************************************************************************************************
+* Function Name :  DRV_Uart_EventHandle()
+* Description   :  串口中断处理函数 
+* Para          :  无
+* Return        :  void
+*********************************************************************************************************************/
+static void DRV_Uart_EventHandle( app_uart_evt_t * p_event )
+{
+	static uint8_t uart_buf=0;
+    switch (p_event->evt_type)
+    {
+		case APP_UART_DATA_READY:	
+			 UNUSED_VARIABLE(app_uart_get(&uart_buf));
+			 if(PtrPushQueue0HandlerCallBack!=NULL)
+			 {
+				PtrPushQueue0HandlerCallBack( uart_buf );     //给应用层提供中断入口
+			 }
+			 break;
+		case APP_UART_COMMUNICATION_ERROR:        
+			 break;
+		case APP_UART_FIFO_ERROR:
+			 break; 
+		default:
+			break;
+	}
+	return;
+}
+
+/*********************************************************************************************************************
+* Function Name :  DRV_Uart_ConfigInit()
+* Description   :  uart 初始化配置函数 
+* Para   Input  :  uartKind-串口资源种类   0：WiFi  1:其他   uartCfg-配置信息
+* Para   Output :  none
+* Return        :  void
+*********************************************************************************************************************/
+void DRV_Uart_ConfigInit( uint8_t uartKind, UartCfg_S uartCfg )
+{
+	uint32_t  err_code = 0;
+	uint32_t  baudrate = 0;
+	uint32_t  rxPinNo, txPinNo;
+	if( UART_BAUD_RATE_9600 == uartCfg.BaudRate )
+	{
+		baudrate = UART_BAUDRATE_BAUDRATE_Baud9600;
+	}
+	else if( UART_BAUD_RATE_19200 == uartCfg.BaudRate )
+	{
+		baudrate = UART_BAUDRATE_BAUDRATE_Baud19200;
+	}
+	else if( UART_BAUD_RATE_57600 == uartCfg.BaudRate )
+	{
+		baudrate = UART_BAUDRATE_BAUDRATE_Baud57600;
+	}
+	else if( UART_BAUD_RATE_115200 == uartCfg.BaudRate )
+	{
+		baudrate = UART_BAUDRATE_BAUDRATE_Baud115200;
+	}
+ 
+	if( UART_KIND_WIFI == uartKind )
+	{
+		 rxPinNo = M_WIFI_RX_GPIO_PIN;
+		 txPinNo = M_WIFI_TX_GPIO_PIN;
+	}
+	else 
+	{
+		 rxPinNo = M_UART_RX_GPIO_PIN;
+		 txPinNo = M_UART_TX_GPIO_PIN;
+	}
+	const app_uart_comm_params_t comm_params =
+	{
+		.rx_pin_no = rxPinNo,
+		.tx_pin_no = txPinNo,
+		.flow_control = APP_UART_FLOW_CONTROL_DISABLED,
+		.use_parity = uartCfg.ParityType,
+		.baud_rate = baudrate  //波特率
+	};
+	APP_UART_FIFO_INIT( &comm_params,
+				   256,
+				   256,
+				   DRV_Uart_EventHandle,
+				   APP_IRQ_PRIORITY_HIGH,
+				   err_code);
+	APP_ERROR_CHECK(err_code);
+}
+
+/*********************************************************************************************************************
+* Function Name :  DRV_Uart_DeInit()
+* Description   :  uart 解除资源
+* Para   Input  :  uartKind-串口资源种类 
+* Para   Output :  none
+* Return        :  void
+*********************************************************************************************************************/
+void DRV_Uart_DeInit( uint8_t uartKind )
+{
+	app_uart_close();
+	if( UART_KIND_WIFI == uartKind )
+	{
+		DRV_GpioInputPullnull(M_WIFI_RX_GPIO_PIN);
+		DRV_GpioInputPullnull(M_WIFI_TX_GPIO_PIN);
+	}
+	else 
+	{
+		DRV_GpioInputPullnull(M_UART_RX_GPIO_PIN);
+		DRV_GpioInputPullnull(M_UART_TX_GPIO_PIN);
+	}
+}
+
+/*********************************************************************************************************************
+* Function Name :  DRV_Uart_TxMessage()
+* Description   :  uart 发送数据
+* Para   Input  :  p_data-待发送数据指针   length- 待发送数据长度
+* Para   Output :  none
+* Return        :  void
+*********************************************************************************************************************/
+void DRV_Uart_TxMessage( const uint8_t *p_data, uint16_t length )
+{
+    for (uint16_t i = 0; i < length; i++)
+    {
+        while(app_uart_put(p_data[i]) != NRF_SUCCESS);
+    }
+	return;
+}
+
+
+
+
+
+
+/*-------------------------------------------------THE FILE END-----------------------------------------------------*/
+

@@ -1,0 +1,102 @@
+/*********************************************************************************************************************
+ * @file:      DRV_TIMER.C
+ * @author:    dengyehao
+ * @version:   V01.00
+ * @date:      2022-01-18
+ * @brief:     芯片时钟
+**********************************************************************************************************************/
+  
+/*-------------------------------------------------文件包含---------------------------------------------------------*/
+#include "app_simple_timer.h"
+#include "app_error.h"
+#include "app_timer.h"
+
+
+#include "DRV_TIMER.h"
+#include "Public.h"
+/*-------------------------------------------------宏定义-----------------------------------------------------------*/
+#define TIMEOUT_VALUE	  10000 
+APP_TIMER_DEF( SystemLifeTickTimer ); //定义定时器   
+
+
+/*-------------------------------------------------局部变量定义-----------------------------------------------------*/
+static bool SystickTimerSts = 0;  
+static volatile uint8_t SystemHeartTickFlg =0;
+
+
+/*********************************************************************************************************************
+* Function Name :  DRV_TimerInit()
+* Description   :  定时器初始化     10ms执行一次中断
+* Para          :  cmd 开关    Handler中断回调函数 
+* Return        :  void
+*********************************************************************************************************************/
+void DRV_TimerInit(  bool cmd  ,  DRV_TimerPtr Handler ) 
+{
+	if( cmd == true ) //开启
+	{
+	   if( 1 == SystickTimerSts ) 
+	   {
+		   return;
+	   }
+	   app_simple_timer_init();	//关闭后开启可重复初始化
+	   uint32_t err_code = app_simple_timer_start(APP_SIMPLE_TIMER_MODE_REPEATED, Handler, TIMEOUT_VALUE, NULL); 	
+	   APP_ERROR_CHECK(err_code);
+	   SystickTimerSts = 1;
+	   my_printf( "DRV_TimerInit( true )\n" ); 
+	}
+	else if( cmd == false ) //关闭
+	{
+       if( 0 == SystickTimerSts )
+	   {
+		   return;
+	   }
+	   app_simple_timer_stop(); 
+	   SystickTimerSts = 0;
+	   my_printf( "DRV_TimerInit( false )\n" ); 
+	}
+}
+
+
+/*********************************************************************************************************************
+* Function Name :  SystemLifeTickTimerInit
+* Description   :  系统睡眠后定时器配置  1秒心跳一次  
+* Para          :  Handler 中断入口
+* Return        :  none
+*********************************************************************************************************************/
+void DRV_LifeTickTimerInit( DRV_TimerPtr Handler ) 
+{
+	ret_code_t err_code = app_timer_init();
+    APP_ERROR_CHECK(err_code);
+	err_code = app_timer_create( &SystemLifeTickTimer, APP_TIMER_MODE_REPEATED, Handler );
+	APP_ERROR_CHECK( err_code);
+
+}
+/*********************************************************************************************************************
+* Function Name :  SystemLifeTickTimerCtrl
+* Description   :  系统休眠后的生命心跳包 1秒心跳一次     
+* Para          :  0: 关闭  1: 开启
+* Return        :  void
+*********************************************************************************************************************/
+void DRV_LifeTickTimerCtrl( bool cmd )
+{
+	if( cmd == true )
+	{
+		if( SystemHeartTickFlg == 1 )
+			return;
+		ret_code_t err_code = app_timer_start( SystemLifeTickTimer, APP_TIMER_TICKS(1000), NULL ); 
+		APP_ERROR_CHECK(err_code);
+		SystemHeartTickFlg = 1;
+		my_printf( "SystemLifeTickTimerCtrl( true )\n" ); 
+	}
+	else if( cmd == false )
+	{
+		if( SystemHeartTickFlg == 0 )
+			return;
+		ret_code_t err_code = app_timer_stop( SystemLifeTickTimer );
+		APP_ERROR_CHECK(err_code);	
+		SystemHeartTickFlg = 0;
+		my_printf( "SystemLifeTickTimerCtrl( false )\n" ); 
+	}
+}
+
+/*-------------------------------------------------THE FILE END-----------------------------------------------------*/

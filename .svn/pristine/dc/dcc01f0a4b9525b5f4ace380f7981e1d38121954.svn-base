@@ -1,0 +1,217 @@
+/*********************************************************************************************************************
+ * @file:        HAL_Voice.h
+ * @author:      gushengchi
+ * @version:     V01.00
+ * @date:        2021-08-03
+ * @Description: 佑华语音芯片接口功能头文件
+ * @ChangeList:  01. 初版
+**********************************************************************************************************************/
+  
+#ifndef _HAL_VOICE_H_
+#define _HAL_VOICE_H_
+
+/*--------------------------------------------------文件包含---------------------------------------------------------*/
+#include <stdint.h>
+#include <stdbool.h>
+#include "System.h"
+/*--------------------------------------------------宏定义-----------------------------------------------------------*/
+ 
+
+/*--------------------------------------------------枚举声明---------------------------------------------------------*/
+typedef enum
+{
+ /*--------菜单类---------*/
+   EM_ADMIN_MANAGE_MENU_MP3,     /*---管理员菜单 1级-----*/
+   EM_FACE_SET_MENU_MP3,         /*---人脸信息菜单 2级---*/
+   EM_FINGER_SET_MENU_MP3,       /*---指纹设置菜单 2级---*/	
+   EM_PWD_SET_MENU_MP3,          /*---密码设置菜单 2级---*/
+   EM_CARD_SET_MENU_MP3,         /*---智卡设置菜单 2级---*/
+   EM_IRIS_SET_MENU_MP3,         /*---虹膜设置菜单 2级---*/
+   EM_VEIN_SET_MENU_MP3,         /*---静脉设置菜单 2级---*/
+   EM_SYS_SET_MENU_MP3,          /*---系统设置菜单 2级---*/
+	
+   EM_VOL_SET_MENU_MP3,          /*---音量设置菜单 3级---*/
+   EM_DIR_SET_MENU_MP3,          /*---开门方向设置菜单 3级---*/
+   EM_TORQUE_SET_MENU_MP3,       /*---电机扭力设置菜单 3级---*/
+   EM_ATUO_LOCK_MENU_MP3,        /*---自动上锁设置菜单 3级---*/
+   EM_NEAR_REACT_MENU_MP3,       /*---接近感应设置菜单 3级---*/
+   EM_NETWORKING_MENU_MP3,       /*---设备组网设置菜单 3级---*/
+   EM_DEPLOY_SET_MENU_MP3,       /*---布防设置菜单 3级---*/
+   EM_STAY_SET_MENU_MP3,         /*---逗留设置菜单 3级---*/
+   EM_VERIFY_SET_MENU_MP3,       /*---双重认证设置菜单 3级---*/
+   EM_BACKUP_SET_MENU_MP3,       /*---恢复出厂设置菜单 1级---*/
+	
+ /*--------通用类---------*/	
+   EM_DEL_TYPE_OPT_MP3,          //删除类型选择提示( 编号删除请按1,比对删除请按2 ) 
+   EM_IN_USER_NUM_MP3,           //输入用户编号并确认提示( 请输入3位数字编号,按确认键确认 ) 
+   EM_GO_BACK_MP3,               //返回( 返回请按返回键 ) 	
+   EM_GO_ENTER_MP3,              //确认( 按确认键结束 ) 	
+   EM_BACK_OR_ENTER_MP3,         //执行确认菜单( 返回请按返回键，按确认键结束 ) 	
+   EM_DEL_SUCCESS_MP3,           //删除成功	 
+   EM_DEL_FAIL_MP3,              //删除失败	 
+   EM_SET_SUCCESS_MP3,           //设定成功	 
+   EM_SET_FAIL_MP3,              //设定失败	 
+   EM_CHECK_SUCCESS_MP3,         //验证成功	 
+   EM_CHECK_FAIL_MP3,            //验证失败	 
+   EM_REGISTER_SUCCESS_MP3,      //登记成功	 
+   EM_REGISTER_FAIL_MP3,         //登记失败	 
+   EM_PUT_FINGER_MP3,            //请输入指纹	 
+   EM_MOVE_FINGER_MP3,           //请拿开手指
+   EM_NUM_0_MP3,                 //0
+   EM_NUM_1_MP3,                 //1
+   EM_NUM_2_MP3,                 //2
+   EM_NUM_3_MP3,                 //3
+   EM_NUM_4_MP3,                 //4
+   EM_NUM_5_MP3,                 //5
+   EM_NUM_6_MP3,                 //6
+   EM_NUM_7_MP3,                 //7
+   EM_NUM_8_MP3,                 //8
+   EM_NUM_9_MP3,                 //9
+   EM_NUM_A_MP3,                 //A
+   EM_NUM_10_MP3,                //十
+   EM_YEAR_MP3,                  //年
+   EM_MONTH_MP3,                 //月
+   EM_DAY_MP3,                   //日
+   EM_HOUR_MP3,                  //时
+   EM_MINUTER_MP3,               //分
+   EM_SECOND_MP3,                //秒
+   EM_OPEN_DOOR_OK_MP3,          //开门成功 
+   EM_LOCKED_DOOR_MP3,           //已上锁 
+   EM_APP_MODE_ON_MP3,           //APP功能已打开 
+   EM_BACKING_FACTORY_MP3,       //恢复出厂设置中请稍后 
+   EM_HI_TELL_ADMIN_MP3,         //您好，我已通知主人 
+   EM_TYR_ERR_LOCKED_MP3,        //非法操作系统已锁定，请等待3分钟再操作 
+   EM_BUTTON_TIPS_MP3,           //按键声“水滴声”     
+   EM_BELL_PLAY_MP3,             //门铃音（叮咚叮咚）  
+   EM_DEPLOYING_MP3,             //已布防 
+   EM_DEPLOYED_MP3,              //已撤防 
+   EM_BAT_DONOT_WORK_MP3,        //电压低,无法工作 
+   EM_BAT_CHARGE_MP3,            //电压低，请更换电池 
+   EM_BAT_CHARGING_MP3,          //充电中，请稍后 
+   EM_FIRST_USE_FACE_TIPS_MP3,   //首次使用请录入管理员人脸 
+   EM_INPUT_PWD_MP3,             //请输入密码 
+   EM_PUT_FINGER_OR_PWD_MP3,     //请输入指纹或密码 
+   EM_ADMIN_CANNOT_DEL_MP3,      //管理员不能删   
+   EM_NUM_EXISTS_MP3,            //编号已存在 
+   EM_REGIST_CNT_FULL_MP3,       //登记数量已满 
+   EM_UNRIGIST_TIPS_MP3,         //未注册提醒(体验模式请录入信息后才能使用)
+   EM_WELCOME_TIPS_MP3,          //欢迎使用  
+   EM_BACKUP_BAT_ON_MP3,         //已启用备用电池   
+   EM_PAIR_SUCCESS_MP3,          //配对成功    
+   EM_PAIR_FAIL_MP3,             //配对失败    
+   EM_CHECK_CARD_SUCCESS_MP3,    //刷卡成功    
+   EM_CHECK_CARD_FAIL_MP3,       //刷卡失败    
+   EM_DEL_CARD_MP3,              //删除卡    
+   EM_ADD_CARD_MP3,              //增加卡    
+   EM_PUT_CARD_MP3,              //请刷卡    
+   EM_PUT_CARD_TWICE_MP3,        //请再刷卡    
+   EM_CARD_REGISTED_MP3,         //卡已注册    
+   EM_CARD_CNT_FULL_MP3,         //卡已满   
+   EM_PUT_CARD_NEARLY_MP3,       //请将手机靠近刷卡区域  
+   EM_CHECK_FACE_MP3,            //请验证人脸  
+   EM_CAPTURE_FACE_FRONT_MP3,    //请录入正脸  
+   EM_MOVE_HEAD_UP_MP3,          //请微微抬头  
+   EM_MOVE_HEAD_DOWN_MP3,        //请微微低头  
+   EM_TURN_FACE_RIGHT_MP3,       //请把脸偏向右手边  
+   EM_TURN_FACE_LEFT_MP3,        //请把脸偏向左手边    
+   EM_CHECK_FAIL_AND_ADJUST_MP3, //未识别成功，请调整位置重试  
+   EM_CHECK_FACE_NONE_MP3,       //未检测到人脸  
+   EM_FACE_TOO_NEARLY_MP3,       //人脸距离太近  
+   EM_FACE_TOO_FAR_MP3,          //人脸距离太远  
+   EM_FACE_SHELTED_MP3,          //脸部有遮挡  
+   EM_CALLING_WAIT_MP3,           //呼叫中，请等待  
+   EM_HANG_UP_BY_BACK_MP3,        //挂断请按返回键  
+   EM_CALL_FAIL_MP3,              //呼叫失败  
+   EM_ADMIN_FINGER_FULL_MP3,      //管理员指纹已满  
+   EM_FINGER_EEROR_MP3,           //指纹错误  
+   EM_PWD_FAIL_AND_INPUT_MP3,     //修改密码失败，请确认输入的密码    
+   EM_PWD_TOO_SIMPLE_MP3,         //密码过于简单  
+   EM_PWD_NONE_AND_SET_FAIL_MP3,  //无密码，设置失败  
+ 
+   EM_UPPER_BAT_LOW_AND_REPLACE_MP3,  //上方电池电压低，请充电
+   EM_UNDER_BAT_LOW_AND_REPLACE_MP3,  //下方电池电压低，请充电
+   EM_INSERT_UNDER_BAT_TIPS_MP3,  //请插入下方电池 
+   EM_INSERT_UPPER_BAT_TIPS_MP3,  //请插入上方电池 
+   EM_WARM_ALARM_MP3,             //“110警笛音”  重复播报
+   EM_BOTH_BAT_LOW_TIPS_MP3,      //上方电池电压低，请充电 + 下方电池电压低，请充电
+   EM_INPUT_NEW_PWD_TIPS_MP3,     //请输入6位新开门密码，按#确认
+   EM_INPUT_PWD_AGIN_TIPS_MP3,    //请再输入一次
+   EM_BACK_FACTORY_COMFIRM_MP3,   //恢复出厂设置确认提醒（恢复出厂设置，按#确认，取消请按*）
+   EM_INPUT_2NUM_AND_COMFIRM_MP3, //请输入两位数字，按#键确认 返回请按 
+   EM_AUTO_LOCK_TIME_MP3,         //自动上锁，当前时间为
+   EM_COMFIRM_OR_BACK_TIPS_MP3,   //确认请按#号键,如需更改请按*号键
+   EM_FORMAT_WRONG_TIPS_MP3,      //格式不正确，请重新输入
+   EM_FIRST_USE_FINGER_TIPS_MP3,  //首次使用请录入管理员指纹 
+   EM_CHECK_ADMIN_FACE_TIPS_MP3,  //请验证管理员人脸 
+   EM_CHECK_ADMIN_FINGER_TIPS_MP3, //请验证管理员指纹 
+
+   /* B02 新增音频 */
+   EM_CONTACT_AT_BOTH_ENDS_MP3,     //请用手指接触两端触点
+   EM_RELEASE_FINGER_MP3,           //松开手指
+   EM_FIRST_USE_VEIN_TIPS_MP3,      //首次使用请录入管理员手指
+   EM_CHECK_VEIN_MP3,               //请验证手指
+   EM_CHECK_ADMIN_VEIN_TIPS_MP3,    //请验证管理员手指
+   EM_SLIDE_VEIN_TIPS_MP3,          //左右缓慢滑动整根手指
+   EM_PLACE_FINGER_MP3,             //请放手指
+   
+   EM_FIRST_USE_IRIS_TIPS_MP3,      //首次使用请录入管理员虹膜
+   EM_CHECK_IRIS_MP3,               //请验证虹膜  
+   EM_CHECK_ADMIN_IRIS_TIPS_MP3,    //请验证管理员虹膜
+   EM_INPUT_IRIS_MP3,               //请输入虹膜  
+   EM_FALSE_LOCK_TIPS_MP3,          //门未锁好  
+ 
+   EM_UPPER_BAT_UNWORK_MP3,  		//上方电池电压低，无法工作
+   EM_UNDER_BAT_UNWORK_MP3,         //下方电池电压低，无法工作
+   EM_UPPER_UNDER_BAT_UNWORK_MP3,   //下方电池电压低，无法工作, 下方电池电压低无法工作
+ 
+   EM_WARMING_TIPS_MP3,             //嘀嘀嘀 报警音
+   EM_CALLING_WAIT_HANG_UP_BY_BACK_MP3,   //呼叫中，请等待, 挂断请按返回键   
+   EM_NETWORKING_WAIT_MP3,			//组网中，请稍后 
+   EM_CHECK_ERR_ALARM_MP3,          //“110警笛音”+验证失败   
+   EM_ERR_PROTECT_ALARM_MP3,        //“110警笛音”+非法操作系统已锁定，请等待3分钟再操作   
+   
+   EM_VOICE_BREAK_CMD,  		    //终止语音当前播报指令  
+   
+   #ifdef FRAME_PLATFORM_HALF_AUTO_ON
+    EM_ADD_USER_MENU_MP3,         /*---增加用户菜单 2级---*/
+	EM_DELETE_USER_MENU_MP3,         /*---删除用户菜单 2级---*/
+	EM_SYSTEM_DATE_SET_MENU_MP3,         /*---系统时间设置菜单 2级---*/
+	EM_UNLOCK_WAY_MENU_MP3,         /*---开锁方式设置 2级---*/
+	EM_VOICE_SET_MENU_MP3,         /*---语音设置 2级---*/
+   #endif
+   
+}VoiceType_E;  
+
+typedef enum
+{
+	EM_VOL_GRADE_OFF = OFF_VOICE_VOL,       // 关闭
+	EM_VOL_GRADE_LOW = LOW_VOICE_VOL,       // 低音量
+	EM_VOL_GRADE_MED = MEDIUM_VOICE_VOL,    // 中音量
+	EM_VOL_GRADE_HIGH= HIGH_VOICE_VOL,      // 高音量
+	
+}VOL_GRADE_E; 
+
+/*--------------------------------------------------常量声明---------------------------------------------------------*/
+
+
+/*--------------------------------------------------变量声明---------------------------------------------------------*/             
+ 
+ 
+/*--------------------------------------------------函数声明---------------------------------------------------------*/
+void HAL_Voice_FileInit( void );
+void HAL_Voice_WakeupInit( void );
+void HAL_Voice_SleepInit( void );
+void HAL_Voice_Time10Ms( void );
+void HAL_Voice_WorkModeCtrl( bool mode );
+bool HAL_Voice_WorkModeGet( void );
+void HAL_Voice_BellCtrl( bool cmd );
+bool HAL_Voice_GetBellBusySts( void );
+void HAL_Voice_BellThread( void );
+void HAL_Voice_PowerCtrl( bool cmd );
+void HAL_Voice_VolumeSet( VOL_GRADE_E volType ); 
+void HAL_Voice_PlayingVoice( VoiceType_E volType, uint16_t holdTimeMs ); 
+void HAL_Voice_PlayVoiceThread( void ); 
+bool HAL_Voice_GetBusyState( void );  
+
+#endif
+/*-------------------------------------------------THE FILE END-----------------------------------------------------*/

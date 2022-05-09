@@ -1,0 +1,322 @@
+/********************************************************************************************************************
+ * @file:      ISR.c
+ * @author:    gushengchi
+ * @version:   V01.00
+ * @date:      2021-10-08
+ * @brief:     中断函数处理文件
+*********************************************************************************************************************/
+  
+/*-------------------------------------------------文件包含---------------------------------------------------------*/
+#include "ISR.h"
+#include "LockConfig.h"
+#include "System.h" 
+#include "Public.h"
+#include "DRV_GPIO.h"    
+#include "..\DRV\DRV_Motor\DRV_Motor_218.h"   
+#include "..\DRV\DRV_Motor\DRV_Motor_216.h"   
+
+#include "..\HAL\HAL_EXPORT\HAL_EXPORT.h"
+
+#include "App_Export.h"  
+#include "App_GUI.h" 
+/*-------------------------------------------------宏定义-----------------------------------------------------------*/
+ 
+ 
+/*-------------------------------------------------枚举定义---------------------------------------------------------*/
+
+
+/*-------------------------------------------------常量定义---------------------------------------------------------*/
+
+
+/*-------------------------------------------------全局变量定义-----------------------------------------------------*/         
+
+
+/*-------------------------------------------------局部变量定义-----------------------------------------------------*/
+ 
+ 
+/*-------------------------------------------------函数声明---------------------------------------------------------*/
+ 
+
+/*-------------------------------------------------函数定义---------------------------------------------------------*/
+ 
+ /*********************************************************************************************************************
+* Function Name :  BleISRhandler
+* Description   :  蓝牙中断处理函数
+* Para          :   
+* Return        :   
+*********************************************************************************************************************/
+uint8_t BleISRhandler(void)
+{
+	my_printf( "wake up source is ble connect!\n" );
+	App_GUI_SetSysWakeupType( E_WAKE_BLE_COM );
+	App_GUI_SetSysSleepSts( false );
+	return 0;
+}
+	
+
+/*********************************************************************************************************************
+* Function Name :  WakeupISRhandler
+* Description   :  引脚中断处理函数
+* Para          :   
+* Return        :   
+*********************************************************************************************************************/
+void WakeupISRhandler( uint32_t pin)
+{
+	my_printf("Wakeup pin =%d\n",pin);	
+	if( pin == EXPORT_INT_GPIO_PIN )
+	{
+		my_printf("Wakeup is export pin!\n");	
+		
+		if( true == App_Export_GetAlrmWarmState() )   
+		{
+			my_printf( "wake up source is ALARM!\n" ); 
+			App_GUI_SetSysWakeupType( E_WAKE_ALARM );
+			App_GUI_SetSysSleepSts( false );
+		}
+		else if( 0 == HAL_EXPORT_PinGet( EM_KEY_IRQ ) )
+		{
+			my_printf( "wake up source is TOUCH!\n" ); 
+			App_GUI_SetSysWakeupType( E_WAKE_TOUCH );
+			App_GUI_SetSysSleepSts( false );
+		}
+		else if( 0 == HAL_EXPORT_PinGet( EM_FING_IRQ ) )
+		{
+			my_printf( "wake up source is FINGER!\n" ); 
+			App_GUI_SetSysWakeupType( E_WAKE_FINGER );
+			App_GUI_SetSysSleepSts( false );
+		}
+		#if defined OB_CAM_FUNCTION_ON || defined ST_CAM_FUNCTION_ON    //二代猫眼
+		else if( 0 == HAL_EXPORT_PinGet( EM_CAMERA_IRQ ) )
+		{
+			my_printf( "wake up source is CAMERA!\n" ); 
+			App_GUI_SetSysWakeupType( E_WAKE_CAMERA_WIFI );
+			App_GUI_SetSysSleepSts( false );
+		}
+	    #endif
+		else if( 0 == HAL_EXPORT_PinGet( EM_IR_IRQ ) )
+		{
+			if( SystemSeting.SysDrawNear == E_SENSE_OFF )  //接近感应关闭
+			{
+				my_printf( "wake up source is IR but sense is off!\n" ); 
+			}
+			else if( App_GUI_GetNearSenseUnworkCurTim() > 0 )  	//接近感应工作暂停还未结束
+			{
+				my_printf( "wake up source is IR but sense is stop!\n" ); 
+			}
+			else 
+			{
+				#if defined IR_FUNCTION_ON
+				my_printf( "wake up source is IR!\n" ); 
+				App_GUI_SetSysWakeupType( E_WAKE_NEAR_SENSE );
+				App_GUI_SetSysSleepSts( false );
+				#elif defined RADAR_FUNCTION_ON
+				if(SystemSeting.SysHumanIrDef && (App_GUI_StayDetectSts() == 1) )
+				{
+				
+				}
+				else
+				{
+					my_printf( "wake up source is IR!\n" ); 
+					App_GUI_SetSysWakeupType( E_WAKE_NEAR_SENSE );
+					App_GUI_SetSysSleepSts( false );
+				}
+				#endif
+			}
+		}
+		else 
+		{
+			my_printf( "wake up source is export Others!\n" ); 
+		}
+	}
+
+	#ifdef FRAME_PLATFORM_FULLY_AUTO_ON        //全自动平台
+	else if( pin == M_KEY_CLOSE_GPIO_PIN )
+	{
+		my_printf("Wakeup is close button!\n");	
+		App_GUI_SetSysWakeupType( E_WAKE_CLOSE_BUTTON );
+		App_GUI_SetSysSleepSts( false );			
+	}
+	else if( pin == M_KEY_OPEN_GPIO_PIN )
+	{	
+		my_printf("Wakeup is open button!\n");
+		App_GUI_SetSysWakeupType( E_WAKE_OPEN_BUTTON );
+		App_GUI_SetSysSleepSts( false );			
+	}
+	#elif defined FRAME_PLATFORM_HALF_AUTO_ON  //半自动平台
+	else if( pin == M_BUTTON_REGISTER_GPIO_PIN )  //注册键
+	{	
+		my_printf("Wakeup is register button!\n");
+		App_GUI_SetSysWakeupType( E_WAKE_REGISTER_BUTTON );
+		App_GUI_SetSysSleepSts( false );			
+	}
+	#endif
+
+    #ifdef HANDLER_LEFT_ON
+	else if( pin == M_HANDLE_LEFT_GPIO_PIN )
+	{
+		my_printf("Wakeup is left handle!\n");	
+		App_GUI_SetSysWakeupType( E_WAKE_LEFT_HANDLER );
+		App_GUI_SetSysSleepSts( false );	
+	}
+	#endif
+    #ifdef HANDLER_MIDDLE_ON
+	else if( pin == M_HANDLE_MIDDLE_GPIO_PIN )
+	{
+		my_printf("Wakeup is middle handle!\n");	
+		App_GUI_SetSysWakeupType( E_WAKE_MIDDLE_HANDLER );
+		App_GUI_SetSysSleepSts( false );	
+	}
+	#endif
+    #ifdef HANDLER_RIGHT_ON
+	else if( pin == M_HANDLE_RIGHT_GPIO_PIN )
+	{
+		my_printf("Wakeup is right handle!\n");	
+		App_GUI_SetSysWakeupType( E_WAKE_RIGHT_HANDLER );
+		App_GUI_SetSysSleepSts( false );	
+	}
+	#endif
+    #if defined LOCK_BODY_218_MOTOR || defined LOCK_BODY_AUTO_MOTOR
+	else if( pin == M_LATCH_GPIO_PIN )  //斜舌动作
+	{
+		if( 1 == App_GUI_GetSysSleepSts() )
+		{
+			my_printf("Wakeup is LATHC!\n");	
+			App_GUI_SetSysWakeupType( E_WAKE_MOTOR_LATCH );
+			App_GUI_SetSysSleepSts( false );	 
+		}
+		DRV_Motor218_PinSenseHandler( pin );  //中断信号处理
+	}
+	else if( pin == M_BOLT_GPIO_PIN )   //主舌动作
+	{
+		if(App_GUI_GetSysWakeupType()!=E_WAKE_HANDLE_TRY) //避免重复触发
+		{
+			if( 1 == App_GUI_GetSysSleepSts() )
+			{
+				my_printf("Wakeup is BOLT!\n");	
+				App_GUI_SetSysWakeupType( E_WAKE_MOTOR_BOLT );
+				App_GUI_SetSysSleepSts( false );	 
+			} 
+			DRV_Motor218_PinSenseHandler( pin );  //中断信号处理			
+		}
+	}
+	#endif
+    #ifdef LOCK_BODY_216_MOTOR
+	else if( pin == M_FAM_TRIGGER_GPIO_PIN )      //三角舌动作
+	{
+		 bool btp =0;
+		 if( 1 == App_GUI_GetSysSleepSts() )
+		 {
+			 my_printf("Wakeup is TRIGGER!\n");	
+			 App_GUI_SetSysWakeupType( E_WAKE_MOTOR_TRIGGER );
+			 App_GUI_SetSysSleepSts( false );	
+			 btp = 1;		 
+		 }
+		 DRV_Motor216_PinSenseHandler( pin, btp );  //中断信号处理
+	}
+	#endif
+	else 
+	{
+		my_printf("Wakeup is pin others!\r\n");	
+		App_GUI_SetSysWakeupType( E_WAKE_OTHERS );
+		App_GUI_SetSysSleepSts( false );	
+	}
+
+//	#if LOCK_PROJECT_CHIP ==LOCK_PROJECT_RTL8762 
+//	if(App_GUI_GetSysSleepSts())//确认本次是否唤醒
+//	{
+//		DRV_GpioSleep();
+//	}
+//	else
+//	{
+//		APP_TaskSendMsg();/* Send msg to app task */
+//	}
+//	#endif	
+	
+}
+
+/*********************************************************************************************************************
+* Function Name :  SystemWakeupPin_ISR_Enable
+* Description   :  引脚中断配置使能
+* Para          :  none 
+* Return        :  none 
+*********************************************************************************************************************/
+void  SystemWakeupPin_ISR_Enable( void )
+{
+    //my_printf("SystemWakeupPin_ISR_Enable()\n");	
+
+	/*------触摸板唤醒------*/
+	DRV_GpioInterruptEnable(M_EXPORT_INT_GPIO_PIN,DRV_GPIO_HITOLO, WakeupISRhandler);
+
+	#ifdef FRAME_PLATFORM_FULLY_AUTO_ON        //全自动平台
+	/*----门内上锁键唤醒----*/
+	DRV_GpioInterruptEnable(M_KEY_CLOSE_GPIO_PIN,DRV_GPIO_HITOLO, WakeupISRhandler);
+
+	/*----门内解锁键唤醒----*/
+	DRV_GpioInterruptEnable(M_KEY_OPEN_GPIO_PIN,DRV_GPIO_HITOLO, WakeupISRhandler);
+	
+	#elif defined FRAME_PLATFORM_HALF_AUTO_ON  //半自动平台 
+	/*------注册键唤醒------*/
+	DRV_GpioInterruptEnable(M_BUTTON_REGISTER_GPIO_PIN,DRV_GPIO_HITOLO, WakeupISRhandler);
+	#endif
+
+	#ifdef HANDLER_LEFT_ON
+	/*-----把手左唤醒-------*/
+	DRV_GpioInterruptEnable(M_HANDLE_LEFT_GPIO_PIN,DRV_GPIO_HITOLO, WakeupISRhandler);
+	#endif
+  
+	#ifdef HANDLER_MIDDLE_ON
+	/*-----把手左唤醒-------*/
+	DRV_GpioInterruptEnable(M_HANDLE_MIDDLE_GPIO_PIN,DRV_GPIO_LOTOHI, WakeupISRhandler);
+	#endif
+
+	#ifdef HANDLER_RIGHT_ON
+	/*-----把手右唤醒-------*/
+	DRV_GpioInterruptEnable(M_HANDLE_RIGHT_GPIO_PIN,DRV_GPIO_HITOLO, WakeupISRhandler);
+	#endif
+}
+
+/*********************************************************************************************************************
+* Function Name :  SystemWakeupPin_ISR_Disable
+* Description   :  引脚中断配置失能
+* Para          :  none 
+* Return        :  none 
+*********************************************************************************************************************/
+void SystemWakeupPin_ISR_Disable( void )
+{
+      my_printf("SystemWakeupPin_ISR_Disable()\n");	
+   /*------触摸板唤醒------*/
+	  DRV_GpioInterruptDisable( M_EXPORT_INT_GPIO_PIN );
+	
+      #ifdef FRAME_PLATFORM_FULLY_AUTO_ON        //全自动平台	
+   /*----门内上锁键唤醒----*/
+	  DRV_GpioInterruptDisable( M_KEY_CLOSE_GPIO_PIN );
+	
+   /*----门内解锁键唤醒----*/
+	  DRV_GpioInterruptDisable( M_KEY_OPEN_GPIO_PIN );
+	
+	  #elif defined FRAME_PLATFORM_HALF_AUTO_ON  //半自动平台 
+   /*----注册键唤醒--------*/
+	   DRV_GpioInterruptDisable( M_BUTTON_REGISTER_GPIO_PIN );
+	  #endif
+   /*-----把手霍尔左唤醒---*/
+	  #ifdef HANDLER_LEFT_ON
+	  DRV_GpioInterruptDisable( M_HANDLE_LEFT_GPIO_PIN );
+	  #endif
+	
+   /*-----把手中霍尔唤醒---*/
+	  #ifdef HANDLER_MIDDLE_ON
+	  DRV_GpioInterruptDisable( M_HANDLE_MIDDLE_GPIO_PIN );
+	  #endif
+	
+   /*-----把手右霍尔唤醒---*/
+	  #ifdef HANDLER_RIGHT_ON
+	  DRV_GpioInterruptDisable( M_HANDLE_RIGHT_GPIO_PIN );
+      #endif
+	 /*--------the end-------*/
+} 
+ 
+ 
+/*-------------------------------------------------THE FILE END-----------------------------------------------------*/
+
+
+

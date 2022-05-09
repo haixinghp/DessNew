@@ -1,0 +1,525 @@
+/********************************************************************************************************************
+ * @file:      DRV_GT316L.c
+ * @author:    gushengchi
+ * @version:   V01.00
+ * @date:      2021-07-28
+ * @brief:     触摸芯片GT316L芯片  IIC通信    
+ * @ChangeList:  01. 初版
+*********************************************************************************************************************/
+  
+/*-------------------------------------------------文件包含---------------------------------------------------------*/
+#include  <string.h>
+#include "DRV_GT316L.h" 
+#include "LockConfig.h"
+/*-------------------------------------------------宏定义-----------------------------------------------------------*/
+#define  GT316L_ADDR              CFG_TOUCH_DEVICE_ADDR 
+#define  GT316L_CHANNEL           ((DRV_IIC_CHANNEL_E)CFG_TOUCH_IIC_CHANNEL)  //IIC驱动的通道 
+
+#define  GT316_REG_00             0x00
+#define  GT316_REG_01             0x01
+#define  GT316_REG_02             0x02
+#define  GT316_REG_03             0x03
+#define  GT316_REG_04             0x04
+#define  GT316_REG_05             0x05
+#define  GT316_REG_CFG		      0x06	
+#define  GT316_REG_07             0x07
+#define  GT316_REG_SET_TIME		  0x08	
+#define  GT316_REG_09             0x09
+#define  GT316_REG_0A		      0x0A	
+#define  GT316_REG_0B		      0x0B	
+#define  GT316_REG_0C		      0x0C	
+
+#define  GT316_REG_10H		      0x10	  
+#define  GT316_REG_30H		      0x30	 //PWMOUT-1
+#define  GT316_REG_31H		      0x31	 //PWMOUT-2
+#define  GT316_REG_32H		      0x32   //PWMOUT-3
+#define  GT316_REG_33H		      0x33   //PWMOUT-4
+#define  GT316_REG_34H		      0x34   //PWMOUT POLO
+/*-------------------------------------------------枚举定义---------------------------------------------------------*/
+//typedef enum
+//{
+//   EM_DIR_OUT = HW_TOUCH_PIN_DIR_OUT, 	
+//   EM_DIR_IN  = HW_TOUCH_PIN_DIR_IN , 			
+//}GT316L_IO_DIR_E;
+
+/*-------------------------------------------------常量定义---------------------------------------------------------*/
+static const uint8_t  KeySensitivity[ 16 ] =      
+{ 	
+	HW_TOUCH_SIN_01_SENSITIVITY, 
+	HW_TOUCH_SIN_02_SENSITIVITY, 
+	HW_TOUCH_SIN_03_SENSITIVITY, 
+	HW_TOUCH_SIN_04_SENSITIVITY,
+	HW_TOUCH_SIN_05_SENSITIVITY, 
+	HW_TOUCH_SIN_06_SENSITIVITY, 
+	HW_TOUCH_SIN_07_SENSITIVITY, 
+	HW_TOUCH_SIN_08_SENSITIVITY, 
+	HW_TOUCH_SIN_09_SENSITIVITY, 
+	HW_TOUCH_SIN_10_SENSITIVITY, 
+	HW_TOUCH_SIN_11_SENSITIVITY, 
+	HW_TOUCH_SIN_12_SENSITIVITY, 
+	HW_TOUCH_SIN_13_SENSITIVITY,
+	HW_TOUCH_SIN_14_SENSITIVITY, 
+	HW_TOUCH_SIN_15_SENSITIVITY, 
+	HW_TOUCH_SIN_16_SENSITIVITY, 
+
+};  //按键灵敏度 0x03--0x3f
+
+/*-------------------------------------------------全局变量定义-----------------------------------------------------*/         
+
+
+/*-------------------------------------------------局部变量定义-----------------------------------------------------*/
+typedef union
+{
+	uint8_t  para;
+	struct
+	{
+		uint8_t   SEN_IDLE_TIME       :4;   
+		uint8_t   INT_MODE            :1;   
+		uint8_t   PWM_EN              :1;   
+		uint8_t   MULTI_MODE          :1;   
+		uint8_t   SOFT_RST            :1; 
+	}Bit;
+}REG06_CONFIG_U;
+
+typedef union
+{
+	uint8_t  para;
+	struct
+	{
+		uint8_t   EXP_MODE            :1;   
+		uint8_t   EXP_EN              :1;   
+		uint8_t   EXP_TIME            :3;   
+		uint8_t   UNKNOW              :3;   
+	}Bit;
+}REG07_CONFIG_U;
+
+typedef union
+{
+	uint8_t  para;
+	struct
+	{
+		uint8_t   CAL_TIME            :4;   
+		uint8_t   TOUCH_PERIOD        :3;   
+		uint8_t   UNKNOW              :1;   
+	}Bit;
+}REG08_CONFIG_U;
+
+typedef union
+{
+	uint8_t  para;
+	struct
+	{
+		uint8_t   SEMSITVITY          :6;      //0x03-->0x3f  high-->low
+		uint8_t   UNKNOW              :2;   
+	}Bit;
+}REG10TO1F_CONFIG_U;
+
+typedef union
+{
+	uint8_t  para;
+	struct
+	{
+		uint8_t   PWMOUT_POL1         :1;     //0-active LOW   1-active HIGH
+        uint8_t   PWMOUT_POL2         :1;   
+		uint8_t   PWMOUT_POL3         :1;     
+        uint8_t   PWMOUT_POL4         :1;   			
+		uint8_t   UNKNOW              :4;   
+	}Bit;
+}REG34H_CONFIG_U;
+
+
+/*-------------------------------------------------函数声明---------------------------------------------------------*/
+ 
+
+/*-------------------------------------------------函数定义---------------------------------------------------------*/
+ 
+
+/*********************************************************************************************************************
+* Function Name :  DRV_GT316L_SendBytes()
+* Description   :  发送多个数据
+* Para          :  startAddr- 寄存器起始地址  pdata- 待写入数据指针  len- 数据长度
+* Return        :  I2C_FALSE= 发送失败  I2C_TRUE= 发送成功
+*********************************************************************************************************************/
+static uint8_t DRV_GT316L_SendBytes( uint8_t startAddr, const uint8_t *pdata, uint16_t len )
+{
+  DRV_IIC_ERROR_E ret = DRV_IICWrite( GT316L_CHANNEL, GT316L_ADDR, startAddr, pdata, len );	
+	
+  if( ret != I2C_SUCCESS )	
+  {
+	 return I2C_FALSE; 
+  }
+  return I2C_TRUE; 
+}
+ 
+/*********************************************************************************************************************
+* Function Name :  DRV_GT316L_SendBytes()
+* Description   :  读取多个数据
+* Para          :  startAddr- 寄存器起始地址  pdata- 待读取数据指针  len- 数据长度
+* Return        :  I2C_FALSE= 读取失败  I2C_TRUE= 读取成功
+*********************************************************************************************************************/
+static uint8_t DRV_GT316L_ReadBytes( uint8_t startAddr, uint8_t *pdata, uint16_t len )
+{
+  DRV_IIC_ERROR_E ret = DRV_IICReadByte( GT316L_CHANNEL, GT316L_ADDR, startAddr, pdata, len );	
+	
+  if( ret != I2C_SUCCESS )	
+  {
+	 return I2C_FALSE; 
+  }
+  return I2C_TRUE; 
+}
+ 
+/*********************************************************************************************************************
+* Function Name :  DRV_GT316L_FileInit()
+* Description   :  功能文件初始化
+* Para          :  无
+* Return        :  void
+*********************************************************************************************************************/
+void DRV_GT316L_FileInit( void ) 
+{
+	uint8_t para =0;
+	uint8_t dataBuf[16] = {0};
+
+   /*------寄存器0x04&0x05--------*/
+	GT316PinDefine_U  pinDir;
+	pinDir.Bit.Pin_SinPwm_01 = HW_TOUCH_SIN_01_DIR;
+	pinDir.Bit.Pin_SinPwm_02 = HW_TOUCH_SIN_02_DIR;
+	pinDir.Bit.Pin_SinPwm_03 = HW_TOUCH_SIN_03_DIR;
+	pinDir.Bit.Pin_SinPwm_04 = HW_TOUCH_SIN_04_DIR;
+	pinDir.Bit.Pin_SinPwm_05 = HW_TOUCH_SIN_05_DIR;
+	pinDir.Bit.Pin_SinPwm_06 = HW_TOUCH_SIN_06_DIR;
+	pinDir.Bit.Pin_SinPwm_07 = HW_TOUCH_SIN_07_DIR;
+	pinDir.Bit.Pin_SinPwm_08 = HW_TOUCH_SIN_08_DIR;
+	pinDir.Bit.Pin_SinPwm_09 = HW_TOUCH_SIN_09_DIR;
+	pinDir.Bit.Pin_SinPwm_10 = HW_TOUCH_SIN_10_DIR;
+	pinDir.Bit.Pin_SinPwm_11 = HW_TOUCH_SIN_11_DIR;
+	pinDir.Bit.Pin_SinPwm_12 = HW_TOUCH_SIN_12_DIR;
+	pinDir.Bit.Pin_SinPwm_13 = HW_TOUCH_SIN_13_DIR;
+	pinDir.Bit.Pin_SinPwm_14 = HW_TOUCH_SIN_14_DIR;
+	pinDir.Bit.Pin_SinPwm_15 = HW_TOUCH_SIN_15_DIR;
+	pinDir.Bit.Pin_SinPwm_16 = HW_TOUCH_SIN_16_DIR;
+	memcpy( &dataBuf[ 0 ], pinDir.tab, 2 ); 
+	uint8_t tp1 = 0;
+	tp1 += 2;
+	
+   /*------寄存器0x06------------*/
+    REG06_CONFIG_U  config ;
+	config.Bit.SEN_IDLE_TIME = 0;
+	config.Bit.INT_MODE = 1;
+	config.Bit.PWM_EN = 1;
+	config.Bit.MULTI_MODE = 0;
+    config.Bit.SOFT_RST = 0;
+	dataBuf[ tp1++ ] = config.para;
+	
+   /*------寄存器0x07------------*/
+    REG07_CONFIG_U  regSet_07 ={0};
+	regSet_07.Bit.EXP_MODE = 0;
+	regSet_07.Bit.EXP_EN = 1;
+	regSet_07.Bit.EXP_TIME = 3;
+	dataBuf[ tp1++ ] = regSet_07.para;
+	
+   /*------寄存器0x08------------*/
+	REG08_CONFIG_U  regSet_08 ={0};
+	regSet_08.Bit.CAL_TIME = 3;
+	regSet_08.Bit.TOUCH_PERIOD = 1;
+	dataBuf[ tp1++ ] = regSet_08.para;
+	
+   /*------寄存器0x09------------*/
+	para = 0;
+	dataBuf[ tp1++ ] = para;
+ 
+   /*------寄存器0x0A------------*/
+	para = 2;
+	dataBuf[ tp1++ ] = para;
+	
+   /*------寄存器0x0B------------*/
+	para = 0;
+	dataBuf[ tp1++ ] = para;
+	DRV_GT316L_SendBytes( GT316_REG_04, dataBuf, tp1 );
+	
+	/*------按键灵敏度设置 0x10-0x1F-------*/
+	REG10TO1F_CONFIG_U  sensitivity[ 16 ];
+	for(uint8_t i=0; i<16; i++ )
+	{
+		sensitivity[ i ].Bit.SEMSITVITY = KeySensitivity[ i ];
+		dataBuf[ i ] = sensitivity[ i ].para;
+	}
+	DRV_GT316L_SendBytes( GT316_REG_10H, dataBuf, 16 );
+	
+	/*------寄存器0x34------------*/
+	REG34H_CONFIG_U  regSet_34;
+	regSet_34.para = 0;
+	regSet_34.Bit.PWMOUT_POL1 = 0;
+	regSet_34.Bit.PWMOUT_POL2 = 0;
+	regSet_34.Bit.PWMOUT_POL3 = 0;
+	regSet_34.Bit.PWMOUT_POL4 = 0;
+	DRV_GT316L_SendBytes( GT316_REG_34H, &regSet_34.para, 1 );
+	
+	return;
+} 
+
+/*********************************************************************************************************************
+* Function Name :  DRV_GT316L_SleepInit()
+* Description   :  休眠初始化
+* Para          :  无
+* Return        :  void
+*********************************************************************************************************************/
+void DRV_GT316L_SleepInit( void ) 
+{
+	uint8_t para =0;
+	uint8_t dataBuf[16] = {0};
+
+   /*------寄存器0x04&0x05--------*/
+	GT316PinDefine_U  pinDir;
+	pinDir.Bit.Pin_SinPwm_01 = HW_TOUCH_SIN_01_DIR;
+	pinDir.Bit.Pin_SinPwm_02 = HW_TOUCH_SIN_02_DIR;
+	pinDir.Bit.Pin_SinPwm_03 = HW_TOUCH_SIN_03_DIR;
+	pinDir.Bit.Pin_SinPwm_04 = HW_TOUCH_SIN_04_DIR;
+	pinDir.Bit.Pin_SinPwm_05 = HW_TOUCH_SIN_05_DIR;
+	pinDir.Bit.Pin_SinPwm_06 = HW_TOUCH_SIN_06_DIR;
+	pinDir.Bit.Pin_SinPwm_07 = HW_TOUCH_SIN_07_DIR;
+	pinDir.Bit.Pin_SinPwm_08 = HW_TOUCH_SIN_08_DIR;
+	pinDir.Bit.Pin_SinPwm_09 = HW_TOUCH_SIN_09_DIR;
+	pinDir.Bit.Pin_SinPwm_10 = HW_TOUCH_SIN_10_DIR;
+	pinDir.Bit.Pin_SinPwm_11 = HW_TOUCH_SIN_11_DIR;
+	pinDir.Bit.Pin_SinPwm_12 = HW_TOUCH_SIN_12_DIR;
+	pinDir.Bit.Pin_SinPwm_13 = HW_TOUCH_SIN_13_DIR;
+	pinDir.Bit.Pin_SinPwm_14 = HW_TOUCH_SIN_14_DIR;
+	pinDir.Bit.Pin_SinPwm_15 = HW_TOUCH_SIN_15_DIR;
+	pinDir.Bit.Pin_SinPwm_16 = HW_TOUCH_SIN_16_DIR;
+	memcpy( &dataBuf[ 0 ], pinDir.tab, 2 ); 
+	uint8_t tp1 = 0;
+	tp1 += 2;
+	
+   /*------寄存器0x06------------*/
+    REG06_CONFIG_U  config ;
+	config.Bit.SEN_IDLE_TIME = 6;
+	config.Bit.INT_MODE = 1;
+	config.Bit.PWM_EN = 0;
+	config.Bit.MULTI_MODE = 0;
+    config.Bit.SOFT_RST = 0;
+	dataBuf[ tp1++ ] = config.para;
+	
+   /*------寄存器0x07------------*/
+    REG07_CONFIG_U  regSet_07 ={0};
+	regSet_07.Bit.EXP_MODE = 0;
+	regSet_07.Bit.EXP_EN = 1;
+	regSet_07.Bit.EXP_TIME = 3;
+	dataBuf[ tp1++ ] = regSet_07.para;
+	
+   /*------寄存器0x08------------*/
+	REG08_CONFIG_U  regSet_08 ={0};
+	regSet_08.Bit.CAL_TIME = 3;
+	regSet_08.Bit.TOUCH_PERIOD = 1;
+	dataBuf[ tp1++ ] = regSet_08.para;
+	
+   /*------寄存器0x09------------*/
+	para = 0;
+	dataBuf[ tp1++ ] = para;
+ 
+   /*------寄存器0x0A------------*/
+	para = 2;
+	dataBuf[ tp1++ ] = para;
+	
+   /*------寄存器0x0B------------*/
+	para = 0;
+	dataBuf[ tp1++ ] = para;
+	DRV_GT316L_SendBytes( GT316_REG_04, dataBuf, tp1 );
+	
+	/*------按键灵敏度设置 0x10-0x1F-------*/
+	REG10TO1F_CONFIG_U  sensitivity[ 16 ];
+	for(uint8_t i=0; i<16; i++ )
+	{
+		sensitivity[ i ].Bit.SEMSITVITY = KeySensitivity[ i ];
+		dataBuf[ i ] = sensitivity[ i ].para;
+	}
+	DRV_GT316L_SendBytes( GT316_REG_10H, dataBuf, 16 );
+	
+	/*------寄存器0x34------------*/
+	REG34H_CONFIG_U  regSet_34;
+	regSet_34.para = 0;
+	regSet_34.Bit.PWMOUT_POL1 = 0;
+	regSet_34.Bit.PWMOUT_POL2 = 0;
+	regSet_34.Bit.PWMOUT_POL3 = 0;
+	regSet_34.Bit.PWMOUT_POL4 = 0;
+	DRV_GT316L_SendBytes( GT316_REG_34H, &regSet_34.para, 1 );
+
+}
+
+/*********************************************************************************************************************
+* Function Name :  DRV_GT316L_PwmOutputCtrl()
+* Description   :  PWM引脚输出控制
+* Para          :  channel - pwm输出通道   pwmVal - PWM占空比
+* Return        :  none
+*********************************************************************************************************************/
+void DRV_GT316L_PwmOutputCtrl( PWM_CHANNEL_E channel, uint8_t pwmVal )
+{
+	if( EM_PWUOUT_CH1 == channel )
+	{
+		DRV_GT316L_SendBytes( GT316_REG_30H, &pwmVal, 1 ); 
+	}
+	else if( EM_PWUOUT_CH2 == channel )
+	{ 
+		DRV_GT316L_SendBytes( GT316_REG_31H, &pwmVal, 1 ); 
+	}
+	else if( EM_PWUOUT_CH3 == channel )
+	{
+		DRV_GT316L_SendBytes( GT316_REG_32H, &pwmVal, 1 ); 
+	}
+	else if( EM_PWUOUT_CH4 == channel )
+	{
+		DRV_GT316L_SendBytes( GT316_REG_33H, &pwmVal, 1 ); 
+	}
+	return;
+}
+ 
+/*********************************************************************************************************************
+* Function Name :  DRV_GT316L_GetIICBusState()
+* Description   :  确认IIC总线的状态
+* Para          :  none
+* Return        :  0= 故障  1= 正常
+*********************************************************************************************************************/
+bool DRV_GT316L_GetIICBusState( void )
+{
+	uint8_t tmp = 0;
+    uint8_t ret = DRV_GT316L_ReadBytes( GT316_REG_00, &tmp, 1 );  
+	
+    if( I2C_FALSE == ret )
+	{
+		return 0;
+	}
+	
+	return 1;
+}
+
+/*********************************************************************************************************************
+* Function Name :  DRV_GT316L_GetKeyValue()
+* Description   :  获取按键值
+* Para          :  none
+* Return        :  键值
+*********************************************************************************************************************/
+KEY_VALUE_E DRV_GT316L_GetKeyValue( void )
+{
+	KEY_VALUE_E  keyVal = NONE_KEY;
+	uint8_t  kvalue[4] = {0};
+	uint8_t  ret;
+	
+	GT316PinDefine_U  pinState;
+
+	ret = DRV_GT316L_ReadBytes( GT316_REG_01, &kvalue[0], 1 );  //确认是否存在键值
+	if( I2C_FALSE == ret )   //读取通信失败
+	{
+		return NONE_KEY;
+	}
+	kvalue[0] &= 1<<0;       //根据对应位置改变左移步数
+	if( 0 == kvalue[0] )     //未检测到键值
+	{
+	    return NONE_KEY; 	
+	}
+	
+    ret = DRV_GT316L_ReadBytes( GT316_REG_02, &kvalue[0], 2 ); //获取具体键值状态
+	if( I2C_FALSE == ret )   //读取通信失败
+	{
+		return NONE_KEY;
+	}
+	(void)memcpy( pinState.tab, kvalue, 2 );
+	if( pinState.data == 0 ) //未检测到键值
+	{
+		return NONE_KEY;
+	}
+	 
+	uint8_t tp1 = 0;
+	if( 1 == pinState.Bit.Pin_SinPwm_01 ) 
+	{
+	   keyVal = EM_KEY_00;
+	   tp1++;	
+	}
+	if( 1 == pinState.Bit.Pin_SinPwm_02 ) 
+	{
+	   keyVal = EM_KEY_01;
+	   tp1++;	
+	}
+	if( 1 == pinState.Bit.Pin_SinPwm_03 ) 
+	{
+	   keyVal = EM_KEY_02;
+	   tp1++;	
+	}
+	if( 1 == pinState.Bit.Pin_SinPwm_04 ) 
+	{
+	   keyVal = EM_KEY_03;
+	   tp1++;	
+	}
+	if( 1 == pinState.Bit.Pin_SinPwm_05 ) 
+	{
+	   keyVal = EM_KEY_04;
+	   tp1++;	
+	}
+	if( 1 == pinState.Bit.Pin_SinPwm_06 ) 
+	{
+	   keyVal = EM_KEY_05;
+	   tp1++;	
+	}
+	if( 1 == pinState.Bit.Pin_SinPwm_07 ) 
+	{
+	   keyVal = EM_KEY_06;
+	   tp1++;	
+	}
+	if( 1 == pinState.Bit.Pin_SinPwm_08 ) 
+	{
+	   keyVal = EM_KEY_07;
+	   tp1++;	
+	}
+	if( 1 == pinState.Bit.Pin_SinPwm_09 ) 
+	{
+	   keyVal = EM_KEY_08;
+	   tp1++;	
+	}
+	if( 1 == pinState.Bit.Pin_SinPwm_10 ) 
+	{
+	   keyVal = EM_KEY_09;
+	   tp1++;	
+	}
+	if( 1 == pinState.Bit.Pin_SinPwm_11 ) 
+	{
+	   keyVal = EM_KEY_10;
+	   tp1++;	
+	}
+	if( 1 == pinState.Bit.Pin_SinPwm_12 ) 
+	{
+	   keyVal = EM_KEY_11;
+	   tp1++;	
+	}
+	if( 1 == pinState.Bit.Pin_SinPwm_13 ) 
+	{
+	   keyVal = EM_KEY_12;
+	   tp1++;	
+	}
+	if( 1 == pinState.Bit.Pin_SinPwm_14 ) 
+	{
+	   keyVal = EM_KEY_13;
+	   tp1++;	
+	}
+	if( 1 == pinState.Bit.Pin_SinPwm_15 ) 
+	{
+	   keyVal = EM_KEY_14;
+	   tp1++;	
+	}
+	if( 1 == pinState.Bit.Pin_SinPwm_16 ) 
+	{
+	   keyVal = EM_KEY_15;
+	   tp1++;	
+	}
+	
+	if( tp1 == 0 )
+	{
+	   keyVal = NONE_KEY;
+	}
+	else if( tp1 > 1)
+	{
+	   keyVal = NONE_KEY;
+	}
+ 	
+	return keyVal;
+}
+ 
+/*-------------------------------------------------THE FILE END-----------------------------------------------------*/
+

@@ -1,0 +1,1104 @@
+/*********************************************************************************************************************
+ * @file:        Finger.c
+ * @author:      fanshuyu
+ * @version:     V01.00
+ * @date:        2021-07-26
+ * @Description: 指纹/指静脉业务模块
+ * @ChangeList:  01. 初版
+*/
+/* 标准头文件 */
+
+
+/* 内部头文件 */
+#include "Finger.h"
+
+
+/* 外部头文件 */
+#include "Public.h"
+#include "Rijndael.h"
+#include "SystemTim.h"
+
+
+#include "System.h" 
+#include "../DRV/DRV_EXPORT/DRV_74HC4052.h"
+#include "../HAL/HAL_EXPORT/HAL_EXPORT.h"
+#include "../HAL/HAL_Voice/HAL_Voice.h"
+#include "../HAL/HAL_UART/HAL_UART.h"
+#include "..\HAL\HAL_RTC\HAL_RTC.h"
+#include "DRV_GPIO.h"
+
+#include "App_LED.h" 
+
+/*********************** 外部声明变量和函数************************/
+/**************    为了减少耦合，后续逐步去除外部声音**********/
+
+
+/*************************  0 内部使用宏定义*************************/
+#ifdef RIJNDAEL_EBC_ENCRY_FIXEDLEN
+#define FINGER_AES_ENCRY_FIXEDLEN RIJNDAEL_EBC_ENCRY_FIXEDLEN
+#else
+#define FINGER_AES_ENCRY_FIXEDLEN 16
+#endif
+
+#define DRV_FINGER_UTRT_SWITCH_ON       DRV_74HC0452_UartSelect(HW_74HC4052_UART_FINGER)
+#define DRV_FINGER_UTRT_SWITCH_OFF      DRV_74HC0452_UartSelect(HW_74HC4052_UART_OFF)
+
+/* 测试宏: 指纹模组交互是否加密  0: 加密  1 : 不加密 */
+#define TEST_NO_ENCRY 0
+
+/* 测试宏: 指纹业务打印接口封装  0: 不打印  1 : 打印 */
+#define TEST_DEBUG_PRINTF 1
+
+/*****************************  1 静态变量*****************************/
+static uint8_t s_u8PowerUp;                  // 上电标记，0: 未上电 非0: 上电记录实际指纹上电信息，比如0x55、0x66、0x68
+static uint8_t s_u8PowerUpFlag = 0;         // 指纹模组记录
+static uint8_t s_u8ProtocalFlag = 0;         // 指纹模组记录
+static uint8_t s_u8PowerDownFlag = 0;        // 指纹模组睡眠记录
+static uint8_t s_acFingerAesRootKey[FINGER_AES_ENCRY_FIXEDLEN];//通讯根秘钥
+static uint8_t s_acFingerAesRandomKey[FINGER_AES_ENCRY_FIXEDLEN];// AES 加密随机秘钥
+
+static volatile FingerTxType_S s_stFingerTx;    // 发送包结构
+static volatile FingerRxType_S s_stFingerRx;    //接收包结构
+
+static volatile uint8_t s_acFingerTxBuf[RX_BUFFER_SIZE];    // 发送缓存
+static volatile FingerRxInfo_S s_stFingerRxInfo;            // 接收缓存及信息
+
+static FingerRecMsgType_S s_stFingerMSG;        //指纹模组RT消息数据包
+
+/* *** 模块工作状态***  记录当前的流程、指令及实际工作时间 */
+static FingerFlowParamMap_S s_stFlowWorkRecord; 
+/* 指纹工作流程映射表: 指纹交互流程对应的PID指令码及需要的最大工作时间 */
+static const FingerFlowParamMap_S s_astFlowParamMap[EM_FINGER_FLOW_ALL] =
+{
+    {EM_FINGER_FLOW0_GET,           FINGER_GETIMG,          3,      3       ,EM_FINGER_FLOW_NONE},
+    {EM_FINGER_FLOW1_CONVERT,       FINGER_IMG2CHAR,        3,      4       ,EM_FINGER_FLOW_NONE},
+    {EM_FINGER_FLOW2_SEARCH,        FINGER_SEARCH,          3,      8       ,EM_FINGER_FLOW_NONE},
+    {EM_FINGER_FLOW3_REG,           FINGER_STORCHAR,        3,      6       ,EM_FINGER_FLOW_NONE},
+    {EM_FINGER_FLOW4_DEL,           FINGER_DELETCHAR,       3,      7       ,EM_FINGER_FLOW_NONE},
+    {EM_FINGER_FLOW5_EMPTY,         FINGER_EMPTY,           5,      3       ,EM_FINGER_FLOW_NONE},
+    {EM_FINGER_FLOW6_MERGE,         FINGER_REGMODEL,        3,      3       ,EM_FINGER_FLOW_NONE},
+    {EM_FINGER_FLOW7_AESKEY,        FINGER_AESKEY,          2,      19      ,EM_FINGER_FLOW_NONE},
+    {EM_FINGER_FLOW8_RANDOM,        FINGER_RANDOM,          3,      19      ,EM_FINGER_FLOW_NONE},
+    {EM_FINGER_FLOW9_SLIDE,         FINGER_SLIDER,          3,      4       ,EM_FINGER_FLOW_NONE},
+    {EM_FINGER_FLOW10_AGING,        FINGER_AGING,           3,      3       ,EM_FINGER_FLOW_NONE},
+    {EM_FINGER_FLOW11_AESKEY_V2,    FINGER_AESKEY_V2,       2,      19      ,EM_FINGER_FLOW_NONE},
+
+    //新增协议
+    {EM_FINGER_FLOW_EX0_GET,        FINGER_GETIMG2,         10,     3       ,EM_FINGER_FLOW_NONE},
+    {EM_FINGER_FLOW_EX1_SLEEP,      FINGER_SLEEP,           10,     3       ,EM_FINGER_FLOW_NONE},
+
+};
+
+/***************************** 2  静态函数*****************************/
+
+/****************************************************************************** 
+* 函数名：finger_my_printf
+* 功 能：内部调试打印信息
+* 输 入：void 
+* 输 出：void
+* 返 回：void
+*/ 
+void finger_my_printf(uint8_t u8PrintFlag, uint8_t* pu8Data, uint32_t u32Datalen)
+{
+#if TEST_DEBUG_PRINTF
+    switch(u8PrintFlag)
+    {
+        case 0:{my_printf("0x%x-0x%x tick:%d - UartTx :", s_u8PowerUp, s_u8ProtocalFlag, SystemTick);} break;
+        case 1:{my_printf("tick:%d -- En UartTx :", SystemTick);} break;
+        case 2:{my_printf("tick:%d  UartRx :", SystemTick);} break;
+        case 3:{my_printf("tick:%d -- De UartRx :", SystemTick);} break;
+        default: return;
+    }
+    for (uint16_t i = 0; i < u32Datalen; i++){ my_printf(" 0x%02x", pu8Data[i]); }
+    my_printf("\n");
+#endif
+    return;
+}
+
+/****************************************************************************** 
+* 函数名：finger_status_return_zero
+* 功 能：模块协议状态归零
+* 输 入：bool _bIsForce  false-等u8time为0复位 true-强制复位 
+* 输 出：void
+* 返 回：void
+*/ 
+void finger_status_return_zero(bool _bIsForce)
+{
+    if(_bIsForce
+        || (0 == s_stFlowWorkRecord.u8Time && s_stFlowWorkRecord.u8Flow != EM_FINGER_FLOW_NONE)
+        || FINGER_REV_TYPE_SUCEFULL == s_stFingerRx.report)
+    {
+        if(0 == s_stFlowWorkRecord.u8Time && EM_FINGER_FLOW11_AESKEY_V2 == s_stFlowWorkRecord.u8Flow)
+        {
+            s_stFingerRx.AckCode = FINGER_ACK_PROTOCAL_TIMEOUT; 
+        }
+        if(0 == s_stFlowWorkRecord.u8Time && s_stFlowWorkRecord.u8Flow != EM_FINGER_FLOW_NONE)
+        {
+            s_stFingerRx.AckCode = FINGER_ACK_ERR; 
+        }
+        
+        s_stFlowWorkRecord.u8Flow = EM_FINGER_FLOW_NONE;
+        s_stFlowWorkRecord.u8TxFlag = s_stFlowWorkRecord.u8Flow;
+        s_stFlowWorkRecord.u8Pid = FINGER_NO_PID;
+        s_stFlowWorkRecord.u8Time = 0; 
+        s_stFlowWorkRecord.u16Size = 0; 
+    }
+    return;
+}
+
+/****************************************************************************** 
+* 函数名：finger_uart_rx_handler
+* 功 能：finger 串口接收中断
+* 输 入：void 
+* 输 出：void
+* 返 回：uint8_t
+*/ 
+static uint8_t finger_uart_rx_handler(void)
+{
+    uint8_t finger_buf_com=0;
+
+    if( E_FINGER_UART != HAL_Uart_GetCurDeviceType( FINGER_UART_COM ))
+	{
+		return 0;
+	}
+    /* 当回调类型为APP_UART_DATA_READY 且接收串口数据正常时才继续业务接收 */
+	while(UART_SUCCESS == HAL_Uart_PopByteFromQueue( FINGER_UART_COM, &finger_buf_com ))
+    {
+        /*0x55 指纹头，数据段直接读取，不需要读取加密头*/
+        if(FINEGER_READY_SIGNAL_NOAES == s_u8PowerUp)
+		{
+			s_stFingerRxInfo.acRxBuf[s_stFingerRxInfo.u16RxCnt++] =  finger_buf_com; 
+			return 1;
+		}
+        /*
+                    根据缓存计数来确认需要的缓存进行相应的读取 
+                    回调内会判定头4个字节，即加密头的前4字节
+                */
+        switch(s_stFingerRxInfo.u16RxCnt)
+        {
+            /* 加密头第1 字节 */
+            case 0:
+                /* 无缓存队列时，确认芯片已推送上电信号，并且找加密头的0xAA */
+                if(s_u8PowerUp > 0 && finger_buf_com == (uint8_t)(FINGER_ENCRY_HEAD >> 8))
+                {
+                    s_stFingerRxInfo.acRxBuf[s_stFingerRxInfo.u16RxCnt++] = finger_buf_com;
+                }
+                else if(0 == s_u8PowerUp && (FINEGER_READY_SIGNAL_NOAES == finger_buf_com || FINEGER_READY_SIGNAL_AES == finger_buf_com || FINEGER_READY_SIGNAL_AES2 == finger_buf_com) || FINEGER_READY_SIGNAL_AES3 == finger_buf_com)
+                {
+                    /* 确保中间参数完全重置 */
+                    memset((void*)&s_stFingerRxInfo, 0, sizeof(s_stFingerRxInfo));
+
+                    /* 供电标记为1，确认收到上电信号 */
+                    s_u8PowerUpFlag = s_u8PowerUp = finger_buf_com;
+                    if(0 == s_u8ProtocalFlag) s_u8ProtocalFlag = FINGER_PROTOCAL_V1;
+                    my_printf("#FINGER# s_u8PowerUp = 0x%x SystemTick = %d\n", s_u8PowerUp, SystemTick);
+
+                    /* 结束初始化 */
+                    s_stFlowWorkRecord.u8Time = 0;
+                }
+                else
+                {
+                    memset((void*)&s_stFingerRxInfo, 0, sizeof(s_stFingerRxInfo));
+                }
+                break;
+                
+            /* 加密头第2 字节 */
+            case 1:
+                /* 当缓存队列为1时，判定第一个缓存是否为0xAA，且最新的一个字节头是否为0x66 */
+                if(finger_buf_com == (uint8_t)(FINGER_ENCRY_HEAD))
+                {
+                    s_stFingerRxInfo.acRxBuf[s_stFingerRxInfo.u16RxCnt++] = finger_buf_com;
+                }
+                else
+                {
+                    memset((void*)&s_stFingerRxInfo, 0, sizeof(s_stFingerRxInfo));
+                }
+                break;
+                
+            /* 加密头第3 字节 */
+            case 2:
+                if((finger_buf_com == FINGER_ENCRY_YES) || (finger_buf_com == FINGER_ENCRY_NO))
+                {
+                    s_stFingerRxInfo.acRxBuf[s_stFingerRxInfo.u16RxCnt++] = finger_buf_com;
+                }
+                else
+                {
+                    memset((void*)&s_stFingerRxInfo, 0, sizeof(s_stFingerRxInfo));
+                }
+                break;
+                
+            /* 加密头第4 字节 */
+            case 3:
+                /*
+                                    第4个字节为加密数据长度 ，加密数据长度为16N(N>0)
+                                    受缓存大小影响，N有上限，即N max = (SIZE-4)/16
+                                    0 == finger_buf_com % FINGER_AES_ENCRY_FIXEDLEN) 16的倍数判定暂时去掉，模组返回非倍数
+                                */
+                if((finger_buf_com > 0) && (finger_buf_com <= (RX_BUFFER_SIZE-4)))
+                {
+                    s_stFingerRxInfo.acRxBuf[s_stFingerRxInfo.u16RxCnt++] = finger_buf_com;
+                }
+                else
+                {
+                    memset((void*)&s_stFingerRxInfo, 0, sizeof(s_stFingerRxInfo));
+                }
+                break;
+                
+            /* 协议数据段 */
+            default:
+                /* 加密数据接收 */
+                s_stFingerRxInfo.acRxBuf[s_stFingerRxInfo.u16RxCnt++] =  finger_buf_com;
+                break;
+        }
+		
+		if ((FINEGER_READY_SIGNAL_NOAES != s_u8PowerUp && FINGER_ENCRY_YES == s_stFingerRxInfo.acRxBuf[FINGER_ENCRY_FLAG_INDEX] && s_stFingerRxInfo.u16RxCnt == FINGER_ENCRY_FIXED_LEN + FINGER_AES_ENCRY_FIXEDLEN)
+			|| (FINEGER_READY_SIGNAL_NOAES != s_u8PowerUp 
+					&& (FINGER_ENCRY_NO == s_stFingerRxInfo.acRxBuf[FINGER_ENCRY_FLAG_INDEX] && s_stFingerRxInfo.u16RxCnt == FINGER_ENCRY_FIXED_LEN + s_stFingerRxInfo.acRxBuf[FINGER_ENCRY_LEN_INDEX])
+	#if !TEST_NO_ENCRY
+					&& (EM_FINGER_FLOW5_EMPTY == s_stFlowWorkRecord.u8TxFlag || EM_FINGER_FLOW7_AESKEY == s_stFlowWorkRecord.u8TxFlag 
+					    || EM_FINGER_FLOW11_AESKEY_V2 == s_stFlowWorkRecord.u8TxFlag  || EM_FINGER_FLOW8_RANDOM == s_stFlowWorkRecord.u8TxFlag)
+	#endif
+				)
+			|| (FINEGER_READY_SIGNAL_NOAES == s_u8PowerUp && s_stFingerRxInfo.u16RxCnt >= FINGER_PRO_FIXED_LEN 
+					&& s_stFingerRxInfo.u16RxCnt  == (((uint16_t)(s_stFingerRxInfo.acRxBuf[FINGER_PRO_LEN_INDEX] << 8)) + ((uint16_t)(s_stFingerRxInfo.acRxBuf[FINGER_PRO_LEN_INDEX+1])) + FINGER_PRO_FIXED_LEN))
+
+			)	
+		{
+			 return 1;
+		}	
+	}
+
+    return 0;
+}
+
+/****************************************************************************** 
+* 函数名：finger_uart_rx  (原 PS1802_ReadPS1802Data)
+* 功 能：应答包串口数据处理及校验
+* 输 入：void
+* 输 出：void
+* 返 回：void
+*/
+static void finger_uart_rx(void)
+{
+	if( 0 != finger_uart_rx_handler() )
+    {
+                
+        /*  处理接收 - 指纹头应答，处理完成  */
+        if (s_stFingerRx.report == FINGER_REV_TYPE_SUCEFULL)
+        {
+            s_stFingerRx.report = FINGER_REV_TYPE_EMPTY;
+            if ((s_stFingerRx.AckCode == FINGER_ACK_OK && s_stFingerRx.PID == FINGER_PRO_ACK)
+                || ((s_stFingerRx.AckCode == FINGER_ACK_OK || s_stFingerRx.AckCode == FINGER_ACK_NOSEARCH)  && s_stFingerRx.PID == FINGER_PRO_ACK))
+            {
+                (void)finger_status_return_zero(true);
+            }
+        }
+        
+        /* 
+                判定满足格式 : 缓存长度 =  加密头的长度+ 协议数据长度位记录长度
+                实际加密数据是16的倍数，但FINGER_ENCRY_LEN_INDEX 在指纹模组依然传递待加密数据的实际长度，
+                所以加密数据需要跳过协议段，判定16的倍数来接收
+            */
+
+        if ((FINEGER_READY_SIGNAL_NOAES != s_u8PowerUp && FINGER_ENCRY_YES == s_stFingerRxInfo.acRxBuf[FINGER_ENCRY_FLAG_INDEX] && s_stFingerRxInfo.u16RxCnt == FINGER_ENCRY_FIXED_LEN + FINGER_AES_ENCRY_FIXEDLEN)
+            || (FINEGER_READY_SIGNAL_NOAES != s_u8PowerUp 
+                    && (FINGER_ENCRY_NO == s_stFingerRxInfo.acRxBuf[FINGER_ENCRY_FLAG_INDEX] && s_stFingerRxInfo.u16RxCnt == FINGER_ENCRY_FIXED_LEN + s_stFingerRxInfo.acRxBuf[FINGER_ENCRY_LEN_INDEX])
+#if !TEST_NO_ENCRY
+                    && (EM_FINGER_FLOW5_EMPTY == s_stFlowWorkRecord.u8TxFlag || EM_FINGER_FLOW7_AESKEY == s_stFlowWorkRecord.u8TxFlag 
+                        || EM_FINGER_FLOW11_AESKEY_V2 == s_stFlowWorkRecord.u8TxFlag || EM_FINGER_FLOW8_RANDOM == s_stFlowWorkRecord.u8TxFlag)
+#endif
+                )
+            || (FINEGER_READY_SIGNAL_NOAES == s_u8PowerUp && s_stFingerRxInfo.u16RxCnt >= FINGER_PRO_FIXED_LEN 
+                    && s_stFingerRxInfo.u16RxCnt  == (((uint16_t)(s_stFingerRxInfo.acRxBuf[FINGER_PRO_LEN_INDEX] << 8)) + ((uint16_t)(s_stFingerRxInfo.acRxBuf[FINGER_PRO_LEN_INDEX+1])) + FINGER_PRO_FIXED_LEN))
+
+            )
+        {
+            uint16_t u16TotalLen = s_stFingerRxInfo.u16RxCnt; //总长度
+            (void)finger_my_printf(2, (uint8_t*)s_stFingerRxInfo.acRxBuf, (uint32_t)u16TotalLen);
+            
+            if(FINEGER_READY_SIGNAL_NOAES != s_u8PowerUp)
+            {
+                /* 解密,判定标记位是否为0x01 */
+                if (FINGER_ENCRY_YES == s_stFingerRxInfo.acRxBuf[FINGER_ENCRY_FLAG_INDEX])
+                {
+                    (void)aes_decrypt_ecb(AES_CYPHER_128, (uint8_t*)&s_stFingerRxInfo.acRxBuf[FINGER_ENCRY_FIXED_LEN], FINGER_AES_ENCRY_FIXEDLEN, s_acFingerAesRandomKey);
+                    (void)finger_my_printf(3, (uint8_t*)s_stFingerRxInfo.acRxBuf, (uint32_t)u16TotalLen);
+                }
+
+                /*  加密头的长度4 ，因为有两个字节，第二字节需要+ 1 */
+                if ((s_stFingerRxInfo.acRxBuf[FINGER_PRO_HEAD_INDEX + FINGER_ENCRY_FIXED_LEN] != (uint8_t)(FINGER_PRO_HEAD >> 8)) 
+                    || (s_stFingerRxInfo.acRxBuf[FINGER_PRO_HEAD_INDEX + FINGER_ENCRY_FIXED_LEN + 1] != (uint8_t)(FINGER_PRO_HEAD)))
+                {
+                    /* 包头错误，失败 */
+                    s_stFingerRx.report = FINGER_REV_TYPE_FAIL;
+                    s_stFingerRx.AckCode = FINGER_ACK_PROTOCAL_ERR;
+                    my_printf("FINGER PROTOCAL ERR !AckCode - %d \n", s_stFingerRx.AckCode);
+                    (void)finger_status_return_zero(true);
+                    return;
+                }
+            }
+
+            uint16_t u16FingerEncryFixedLen = (FINEGER_READY_SIGNAL_NOAES != s_u8PowerUp)?FINGER_ENCRY_FIXED_LEN:0;
+            s_stFingerRx.PID = s_stFingerRxInfo.acRxBuf[FINGER_PRO_PID_INDEX + u16FingerEncryFixedLen];
+            s_stFingerRx.size = 0;
+            s_stFingerRx.size = s_stFingerRxInfo.acRxBuf[FINGER_PRO_LEN_INDEX + u16FingerEncryFixedLen];
+            s_stFingerRx.size <<= 8;
+            s_stFingerRx.size |= s_stFingerRxInfo.acRxBuf[FINGER_PRO_LEN_INDEX + u16FingerEncryFixedLen + 1];
+            s_stFingerRx.AckCode = s_stFingerRxInfo.acRxBuf[FINGER_PRO_FIXED_LEN + u16FingerEncryFixedLen];
+            my_printf("FINGER PROTOCAL OK !AckCode - %d \n", s_stFingerRx.AckCode);
+
+            /* 计算接收包的checksum值 */
+            uint16_t u16CheckSum = 0;
+            u16CheckSum = 0;
+            u16CheckSum += s_stFingerRx.PID;
+            u16CheckSum += (uint8_t)(s_stFingerRx.size);
+            u16CheckSum += (uint8_t)(s_stFingerRx.size >> 8);
+            for (u16TotalLen = FINGER_PRO_FIXED_LEN + u16FingerEncryFixedLen; \
+                u16TotalLen < (s_stFingerRx.size + FINGER_PRO_FIXED_LEN + u16FingerEncryFixedLen - 2); \
+                u16TotalLen++)
+            {
+                /* 计算checksum */
+                u16CheckSum += s_stFingerRxInfo.acRxBuf[u16TotalLen];
+                /* 从包长度后面一个字节开始，到校验之前 */
+                s_stFingerRx.par[u16TotalLen - (FINGER_PRO_FIXED_LEN + u16FingerEncryFixedLen)] = s_stFingerRxInfo.acRxBuf[u16TotalLen];
+            }
+            if (((uint8_t)(u16CheckSum >> 8) == s_stFingerRxInfo.acRxBuf[u16TotalLen]) &&
+                    ((uint8_t)(u16CheckSum) == s_stFingerRxInfo.acRxBuf[u16TotalLen + 1]))
+            {
+                /* 核对checksum .成功.拷贝 */
+                s_stFingerRx.report = FINGER_REV_TYPE_SUCEFULL;
+            }
+            else
+            {
+                /* 校验错误，失败 */
+                s_stFingerRx.report = FINGER_REV_TYPE_FAIL;
+            }
+            memset((void*)&s_stFingerRxInfo, 0, sizeof(s_stFingerRxInfo));
+
+            if(EM_FINGER_FLOW11_AESKEY_V2 == s_stFlowWorkRecord.u8TxFlag && s_u8ProtocalFlag < FINGER_PROTOCAL_V2)
+                s_u8ProtocalFlag = FINGER_PROTOCAL_V2;
+            
+            s_stFlowWorkRecord.bTxRxFlag = false;
+        }
+    }   
+    
+    /*状态复位*/
+    (void)finger_status_return_zero(false);
+    
+    return;
+}
+
+/****************************************************************************** 
+* 函数名：finger_uart_tx
+* 功 能：串口推送数据准备
+* 输 入：void
+* 输 出：void
+* 返 回：void
+*/ 
+static void finger_uart_tx()
+{
+    /* 过滤流程条件，防止异常或重复发送  */
+    if(s_stFlowWorkRecord.u8Flow > EM_FINGER_FLOW_ALL || s_stFlowWorkRecord.u8TxFlag == s_stFlowWorkRecord.u8Flow) {return;}
+    
+    /*1.基础长度为3，最大的数据长度按结构体的par的长度限制，防止越界
+             2.长度小于3的不予处理，不满足协议长度
+        */
+    if(s_stFlowWorkRecord.u16Size >= FINGER_COM_MAXLEN || s_stFlowWorkRecord.u16Size < FINGER_COM_MINLEN) { return; }
+
+    my_printf("# begin # finger_uart_tx SystemTick = %d\n", SystemTick);
+    
+    s_stFingerTx.PID = FINGER_PRO_INSTRUCTION;
+    s_stFingerTx.size = s_stFlowWorkRecord.u16Size;
+    s_stFingerTx.command = s_stFlowWorkRecord.u8Pid;
+
+    switch(s_stFlowWorkRecord.u8Flow)
+    {
+        /* 数据长度为3，无数据段需要推送 */
+        case EM_FINGER_FLOW0_GET:
+        case EM_FINGER_FLOW6_MERGE:
+        case EM_FINGER_FLOW_EX0_GET:
+        case EM_FINGER_FLOW_EX1_SLEEP:
+        case EM_FINGER_FLOW7_AESKEY:
+        case EM_FINGER_FLOW8_RANDOM:
+        case EM_FINGER_FLOW11_AESKEY_V2:
+            break;
+            
+        case EM_FINGER_FLOW1_CONVERT:
+            /* 缓冲区号- 根据入参确认，只允许1-6 */
+            s_stFingerTx.par[0] = (uint8_t)s_stFingerMSG.u32Pad;
+            break;
+            
+        case EM_FINGER_FLOW2_SEARCH:
+            /* 缓冲区号- 固定只读取第1 缓存区 */
+            s_stFingerTx.par[0] = 0x01;
+            /* 起始序号- 从第一个序号开始检索 */
+            s_stFingerTx.par[1] = 0x00;
+            s_stFingerTx.par[2] = 0x00;
+            /* 搜索个数- 一般设置为模组支持的最大值 */
+            s_stFingerTx.par[3] = (uint8_t)(PS1802_MAX_FP_NUM >> 8);
+            s_stFingerTx.par[4] = (uint8_t)PS1802_MAX_FP_NUM;
+            break;
+            
+        case EM_FINGER_FLOW3_REG:
+            /* 缓冲区号- 固定只读取第1 缓存区 */
+            s_stFingerTx.par[0] = 0x01;
+            /* 模板号 - 由本地配置管理 */
+            s_stFingerTx.par[1] = (uint8_t)(s_stFingerMSG.u32Pad >> 8);
+            s_stFingerTx.par[2] = (uint8_t)(s_stFingerMSG.u32Pad);
+            break;
+            
+        case EM_FINGER_FLOW4_DEL:
+            /* 模板号 - 由本地配置管理 */
+            s_stFingerTx.par[0] = (uint8_t)(s_stFingerMSG.u32Pad >> 8);
+            s_stFingerTx.par[1] = (uint8_t)(s_stFingerMSG.u32Pad);
+            /* 删除个数 - 高字节在前，按流程，固定删除指定模板号，所以固定数量为1 */
+            s_stFingerTx.par[2] = (uint8_t)(s_stFingerMSG.u32Pad >> 24);
+            s_stFingerTx.par[3] = (uint8_t)(s_stFingerMSG.u32Pad >> 16);
+            break;
+
+        case EM_FINGER_FLOW5_EMPTY:
+            /* 模板号 - 由本地配置管理 */
+            s_stFingerTx.par[0] = (uint8_t)(s_stFingerMSG.u32Pad >> 8);
+            s_stFingerTx.par[1] = (uint8_t)(s_stFingerMSG.u32Pad);
+            /* 删除个数 - 高字节在前，按流程，固定删除指定模板号，所以固定数量为1 */
+            s_stFingerTx.par[2] = (uint8_t)(s_stFingerMSG.u32Pad >> 24);
+            s_stFingerTx.par[3] = (uint8_t)(s_stFingerMSG.u32Pad >> 16);
+            break;
+
+        case EM_FINGER_FLOW9_SLIDE:
+            s_stFingerTx.par[0] = (uint8_t)(s_stFingerMSG.u32Pad);
+            break;
+            
+            /* 非预处理的，以最小长度推送命令，不再推送数据段 */
+        default: {s_stFingerTx.size = FINGER_COM_MINLEN;} break;
+    }
+    
+    /* AESKEY 和 RANDOM  特殊处理 */
+    if(EM_FINGER_FLOW7_AESKEY == s_stFlowWorkRecord.u8Flow || EM_FINGER_FLOW11_AESKEY_V2 == s_stFlowWorkRecord.u8Flow || EM_FINGER_FLOW8_RANDOM == s_stFlowWorkRecord.u8Flow)
+    {
+        uint8_t acAesKey[FINGER_AES_ENCRY_FIXEDLEN];// AES 加密秘钥
+        (void)PUBLIC_GenerateRandVec(acAesKey, 8); //随机数8个
+        (void)PUBLIC_GenerateRandVec(&acAesKey[8], 8);
+
+        s_stFingerRx.report = FINGER_REV_TYPE_EMPTY;
+        s_stFingerRx.AckCode = 0xff;
+        memcpy((void*)&s_stFingerTx.par[0], (void*)acAesKey, FINGER_AES_ENCRY_FIXEDLEN);
+
+        //保存AES key 到全局变量
+        if(EM_FINGER_FLOW7_AESKEY == s_stFlowWorkRecord.u8Flow || EM_FINGER_FLOW11_AESKEY_V2 == s_stFlowWorkRecord.u8Flow)
+        {
+            memcpy(s_acFingerAesRootKey, acAesKey, FINGER_AES_ENCRY_FIXEDLEN);
+            s_acFingerAesRootKey[0] = ~s_acFingerAesRootKey[0];
+            s_acFingerAesRootKey[1] = s_acFingerAesRootKey[1] ^ s_u8PowerUp;
+
+            /* AES KEY 写入EE  */
+            memcpy((void*)SystemSeting.SysFingerAsekey, s_acFingerAesRootKey, FINGER_AES_ENCRY_FIXEDLEN);
+            (void)SystemWriteSeting(SystemSeting.SysFingerAsekey, FINGER_AES_ENCRY_FIXEDLEN);
+            
+        }
+        else //FINGER_RANDOM
+        {
+            for (uint8_t i = 0; i < FINGER_AES_ENCRY_FIXEDLEN; i++)
+            {
+                s_acFingerAesRandomKey[i] = acAesKey[i] ^ s_acFingerAesRootKey[i];
+            }
+        }
+    }
+    
+    uint16_t u16CheckSum = 0;
+    uint16_t u16RSTXLen = 0;
+    bool bIsEncry = false;
+
+    /* 每次使用TX前确保Buf是重置完成的 */
+    memset((void*)s_acFingerTxBuf, 0, sizeof(s_acFingerTxBuf));
+    /* 每次使用TX前清空指纹模组接收结构 */
+    memset((void*)&s_stFingerRx, 0, sizeof(s_stFingerRx));
+    s_stFingerRx.AckCode = FINGER_ACK_ERR;
+
+    /* 
+        ** AES加密，参照<德施曼-指安指纹模块加密方案A0>  **
+        HEAD共计4 byte
+        2byte - 加密包头，固定格式0xAA66
+        1byte - 加密标识，0x01 - 加密，0x00 - 不加密
+        1byte - 加密数据长度，即非加密数据全部长度，最长256
+        */
+        
+    /*0x55 指纹头不推送加密头内容*/
+    if(FINEGER_READY_SIGNAL_NOAES != s_u8PowerUp)
+    {
+
+        // 1. 加密协议头
+        s_acFingerTxBuf[u16RSTXLen++] = (uint8_t)(FINGER_ENCRY_HEAD >> 8);
+        s_acFingerTxBuf[u16RSTXLen++] = (uint8_t)(FINGER_ENCRY_HEAD);
+        // 2. 加密标识- FINGER_EMPTY、FINGER_AESKEY、FINGER_RANDOM 三个不需要加密处理
+        if ((s_stFingerTx.command == FINGER_EMPTY) || (s_stFingerTx.command == FINGER_AESKEY) || (s_stFingerTx.command == FINGER_AESKEY_V2) || (s_stFingerTx.command == FINGER_RANDOM))
+        {
+            s_acFingerTxBuf[u16RSTXLen++] = FINGER_ENCRY_NO;
+        }
+        else
+        {
+        #if TEST_NO_ENCRY
+            s_acFingerTxBuf[u16RSTXLen++] = FINGER_ENCRY_NO;
+            bIsEncry = false;
+        #else
+            if(FINEGER_READY_SIGNAL_NOAES == s_u8PowerUp)
+            {
+                s_acFingerTxBuf[u16RSTXLen++] = FINGER_ENCRY_NO;
+                bIsEncry = false;
+            }
+            else
+            {
+                s_acFingerTxBuf[u16RSTXLen++] = FINGER_ENCRY_YES;
+                bIsEncry = true;
+            }
+        #endif
+        }
+        // 3. 加密数据长度，即指纹模组指令的长度,指静脉统一走0x67，修正过去加密头数据字节长度不对的问题
+        if(bIsEncry && s_u8PowerUp == FINEGER_READY_SIGNAL_AES3)
+        {
+            if(0 == ((FINGER_PRO_FIXED_LEN + s_stFingerTx.size)%FINGER_AES_ENCRY_FIXEDLEN))
+                s_acFingerTxBuf[u16RSTXLen++] = FINGER_AES_ENCRY_FIXEDLEN*((FINGER_PRO_FIXED_LEN + s_stFingerTx.size)/FINGER_AES_ENCRY_FIXEDLEN);
+            else
+                s_acFingerTxBuf[u16RSTXLen++] = FINGER_AES_ENCRY_FIXEDLEN*((FINGER_PRO_FIXED_LEN + s_stFingerTx.size)/FINGER_AES_ENCRY_FIXEDLEN + 1);
+        }
+        else
+        {
+            s_acFingerTxBuf[u16RSTXLen++] = FINGER_PRO_FIXED_LEN + s_stFingerTx.size;
+        }
+    }
+    
+    /*
+        ** 指纹模组指令,参照<ZFMS-10系列半导体指纹模块用户手> **
+        数据包格式 --->    包头+ 芯片地址+ 包标识+ 包长度+ 包内容+  校验和
+        2byte - 包头，固定格式0xEF01
+        4byte - 地址，我们不设置地址，直接使用默认地址，默认地址0xFFFFFFFF
+        1byte - 包标识，可以是0x01, 0x02, 0x07, 0x08
+        2byte - 包长度，即包内 容长度+2，长度以字节为单位（即字节数），传送时高字节在前。
+        -byte - 包数据，可以是指令或数据
+        1byte - 校验位，校验和=包标识+包长度+包内容，超过 2 字节的进位忽略。传送时高字节在前
+        */
+    // 1. 协议头
+    s_acFingerTxBuf[u16RSTXLen++] = (uint8_t)(FINGER_PRO_HEAD >> 8);
+    s_acFingerTxBuf[u16RSTXLen++] = (uint8_t)(FINGER_PRO_HEAD);
+    // 2. 芯片地址
+    s_acFingerTxBuf[u16RSTXLen++] = (uint8_t)(FINGER_PRO_ADDR >> 24);
+    s_acFingerTxBuf[u16RSTXLen++] = (uint8_t)(FINGER_PRO_ADDR >> 16);
+    s_acFingerTxBuf[u16RSTXLen++] = (uint8_t)(FINGER_PRO_ADDR >> 8);
+    s_acFingerTxBuf[u16RSTXLen++] = (uint8_t)(FINGER_PRO_ADDR);
+    // 3. 包标识
+    s_acFingerTxBuf[u16RSTXLen++] = s_stFingerTx.PID;
+    // 4. 包长度
+    s_acFingerTxBuf[u16RSTXLen++] = (uint8_t)(s_stFingerTx.size >> 8);
+    s_acFingerTxBuf[u16RSTXLen++] = (uint8_t)(s_stFingerTx.size);
+    // 5. 包数据( 1.指令)
+    s_acFingerTxBuf[u16RSTXLen++] = (uint8_t)(s_stFingerTx.command);
+    // 计算校验值(1)
+    u16CheckSum += s_stFingerTx.PID;
+    u16CheckSum += (uint8_t)(s_stFingerTx.size >> 8);
+    u16CheckSum += (uint8_t)(s_stFingerTx.size);
+    u16CheckSum += s_stFingerTx.command;
+    // 5. 包数据( 2.数据)
+    for (uint16_t i = 0; i < (s_stFingerTx.size - 3); i++) //3=checksum+command
+    {
+        s_acFingerTxBuf[u16RSTXLen++] = s_stFingerTx.par[i];
+        //  计算校验值(2) - 有数据时，校验和需要计算上数据
+        u16CheckSum += s_stFingerTx.par[i];
+    }
+    // 6. 校验位
+    s_acFingerTxBuf[u16RSTXLen++] = (uint8_t)(u16CheckSum >> 8);
+    s_acFingerTxBuf[u16RSTXLen++] = (uint8_t)(u16CheckSum);
+
+    (void)finger_my_printf(0, (uint8_t*)s_acFingerTxBuf, (uint32_t)u16RSTXLen);
+
+    /*  AES-EBC 加密每一段需要16字节，不足需要补齐16字节 */
+    if(true == bIsEncry)
+    {
+        /*
+                解释: 加密的固定长度(16)  - 指纹协议的固定长度(9) = 7
+                说明: x为补齐长度
+                逻辑:  9 + size +x = 16N , N = ((size+9)/16 + 1) --> x = 16N-9-size
+                */
+        uint8_t u8N = (s_stFingerTx.size + FINGER_PRO_FIXED_LEN)/16 + 1;
+        u16RSTXLen += (u8N*FINGER_AES_ENCRY_FIXEDLEN - FINGER_PRO_FIXED_LEN - s_stFingerTx.size);
+        (void)aes_encrypt_ecb(AES_CYPHER_128, (uint8_t *)&s_acFingerTxBuf[FINGER_ENCRY_FIXED_LEN], u8N*FINGER_AES_ENCRY_FIXEDLEN, (uint8_t *)s_acFingerAesRandomKey);
+        (void)finger_my_printf(1, (uint8_t*)s_acFingerTxBuf, (uint32_t)u16RSTXLen);
+    }
+
+    /* 接收队列清空、初始化 */
+    memset((void *)s_stFingerRxInfo.acRxBuf, 0, RX_BUFFER_SIZE); // 清空Buffer缓存
+    s_stFingerRxInfo.u16RxCnt = 0;     //接收计数清0
+
+    /* 启动TX */
+    HAL_Uart_TxMessage( FINGER_UART_COM, (uint8_t*)s_acFingerTxBuf, u16RSTXLen);
+    s_stFlowWorkRecord.u8TxFlag = s_stFlowWorkRecord.u8Flow;
+    s_stFlowWorkRecord.bTxRxFlag = true;
+
+    return;
+}
+
+/****************************************************************************** 
+* 函数名：finger_pack_start  (原 PS1802_DSPPACK_COM_Start)
+* 功 能： 函数命令、指纹头指令、工作时间配置
+* 输 入：uint8_t pidpackage
+                      uint8_t pid
+                      uint8_t time 
+* 输 出：void
+* 返 回：void
+*/ 
+static void finger_pack_start(FINGER_FLOW_TYPE_E _emFlowType)
+{
+    /* 模块协议状态更替 */
+    memcpy((void*)&s_stFlowWorkRecord, (void*)&s_astFlowParamMap[_emFlowType], sizeof(s_stFlowWorkRecord));
+
+    /* 复位参数 */
+    memset((void*)&s_stFingerRxInfo, 0, sizeof(s_stFingerRxInfo));
+    memset((void*)&s_stFingerRx, 0, sizeof(s_stFingerRx));
+    s_stFingerRx.AckCode = FINGER_ACK_ERR;
+    s_stFingerRx.report = FINGER_REV_TYPE_EMPTY; //清空
+
+    return;
+}
+
+/****************************************************************************** 
+* 函数名：finger_pack_stop (原 PS1802_DSPPACK_Stop)
+* 功 能：关闭电源前重置标记位
+* 输 入：void
+* 输 出：void
+* 返 回：void
+*/ 
+static void finger_pack_stop(void)
+{
+    (void)finger_status_return_zero(true);
+    s_stFingerMSG.u32Pad = 1;
+
+    return;
+}
+
+/****************************************************************************** 
+* 函数名：finger_sleep_ex
+* 功 能：0x68 指纹头休眠扩展流程
+* 输 入：void 
+* 输 出：void
+* 返 回：bool
+*/ 
+static bool finger_sleep_ex(void)
+{
+    /* 0x68 需要重新唤醒，然后执行EM_FINGER_FLOW_EX0_GET 和  */
+    s_u8PowerDownFlag = 1;
+    my_printf("# Server Finger # Sleep Ex \n");
+    if(FINEGER_READY_SIGNAL_AES2 != s_u8PowerUpFlag && FINEGER_READY_SIGNAL_AES2 != SystemSeting.FingerFlag) { return true; }
+    uint32_t time = Rtc_Real_Time.timestamp;
+    while(0 != s_u8PowerDownFlag)
+    {
+        FINGER_Scan();
+        HAL_Voice_PlayVoiceThread(); 
+        switch(s_u8PowerDownFlag)
+        {
+            case 1:
+                /* 0x68 需要重新唤醒，然后执行EM_FINGER_FLOW_EX0_GET 和  */
+                (void)PUBLIC_Delayms(20);
+                (void)FINGER_WakeUp();
+                s_u8PowerDownFlag++;
+                break;
+            case 2:
+                if(Rtc_Real_Time.timestamp - time > 6) {s_u8PowerDownFlag = 0; FINGER_Poweroff(); break;}
+
+                /* 加入模组已被下电，则不在 */
+                if(0 == s_u8PowerUp) { break; }
+                s_u8PowerDownFlag++;
+                break;
+            case 3:
+                if(Rtc_Real_Time.timestamp - time > 6) {s_u8PowerDownFlag = 0; break;}
+                if(s_stFlowWorkRecord.bTxRxFlag == true) { break; }
+                (void)FINGER_Operate(EM_FINGER_FLOW_EX0_GET, 0);
+                s_u8PowerDownFlag++;
+                break;
+            case 4:
+                if(Rtc_Real_Time.timestamp - time > 6) {;s_u8PowerDownFlag = 0; break;}
+                if(EM_FINGER_FLOW_NONE == FINGER_GetFlowStatus())  { s_u8PowerDownFlag++; }
+                break;
+            case 5:
+                if(Rtc_Real_Time.timestamp - time > 6) {s_u8PowerDownFlag = 0; break;}
+                if(s_stFingerRx.AckCode == FINGER_ACK_OK)
+                {
+                    if(HAL_Voice_GetBusyState() == 0) { (void)HAL_Voice_PlayingVoice(EM_MOVE_FINGER_MP3, 600); }
+                    s_u8PowerDownFlag-=2;
+                }
+                else
+                {
+                    s_u8PowerDownFlag++;
+                }
+                break;
+            case 6:
+                if(Rtc_Real_Time.timestamp - time > 6) {s_u8PowerDownFlag = 0; break;}
+                (void)FINGER_Operate(EM_FINGER_FLOW_EX1_SLEEP, 0);
+                s_u8PowerDownFlag++;
+                break;
+            case 7:
+                if(Rtc_Real_Time.timestamp - time > 6) {s_u8PowerDownFlag = 0; break;}
+                if(EM_FINGER_FLOW_NONE == FINGER_GetFlowStatus()) { s_u8PowerDownFlag++; }
+                break;
+            case 8:
+                if(Rtc_Real_Time.timestamp - time > 6) {s_u8PowerDownFlag = 0; break;}
+                if(s_stFingerRx.AckCode == FINGER_ACK_OK)
+                {
+                    if(0 == HAL_EXPORT_PinGet( EM_FING_IRQ ))
+                        s_u8PowerDownFlag-=2;
+                    else
+                        s_u8PowerDownFlag++;
+                }
+                else
+                {
+                    s_u8PowerDownFlag-=2;
+                }
+                break;
+            case 9:
+                FINGER_Poweroff();
+                s_u8PowerDownFlag = 0;
+                my_printf("# Server Finger # Sleep Ex Suc !! \n");
+                break;
+            default:
+                break;
+        }
+    }
+    
+    if(Rtc_Real_Time.timestamp - time > 6)
+    {
+        my_printf("# Server Finger # Sleep Ex Timeout !! \n");
+        return false;
+    }
+
+    return true;
+}
+
+/***************************** 3 对外函数*****************************/
+
+/****************************************************************************** 
+* 函数名：FINGER_Init
+* 功 能：模块初始化接口
+* 输 入：void 
+* 输 出：void
+* 返 回：void
+*/ 
+void FINGER_Init()
+{
+    my_printf("# Server Finger # Init \n");
+    /* 电源已拉起的情况下，不再需要初始化 */
+    if(s_u8PowerUp > 0) return;
+    my_printf("# Server Finger # Init #1 SystemTick = %d\n", SystemTick);
+
+    static bool bIsNeedInitPin = true;
+    if(bIsNeedInitPin)
+    {
+		#ifdef FINGER_POW_PIN_IN_EXPORT
+		/* 指纹 模组供电IO配置为OUT模式*/
+        (void)HAL_EXPORT_PinInit(EM_POW_FING, DIR_OUT, POLO_RETTAIN);
+        /* 指纹模组默认下电 -  指纹模组供电低有效 */
+        (void)HAL_EXPORT_PinSet(EM_POW_FING, OUT_HIGH);
+		#elif defined FINGER_POW_PIN_IN_MCU
+		DRV_GpioSWOut0(M_FINGER_POW_GPIO_PIN);
+		#endif
+		
+        bIsNeedInitPin = false;
+        
+        return;
+    }
+    
+    memset(&s_acFingerAesRootKey, 0, sizeof(s_acFingerAesRootKey));
+    memset(&s_acFingerAesRandomKey, 0, sizeof(s_acFingerAesRandomKey));
+    (void)finger_status_return_zero(true);
+    
+    /* 将EE上的AES KEY 写入指纹模块内存 */
+    memcpy((void*)s_acFingerAesRootKey, SystemSeting.SysFingerAsekey, FINGER_AES_ENCRY_FIXEDLEN);
+
+    /* 串口切换到FINGER，等待接收指纹模组的上电反馈0x55 */
+    DRV_FINGER_UTRT_SWITCH_ON;
+	//串口初始化
+	UartCfg_S uartCfg={0};
+	uartCfg.BaudRate = UART_BAUD_RATE_57600;
+	uartCfg.DataBit = DATA_8_BIT;
+	uartCfg.StopBit = STOP_1_BIT;
+	uartCfg.ParityType = PARITY_NONE;
+	uartCfg.RxInerruptEn = INT_ENABLE;
+	uartCfg.TxInerruptEn = INT_DISENABLE;
+    s_u8ProtocalFlag = SystemSeting.FingerProtocalVersion;
+    my_printf("# Server Finger # Init #2 SystemTick = %d\n", SystemTick);
+	HAL_Uart_ConfigInit( E_FINGER_UART, uartCfg );
+    my_printf("# Server Finger # Init #3 SystemTick = %d\n", SystemTick);
+    /* 指纹模组上电 -  指纹模组供电低有效 */
+	#ifdef FINGER_POW_PIN_IN_EXPORT
+	(void)HAL_EXPORT_PinSet(EM_POW_FING, OUT_LOW);
+	#elif defined FINGER_POW_PIN_IN_MCU
+	DRV_GpioSWOut1(M_FINGER_POW_GPIO_PIN);
+	#endif
+		
+    my_printf("# Server Finger # Init #4 SystemTick = %d\n", SystemTick);
+    
+    /*   10 * 100ms  大约等待1S左右，需要等指纹模组上电完成*/
+    uint8_t cnt = 100;
+    while(cnt)
+    {
+        FINGER_Scan();
+        (void)PUBLIC_Delayms(10);
+        if (s_u8PowerUp > 0) break;
+        cnt--;
+    }
+
+    if(s_u8PowerUpFlag != FINEGER_READY_SIGNAL_NOAES)
+        (void)FINGER_Operate(EM_FINGER_FLOW8_RANDOM, 0);
+    
+    return;
+}
+
+/****************************************************************************** 
+* 函数名：FINGER_WorkCountDown
+* 功 能：提供给外部定时器(每秒调用一次)，用于模块休眠
+                      不调用，模块不再自动休眠，但可以手动休眠
+* 输 入：void 
+* 输 出：void
+* 返 回：uint8_t 返回计数值
+*/ 
+uint8_t FINGER_WorkCountDown(void)
+{
+    return (s_stFlowWorkRecord.u8Time > 0) ? (s_stFlowWorkRecord.u8Time--) : 0;
+}
+
+/****************************************************************************** 
+* 函数名：FINGER_WakeUp(原 PS1802_DSPWakeUp 和PS1802_DSPWakeUp_NOdelay)
+* 功 能：等上电信号
+* 输 入：void
+* 输 出：void
+* 返 回：void
+*/ 
+void FINGER_WakeUp(void)
+{
+    my_printf("# Server Finger # Wake up \n");
+    (void)FINGER_Init();
+    return;
+}
+
+/****************************************************************************** 
+* 函数名：FINGER_Poweroff(原 PS1802_DSPPoweroff)
+* 功 能：关电源
+* 输 入：void 
+* 输 出：void
+* 返 回：void
+*/ 
+void FINGER_Poweroff(void)
+{
+    /* 电源标记位复位 */
+    s_u8PowerUp = 0;
+    
+    /* 先停一下 */
+    (void)finger_pack_stop();
+
+    /* 关闭串口 */
+	if( E_FINGER_UART == HAL_Uart_GetCurDeviceType( FINGER_UART_COM ))
+	{
+		HAL_Uart_DeInit( E_FINGER_UART );
+		DRV_FINGER_UTRT_SWITCH_OFF;
+	}
+    /* 指纹模组下电电 -  指纹模组供电低有效  */
+	#ifdef FINGER_POW_PIN_IN_EXPORT
+    (void)HAL_EXPORT_PinSet(EM_POW_FING, OUT_HIGH);
+	#elif defined FINGER_POW_PIN_IN_MCU
+	DRV_GpioSWOut0(M_FINGER_POW_GPIO_PIN);
+	#endif
+
+    (void)finger_pack_stop();
+
+    memset((void*)s_acFingerTxBuf, 0, sizeof(s_acFingerTxBuf));
+    memset((void*)&s_stFingerRxInfo, 0, sizeof(s_stFingerRxInfo));
+    memset((void*)&s_stFingerRx, 0, sizeof(s_stFingerRx));
+    s_stFingerRx.AckCode = FINGER_ACK_ERR;
+
+    PUBLIC_Delayms(50);//放置过快的上下电导致模组异常
+
+    return;
+}
+
+/****************************************************************************** 
+* 函数名：FINGER_GetPowerStatus
+* 功 能：返回电源上电情况
+* 输 入：void
+* 输 出：void
+* 返 回：bool
+*/ 
+bool FINGER_GetPowerStatus(void)
+{
+    return s_u8PowerUp > 0 ? true : false;
+}
+    
+/****************************************************************************** 
+* 函数名：FINGER_GetPowerFlag
+* 功 能：返回指纹模组的上电标记
+* 输 入：void
+* 输 出：void
+* 返 回：bool
+*/ 
+uint8_t FINGER_GetPowerFlag(void)
+{
+    return s_u8PowerUpFlag;
+}
+
+/****************************************************************************** 
+* 函数名：FINGER_GetPowerStatus
+* 功 能：返回协议流程状态
+* 输 入：FINGER_FLOW_TYPE_E
+* 输 出：void
+* 返 回：void
+*/ 
+FINGER_FLOW_TYPE_E FINGER_GetFlowStatus(void)
+{
+    return s_stFlowWorkRecord.u8Flow;
+}
+
+/****************************************************************************** 
+* 函数名：FINGER_GetAckCode
+* 功 能：返回协议返回值
+* 输 入：uint8_t
+* 输 出：void
+* 返 回：void
+*/ 
+uint8_t FINGER_GetAckCode(void)
+{
+    uint8_t ack = s_stFingerRx.AckCode;
+    s_stFingerRx.AckCode = FINGER_ACK_NONE;
+    return ack;
+}
+
+/****************************************************************************** 
+* 函数名：FINGER_GetSearchID
+* 功 能：返回SEARCH(0x04)成功后，返回的模板号
+* 输 入：void
+* 输 出：void
+* 返 回：uint16_t
+*/ 
+uint16_t FINGER_GetSearchID(void)
+{ 
+    return (s_stFingerRx.par[1]<< 8) + s_stFingerRx.par[2];
+}
+
+/****************************************************************************** 
+* 函数名：FINGER_GetSearchID
+* 功 能：返回SEARCH(0x04)成功后，实际分数，比较成功，分数不为0
+* 输 入：void
+* 输 出：void
+* 返 回：uint16_t
+*/ 
+uint16_t FINGER_GetSearchScore(void)
+{ 
+    return (s_stFingerRx.par[3]<< 8) + s_stFingerRx.par[4];
+}
+
+/****************************************************************************** 
+* 函数名：FINGER_GetTxRxFlag
+* 功 能：返回数据响应标记
+* 输 入：void
+* 输 出：void
+* 返 回：bool
+*/ 
+bool FINGER_GetTxRxFlag(void)
+{
+    bool bFlag = s_stFlowWorkRecord.bTxRxFlag;
+    s_stFlowWorkRecord.bTxRxFlag = false;
+    return bFlag;
+}
+
+/****************************************************************************** 
+* 函数名：FINGER_GetProtocalVersion
+* 功 能：返回指纹协议版本
+* 输 入：void
+* 输 出：void
+* 返 回：uint8_t
+*/ 
+uint8_t FINGER_GetProtocalVersion(void)
+{
+    return s_u8ProtocalFlag;
+}
+
+/****************************************************************************** 
+* 函数名：FINGER_Sleep 
+* 功 能：关电源
+* 输 入：void 
+* 输 出：void
+* 返 回：bool
+*/ 
+bool FINGER_Sleep(void)
+{
+    my_printf("# Server Finger # Sleep \n");
+    (void)FINGER_Poweroff();
+
+    return true;
+}
+
+/****************************************************************************** 
+* 函数名：FINGER_SleepEx
+* 功 能：针对0x68协议模组，在掉电前的休眠接口,调用之前必须调用一次FINGER_Sleep
+* 输 入：void 
+* 输 出：void
+* 返 回：bool
+*/ 
+bool FINGER_SleepEx(void)
+{
+    return finger_sleep_ex();
+}
+
+/****************************************************************************** 
+* 函数名：FINGER_Operate
+* 功 能：对外提供操作指纹模组接口
+* 输 入：FINGER_FLOW_TYPE_E _emFlowType - 支持的动作类型
+                      uint16_t _u16Pageid - 动作入参，目前仅EM_FINGER_FLOW4_DEL 支持入参
+* 输 出：void
+* 返 回：bool 
+                      true - 操作支持(操作执行) 
+                      false - 操作不支持
+*/ 
+bool FINGER_Operate(FINGER_FLOW_TYPE_E _emFlowType, uint32_t _u32Pageid)
+{
+    if(_emFlowType > EM_FINGER_FLOW_ALL) { return false; }
+
+    /* 0x55 不加密指纹模组，不处理0x41和0x40协议 */
+    if( FINEGER_READY_SIGNAL_NOAES == s_u8PowerUpFlag && (EM_FINGER_FLOW7_AESKEY == _emFlowType || EM_FINGER_FLOW11_AESKEY_V2 == _emFlowType || EM_FINGER_FLOW8_RANDOM == _emFlowType))
+    {
+        s_stFingerRx.AckCode = FINGER_ACK_OK;
+        s_stFingerRx.report = FINGER_REV_TYPE_SUCEFULL;
+        
+        (void)finger_status_return_zero(false);
+        return true;
+    }
+    
+    switch(_emFlowType)
+    {
+        case EM_FINGER_FLOW0_GET: {s_stFingerMSG.u32Pad = 1;} break;
+        case EM_FINGER_FLOW1_CONVERT: {s_stFingerMSG.u32Pad = _u32Pageid;} break;
+        case EM_FINGER_FLOW3_REG: {s_stFingerMSG.u32Pad = _u32Pageid;} break;
+        case EM_FINGER_FLOW4_DEL: {s_stFingerMSG.u32Pad = _u32Pageid;} break;
+        case EM_FINGER_FLOW5_EMPTY: {s_stFingerMSG.u32Pad = _u32Pageid;} break;
+        case EM_FINGER_FLOW9_SLIDE: {s_stFingerMSG.u32Pad = _u32Pageid;} break;
+        default: break;
+    }
+    (void)finger_pack_start(_emFlowType);
+
+    return true;
+}
+
+/****************************************************************************** 
+* 函数名：FINGER_Scan(原 PS1802_Process)
+* 功 能：指纹动作扫描
+* 输 入：void
+* 输 出：void
+* 返 回：void
+*/
+void FINGER_Scan(void)
+{
+    /* 处理数据TX */
+    (void)finger_uart_tx();
+
+    /* 处理数据RX */
+    (void)finger_uart_rx();
+
+    return;
+}
+
+

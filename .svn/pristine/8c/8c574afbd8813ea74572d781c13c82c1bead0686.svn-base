@@ -1,0 +1,76 @@
+/*********************************************************************************************************************
+ * @file:        HAL_Touch.h
+ * @author:      gushengchi
+ * @version:     V01.00
+ * @date:        2021-07-29
+ * @Description: 触摸按键接口功能函数头文件
+ * @ChangeList:  01. 初版
+**********************************************************************************************************************/
+  
+#ifndef  _HAL_TOUCH_H
+#define  _HAL_TOUCH_H
+
+/*--------------------------------------------------文件包含---------------------------------------------------------*/
+#include "..\DRV\DRV_TOUCH\DRV_GT316L.h"  
+#include "..\System\LockConfig.h"
+
+/*--------------------------------------------------宏定义-----------------------------------------------------------*/
+#define  TOUCH_KEY_NO_0             HW_TOUCH_KEY_NO_0     //数字0键
+#define  TOUCH_KEY_NO_1             HW_TOUCH_KEY_NO_1     //数字1键
+#define  TOUCH_KEY_NO_2             HW_TOUCH_KEY_NO_2     //数字2键
+#define  TOUCH_KEY_NO_3             HW_TOUCH_KEY_NO_3     //数字3键
+#define  TOUCH_KEY_NO_4             HW_TOUCH_KEY_NO_4     //数字4键
+#define  TOUCH_KEY_NO_5             HW_TOUCH_KEY_NO_5     //数字5键
+#define  TOUCH_KEY_NO_6             HW_TOUCH_KEY_NO_6     //数字6键
+#define  TOUCH_KEY_NO_7             HW_TOUCH_KEY_NO_7     //数字7键
+#define  TOUCH_KEY_NO_8             HW_TOUCH_KEY_NO_8     //数字8键
+#define  TOUCH_KEY_NO_9             HW_TOUCH_KEY_NO_9     //数字9键
+#define  TOUCH_KEY_ENTER            HW_TOUCH_KEY_ENTER     //确认键
+#define  TOUCH_KEY_BACK             HW_TOUCH_KEY_BACK      //返回键
+#define  TOUCH_KEY_LOCK             HW_TOUCH_KEY_LOCK      //上锁键
+#define  TOUCH_KEY_BELL             HW_TOUCH_KEY_BELL      //门铃键
+#define  TOUCH_KEY_NONE             HW_TOUCH_KEY_NONE      //无效键值
+
+/*--------------------------------------------------枚举声明---------------------------------------------------------*/
+/* TOUCH 灯板 */
+typedef enum
+{
+   EM_PIN_TO_KEY_01 = HW_TOUCH_PIN_01,
+   EM_PIN_TO_KEY_02 = HW_TOUCH_PIN_02, 	
+   EM_PIN_TO_KEY_03 = HW_TOUCH_PIN_03, 
+   EM_PIN_TO_KEY_04 = HW_TOUCH_PIN_04,
+   EM_PIN_TO_KEY_05 = HW_TOUCH_PIN_05, 
+   EM_PIN_TO_KEY_06 = HW_TOUCH_PIN_06,
+   EM_PIN_TO_KEY_07 = HW_TOUCH_PIN_07,
+   EM_PIN_TO_KEY_08 = HW_TOUCH_PIN_08, 
+   EM_PIN_TO_KEY_09 = HW_TOUCH_PIN_09, 	
+   EM_PIN_TO_KEY_10 = HW_TOUCH_PIN_10, 
+   EM_PIN_TO_KEY_11 = HW_TOUCH_PIN_11,
+   EM_PIN_TO_KEY_12 = HW_TOUCH_PIN_12, 
+   EM_PIN_TO_KEY_13 = HW_TOUCH_PIN_13,
+   EM_PIN_TO_KEY_14 = HW_TOUCH_PIN_14,
+   EM_PIN_TO_KEY_15 = HW_TOUCH_PIN_15,
+   EM_PIN_TO_KEY_16 = HW_TOUCH_PIN_16,
+	
+   EM_INVALID_KEY, //无键值
+	
+}KEY_NO_E;  
+ 
+/*--------------------------------------------------常量声明---------------------------------------------------------*/
+
+
+/*--------------------------------------------------变量声明---------------------------------------------------------*/             
+ 
+ 
+/*--------------------------------------------------函数声明---------------------------------------------------------*/
+void HAL_Touch_FileInit( void ); 
+void HAL_Touch_SleepInit( void );	
+bool HAL_Touch_GetIICBusState( void );
+void HAL_Touch_PwmOutputCtrl( uint8_t channel, uint8_t pwmVal );
+	
+uint8_t HAL_Touch_GetKeyValue( void );
+
+
+#endif
+
+

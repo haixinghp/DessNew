@@ -1,0 +1,327 @@
+#ifndef _DRV_FACE_H_
+#define _DRV_FACE_H_
+
+#ifdef __cplusplus
+ extern "C" {
+#endif
+/* 内部头文件 */
+#include "..\HAL\HAL_RTC\HAL_RTC.h"
+/* 标准头文件 */
+#include "stdint.h"
+
+#define FACE_IMAGE_LEN     950//抓包图片单包字节长度
+//包类型--------------------------------------------------
+#define FACE_MID_REPLY     0x00  
+#define FACE_MID_NOTE      0x01
+#define FACE_MID_IMAGE     0x02
+//协议命令--------------------------------------------------
+#define FACE_CMD_INIT 	           0x50       //握手密钥交互
+#define FACE_CMD_CAM_INIT 	       0x25       //握手密钥交互
+#define FACE_CMD_DEMO  	           0xFE       //体验模式
+#define FACE_CMD_ENROLL 	       0x13       //注册人脸
+#define FACE_CMD_VERIFY	           0x12       //验证人脸
+#define FACE_CMD_DEL_ALL           0x21       //删除所有人脸
+#define FACE_CMD_DEL_USER 	       0x20       //删除指定用户
+#define FACE_CMD_SNAPIMAGE 	       0x16       //抓拍图片
+#define FACE_CMD_GETSAVEDIMAGE 	   0x17       //获取图片大小
+#define FACE_CMD_UPLOADIMAGE       0X18       //传输图片
+#define FACE_CMD_GETVERSION        0X30       //获取版本号
+#define FACE_CMD_SET_THRESHOLD_LEVEL  0xD4    //修改人脸识别等级
+#define FACE_CMD_HIJACK_MODE       0xB2       //防劫持开关
+#define FACE_CMD_ENC_KEY 	       0x53       //约定根密钥
+#define FACE_CMD_BAUDRATE 		   0x51       //修改波特率
+#define FACE_CMD_START_OTA 	       0x40       //开始升级
+#define FACE_CMD_STOP_OTA 	       0x41       //退出OTA升级
+#define FACE_CMD_GET_OTA_STATUS    0x42       //获取OTA状态
+#define FACE_CMD_OTA_HEADER 	   0x43       //OTA整包信息获取
+#define FACE_CMD_OTA_PACKET        0x44       //OTA分包传输
+#define FACE_CMD_POWERDOWN         0XED       //下电
+
+#define IRIS_CMD_ENROLL 	       0xC4       //注册虹膜
+#define IRIS_CMD_VERIFY	           0xC5       //验证虹膜
+#define IRIS_CMD_DEL_ALL           0x21       //删除所有虹膜
+#define IRIS_CMD_DEL_USER 	       0x20       //删除指定用户
+#define IRIS_CMD_GETVERSION        0X30       //获取版本号
+#define IRIS_CMD_BAUDRATE 		   0x51       //修改波特率
+#define IRIS_CMD_GETSTATE		   0XC6		  //获取设备状态
+#define IRIS_CMD_CANCEL			   0XC7		  //取消操作
+#define IRIS_CMD_RESTART 		   0XC8		  //重启设备
+
+#define FACE_CMD_CAM_INIT 	       0x25       //握手密钥交互
+#define FACE_CMD_BELL	           0x84       //可视对讲
+#define	FACE_CMD_DEVICENAME        0x85       //获取设备名
+#define FACE_CMD_SET_LINKKEY  	   0x82       //设置阿里云密钥
+#define FACE_CMD_SET_SSID  	       0x70       //RR设置WIFI
+#define FACE_CMD_DELETE_FILE       0x27       //删除媒体文件
+#define	FACE_CMD_MID_CAPTURE       0x19       //抓拍
+#define FACE_CMD_PASS_DATA  	   0x83       //消息透传
+#define FACE_CMD_GET_WIFISTATUS    0x72       //获取WIFI状态
+#define FACE_CMD_MODULE_STATUS     0x86       //获取云业务状态
+#define FACE_CMD_START_OTA 	       0x40       //开始OTA
+#define FACE_CMD_STOP_OTA 	       0x41
+#define FACE_CMD_SET_LIGHTSENSOR   0x8A		  //设置光敏灵敏度
+
+#define FACE_TYPE_HEAD_H           0XEF
+#define FACE_TYPE_HEAD_L           0XAA
+
+
+/* message result code-------------------------------------------------- */
+#define MR_SUCCESS      0      // success
+#define MR_REJECTED     1      // module rejected this command
+#define MR_ABORTED      2      // algo aborted
+#define MR_FAILED4_CAMERA   4  // camera open failed
+#define MR_FAILED4_UNKNOWNREASON   5  // UNKNOWN_ERROR
+#define MR_FAILED4_INVALIDPARAM   6   // invalid param
+#define MR_FAILED4_NOMEMORY   7       // no enough memory
+#define MR_FAILED4_UNKNOWNUSER   8    // no user enrolled
+#define MR_FAILED4_MAXUSER   9        // exceed maximum user number
+#define MR_FAILED4_FACEENROLLED   10  // this face has been enrolled
+#define MR_FAILED4_LIVENESSCHECK   12 // liveness check failed
+#define MR_FAILED4_TIMEOUT   13       // exceed the time limit
+#define MR_FAILED4_AUTHORIZATION   14 // authorization failed
+#define MR_FAILED4_READ_FILE   19     // read file failed
+#define MR_FAILED4_WRITE_FILE   20    // write file failed
+#define MR_FAILED4_NO_ENCRYPT   21    // encrypt must be set
+#define MR_FAILED4_NO_RGBIMAGE  23    // rgb image is not ready
+#define MR_FAILED4_NO_WLAN                  24  // wlan is not connected
+#define MR_FAILED4_MQTT_CONNECT             25  // mqtt connect fail
+#define MR_FAILED4_DM_CONNECT               26  // dm connect fail
+#define MR_FAILED4_LOWPOWER_CONNECT         27  // lowpower connect fail
+#define MR_FAILED4_GENERATE_WAKEUP_CMD      28  // generate wakeup command fail
+#define MR_FAILED4_GENERATE_HEARTBEAT_CMD   29  // generate heartbeat command fail
+#define MR_FAILED4_MAKE_CONFIG_FILE         30  // make config file fail
+#define MR_FAILED4_WIFI_POWERUP_FAIL        32  // camera verify test failed
+/* message result code end--------------------------------------------------  */
+#define FACE_ID_NID_READY 0           //模块已启动并进入待命状态
+#define IRIS_ID_NID_READY 6           //模块已启动并进入待命状态
+#define FACE_ID_NID_FACE_STATE 1      //算法执行成功，并且返回人脸信息
+#define FACE_ID_NID_UNKNOWNERROR 2    //未知错误
+#define FACE_ID_NID_OTA_STATE 3       //OTA
+#define FACE_ID_NID_EYE_STATE 4       //解锁过程中睁闭眼状态
+#define FACE_ID_NID_MEDIA_CAP_STATE 5 //媒体类型
+#define FACE_ID_NID_MEDIA_STATE 6     //Media 业务
+/* FACE_STATE-------------------------------------------------------------  */
+#define FACE_STATE_NORMAL       0 // normal state, the face is available
+#define FACE_STATE_NOFACE       1 // no face detected
+#define FACE_STATE_TOOUP        2 // face is too up side
+#define FACE_STATE_TOODOWN      3 // face is too down side
+#define FACE_STATE_TOOLEFT      4 // face is too left side
+#define FACE_STATE_TOORIGHT     5 // face is too right side
+#define FACE_STATE_TOOFAR       6 // face is too far
+#define FACE_STATE_TOOCLOSE     7 // face is too near
+#define FACE_STATE_EYEBROW_OCCLUSION   8     // eyebrow occlusion
+#define FACE_STATE_EYE_OCCLUSION       9     // eye occlusion
+#define FACE_STATE_FACE_OCCLUSION      10    // face occlusion
+#define FACE_STATE_DIRECTION_ERROR     11    // face direction error
+#define FACE_STATE_EYE_CLOSE_STATUS_OPEN_EYE   12   // open eye in the eye close status
+#define FACE_STATE_EYE_CLOSE_STATUS            13     // confirm eye close status
+#define FACE_STATE_EYE_CLOSE_UNKNOW_STATUS     14 // eye close unknow status
+
+#define FACE_DEFAULT_TIMEOUT_1S     1000
+#define FACE_DEFAULT_TIMEOUT_2S     2000
+#define FACE_DEFAULT_TIMEOUT_3S     3000
+#define FACE_READY_TIMEOUT_2S     2000
+#define FACE_INIT_TIMEOUT500MS    500
+#define FACE_ENROLL_TIMEOUT_22S   22000
+#define FACE_POWERSOWN_TIMEOUT_1S   1000
+#define FACE_VERIFY_TIMEOUT_10S   10000
+#define FACE_PASS_DATA_TIMEOUT_5S   5000
+
+#define MEDIA_STATE_IDLE                      0    // Module is idle, can be powered off immediately
+#define MEDIA_STATE_WAITING                   1    // Module is waiting for the next command
+#define MEDIA_STATE_WORKING                   2    // Module is working on media business
+#define MEDIA_STATE_ERROR                     3    // An error occurred in the Module 
+
+#define	CAM_IR_SET_LIGHTSENSOR  960  //商汤猫眼光敏灵敏度
+typedef enum
+{
+	FACE_POWERDOWM, //断电状态 无任务
+    FACE_WAKE_UP,   //唤醒模组
+	FACE_WAIT_READY,//等模组ready
+	FACE_WAIT_UUID, //等模组回复UUID
+	FACE_UUID_CHECK, //检验模组ID
+	FACE_COMMAND,   //送命令
+	FACE_WAIT_RESPONSE,  //模组应答
+	FACE_STANDBY,     //空闲
+	FACE_ERROR,
+}FACE_STATE_E; //模组运行状态
+
+typedef enum
+{
+	TASK_POWERDOWN,
+	TASK_START,  
+	TASK_WORKING,
+	TASK_SUCCESS,
+	TASK_FAIL,
+	TASK_WAITDOWN,
+	
+}FACE_GNERAL_TASK_E; //通用状态机
+
+typedef enum
+{
+	MODUAL_DEAFAULT,
+	MODUAL_ERROR,  //模组没插或故障
+}MODUAL_STATE_E; //通用状态机
+extern MODUAL_STATE_E Modual_State;
+
+/*-------------Reply数据结构体--------------------------*/
+typedef struct
+{
+	uint16_t UserId;		//已验证用户的 ID
+	uint8_t userName[32];   //用户名字uint8_t
+	uint8_t admin;          //是否为管理员
+	uint8_t unlockStatus;   //解锁过程中睁闭眼状态
+}VERIFY; //验证结果
+
+typedef struct
+{
+	uint8_t version[32];    //
+}VERSION; //版本信息
+
+typedef struct
+{
+	uint32_t Size;    //
+}IMAGE; //图片
+
+typedef	struct
+{
+	uint32_t LenAll;
+	uint32_t LenOffset;
+	uint32_t LenSur;
+	uint32_t Cn;    //当前次数
+}FACE_IMAGE;//图片
+extern FACE_IMAGE FaceImage;
+
+typedef struct
+{
+	uint16_t UserId;		//注册用户的 ID
+	uint8_t Direction;   //方向
+}ENROLL; //注册信息
+
+/*-------------MSG数据结构体--------------------------*/
+typedef struct 
+{
+	uint8_t MsgID;       //包类型
+	struct
+	{
+		uint16_t MsgLen;      //有效长度
+		uint8_t MsgMid;      //命令
+		uint8_t Msgresult;   //结果		
+		union
+		{
+			uint8_t Data[200];     //数据内容
+			VERIFY  Verify;
+			VERSION Version;
+			IMAGE ImageSize;
+			ENROLL  Enroll;
+		}DataPack; //数据类型
+	}Reply;//Reply包
+	struct
+	{
+		uint16_t MsgLen;      //有效长度
+		uint8_t MsgNid;      //nid类型	
+		uint8_t Data[200];     //数据内容
+	}Note;//NOTE包
+	struct
+	{
+		uint16_t MsgLen;      //有效长度	
+//		uint8_t Data[200];     //数据内容
+		uint8_t Data[1024];     //数据内容
+	}Image;//IMAGE包
+	struct
+	{
+		uint16_t NoFace;       //未检测到人脸
+		uint16_t FaceFar;      //过远
+		uint16_t FaceNear;     //过近
+		uint16_t FaceOcc;      //遮挡
+		int16_t  Left;         //靠左
+ 		int16_t  Top;          //靠上
+		int16_t  Right;        //靠右
+		int16_t  Bottom;       //靠下
+	}NidFaceState; //人脸识别状态
+}FACE_MSGTYPE;  //模组数据解析
+
+
+
+
+/*-------------------------------------串口收发--------------------------*/
+typedef struct
+{
+	FACE_STATE_E             State;        //模组工作状态
+	
+	uint8_t  Txlen;
+	uint8_t  TxCdm;      	 //发送帧数据
+	uint16_t TxTimeout;  	 //发送超时时间
+	uint8_t  TxDataBuf[256];  //数据BUF
+//	uint8_t  RxPos;       	 //当前接受位置
+	uint16_t  RxPos;       	 //当前接受位置
+//	uint8_t  RxDataBuf[256];  //数据BUF	
+	uint8_t  RxDataBuf[1024];  //数据BUF	
+	uint8_t  encryption;  	 //加密使能
+	uint8_t  AesKey[16];
+	uint16_t Systick;    	 //任务定时器
+}FACE_CONTROL; 
+extern uint16_t TimeoutSystick;
+
+/*-------------------------------------工作流程--------------------------*/
+typedef struct
+{
+	FACE_GNERAL_TASK_E   TaskFlow;   //通用流程枚举
+	uint8_t              Register;   //注册过程FACE_ADD_USER_E
+	uint8_t              Verify;     //识别过程FACE_VERIFY_PRO_E
+	uint8_t				 DeleteUser; //删除过程
+	uint8_t              TaskNum;    //当前任务编号
+	uint8_t              SetWifi;    //配网流程
+	uint8_t              CallBell;   //门铃呼叫流程
+	uint8_t              Alarm;      //消息推送流程
+	uint8_t              Upgrade;    //ota升级
+	uint8_t              Networking; //等待联网
+	uint8_t				 QueryCloudData;	//开锁信息扫描
+	uint8_t				 ScanState;	//开锁信息扫描
+	uint8_t				 WifiIntensity;	//Wifi信息扫描
+	
+}APP_FACE_WORK_PRO; 
+
+/*-------------------------------------网络状态--------------------------*/
+typedef struct  
+{
+	//云业务状态
+
+	uint32_t Timer;              //计时单位秒
+	uint8_t  media_state;        // 模组业务状态
+	uint8_t  media_error;        // 模组业务故障码
+	uint8_t	 Networking;         //联网标志	
+	
+	uint8_t  ota_state;          //OTA状态
+	uint8_t  ota_error;          //OTA错误
+	uint8_t  ota_progress;       //OTA进度	
+	
+	uint8_t  wifi_try_connect;        //断网重连机制
+	uint32_t wifi_try_time;  		  //间隔时间
+	uint32_t wifi_connect_now_time;   //记录当前时间片
+	
+	uint32_t face_wifi_connect_timed_task;//12小时定时重连机制
+}FACE_WIFISTATUS;
+
+extern uint8_t FaceErrorSystick;
+
+extern FACE_MSGTYPE  FaceMsgType;           //消息解析
+extern APP_FACE_WORK_PRO  AppFaceWorkPro;   //工作流程
+extern FACE_WIFISTATUS FaceWifiStatus; 
+
+
+void CamWifiPowerDown (void);
+void FacePowerDown (void);
+void ServerFaceTim10Ms (void);
+uint8_t FaceServerProcess(void);
+uint8_t FaceGneralTaskFlow(uint8_t cmd , uint8_t *data , uint8_t Len, uint16_t time_ms); //通用指令
+void FaceClearTask(void);
+void NetWorkStateUpdate (uint8_t State);
+uint8_t NetWorkStateGet (void);
+void FaceUartInit(void);
+#ifdef __cplusplus
+}
+#endif
+
+#endif
+//.end of the file.

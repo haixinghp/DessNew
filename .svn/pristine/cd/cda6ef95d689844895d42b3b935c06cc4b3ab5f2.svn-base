@@ -1,0 +1,461 @@
+/**************************************************************************** 
+* Copyright (C), 2008-2021,德施曼机电（中国）有限公司 
+* 文件名: HAL_RTC.c 
+* 作者：邓业豪
+* 版本：V01
+* 时间：20210722
+* 内容简述：RTC中间接口层文件
+****************************************************************************/
+#include "Public.h"
+#include "HAL_RTC.h"
+#include "..\DRV\DRV_RTC\DRV_RTC_BM8563.h"
+/*************************公共全局变量*************************/  
+RTCType Rtc_Real_Time;//当前时间结构体
+
+/*************************私有全局变量*************************/ 
+//闰年
+#define LEAPS_THRU_END_OF(y) ((y) / 4 - (y) / 100 + (y) / 400)
+//月份天数
+static const uint8_t rtc_days_in_month[] =
+{
+    31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31
+};
+#if 0
+static const uint16_t rtc_ydays[2][13] =
+{
+    /* Normal years */
+    {0, 31, 59, 90, 120, 151, 181, 212, 243, 273, 304, 334, 365},
+    /* Leap years */
+    {0, 31, 60, 91, 121, 152, 182, 213, 244, 274, 305, 335, 366}
+};
+#endif
+//出厂默认时间
+RTCType reset_rtc =
+{
+	.year = 0x21,
+	.month = 0x01,
+	.day = 0x01,
+	.hour = 0x08,
+	.minuter = 0x30,
+	.second = 0x00,
+	.week = 0x05,
+};
+
+/***************************************************************************************
+**函数名:       HAL_RTC_Systick
+**功能描述:     使用时间戳记录滴答软时钟      一秒中断内执行
+**输入参数:     
+**输出参数:     
+**备注:         一秒中断内执行
+****************************************************************************************/
+void HAL_RTC_Systick (void)
+{
+    Rtc_Real_Time.timestamp++;
+}
+
+/***************************************************************************************
+**函数名:       HAL_RTC_HWCheck
+**功能描述:     检验RTC硬件
+**输入参数:     无
+**输出参数:     错误枚举 
+**备注:         
+****************************************************************************************/
+Return_Type_RTC HAL_RTC_HWCheck(void)
+{
+	if( I2C_SUCCESS==DRV_BM8563_HWCheck())
+	{
+		return RTC_Successfully;
+	}
+	else
+	{
+		return RTC_Fail;
+	}
+}
+
+/***************************************************************************************
+**函数名:       HAL_RTC_WriteTime
+**功能描述:     写RTC时间
+**输入参数:     RCT结构体BCD码
+				2015年01月01日 星期四 08:30:02;
+				uint8_t tm_sec;  0x02 >2秒
+				uint8_t tm_min;  0x30 >30分
+				uint8_t tm_hour; 0x08 >8点
+				uint8_t tm_mday; 0x01 >1日
+				uint8_t tm_mon;  0x01 >1月
+				uint8_t tm_year; 0x15 >2015年
+				uint8_t tm_wday; 0x04 >周四
+*****************************/
+Return_Type_RTC HAL_RTC_WriteTime(RTCType  *_writeRTC)
+{
+	my_printf("HAL_RTC_WriteTime \n");
+    //验证写入有效性
+    if ((Math_Bcd2Bin(_writeRTC->second) > 60) ||
+            (Math_Bcd2Bin(_writeRTC->minuter) > 60) ||
+            (Math_Bcd2Bin(_writeRTC->hour) > 24) ||
+            (Math_Bcd2Bin(_writeRTC->week) == 0) ||
+            (Math_Bcd2Bin(_writeRTC->day) > 31) || (Math_Bcd2Bin(_writeRTC->day) == 0) ||
+            (Math_Bcd2Bin(_writeRTC->month) > 12) || (Math_Bcd2Bin(_writeRTC->month) == 0) ||
+            (Math_Bcd2Bin(_writeRTC->year) > 99) || (Math_Bcd2Bin(_writeRTC->year) < 16))
+    {
+        return  RTC_Write_Time_Err;
+    }
+    //驱动层写入时间
+	DRV_BM8563_WriteTime(_writeRTC);
+
+    Rtc_Real_Time = *_writeRTC; //拷贝至当前时间
+    Rtc_Real_Time.timestamp = HAL_RTC_TmToTime(&Rtc_Real_Time); //更新当前时间戳
+	my_printf("HAL_RTC_Write time is  %x/%x/%x %x:%x:%x  week:%x\n", Rtc_Real_Time.year, Rtc_Real_Time.month, Rtc_Real_Time.day, Rtc_Real_Time.hour, Rtc_Real_Time.minuter, Rtc_Real_Time.second, Rtc_Real_Time.week);
+            
+    return RTC_Successfully;
+}
+
+
+/***************************************************************************************
+**函数名:       HAL_RTC_ReadTime
+**功能描述:     读取RTC当前时间
+**输入参数:     无
+**输出参数:     
+**备注:         若时间异常，重置初始时间
+                系统唤醒后读取一次，应避免反复读取
+****************************************************************************************/
+Return_Type_RTC HAL_RTC_ReadTime(void)
+{
+    uint8_t time = 3; //时间读取可重试3次
+    do
+    {
+		DRV_BM8563_ReadTime(&Rtc_Real_Time);//从驱动处读取当前时间
+        Rtc_Real_Time.timestamp = HAL_RTC_TmToTime(&Rtc_Real_Time); //更新当前时间戳
+        //时间参数校验
+        if ((Math_Bcd2Bin(Rtc_Real_Time.second) > 60) ||
+			(Math_Bcd2Bin(Rtc_Real_Time.minuter) > 60) ||
+			(Math_Bcd2Bin(Rtc_Real_Time.hour) > 24) ||
+			(Math_Bcd2Bin(Rtc_Real_Time.week) == 0) ||
+			(Math_Bcd2Bin(Rtc_Real_Time.day) > 31) || (Math_Bcd2Bin(Rtc_Real_Time.day) == 0) ||
+			(Math_Bcd2Bin(Rtc_Real_Time.month) > 12) || (Math_Bcd2Bin(Rtc_Real_Time.month) == 0) ||
+			(Math_Bcd2Bin(Rtc_Real_Time.year) > 99) || (Math_Bcd2Bin(Rtc_Real_Time.year) < 16))
+        {
+            //修正出现非法值
+            if(time != 3)   //第一次先不写，重新读
+            {
+                DRV_BM8563_Init();//初始化一次
+                HAL_RTC_WriteTime(&reset_rtc);//写入出厂默认时间
+			}
+			time--;
+			PUBLIC_Delayms(200);
+			my_printf("RTC ERR **************\n");
+        }
+        else     //打印正确的时间
+        {
+            my_printf("ReadRTC time is  %x/%x/%x %x:%x:%x  week:%x\n", Rtc_Real_Time.year, Rtc_Real_Time.month, Rtc_Real_Time.day, Rtc_Real_Time.hour, Rtc_Real_Time.minuter, Rtc_Real_Time.second, Rtc_Real_Time.week);
+            time = 0;
+        }
+    }
+    while (time);
+    return RTC_Successfully;
+}
+
+/***************************************************************************************
+**函数名:       HAL_RTC_Init
+**功能描述:     读取RTC当前时间
+**输入参数:     无
+**输出参数:     
+**备注:         若发生掉电，重置初始时间
+****************************************************************************************/
+void HAL_RTC_Init(void)
+{
+	if(RTC_Successfully !=DRV_BM8563_ShutDowFlag()) //芯片掉电
+	{
+		DRV_BM8563_Init();//初始化一次
+		HAL_RTC_WriteTime(&reset_rtc);//写入出厂默认时间
+	}
+	return;
+}
+
+/***************************************************************************************
+**函数名:       HAL_RTC_ClkOutEN
+**功能描述:     RTC CLKOUT脚输出时钟方波
+**输入参数:     无
+**输出参数:     
+**备注:         若启用改功能，引脚为开漏模式需外部上拉
+****************************************************************************************/
+void HAL_RTC_ClkOutEN(uint8_t fre)
+{
+	DRV_BM8563_CLK_OUT(fre);
+	return;
+}
+
+/*****************************
+功能：RCT时间转化为时间戳功能实现
+输入参数：十进制年月日时分秒
+返回结果：秒时间戳
+*****************************/
+static uint32_t RTC_mktime(const uint16_t year0, const uint16_t mon0,
+                  const uint16_t day, const uint16_t hour,
+                  const uint16_t min, const uint16_t sec)
+{
+    uint16_t mon = mon0, year = year0;
+    if (mon == 1)
+    {
+        mon = 11;
+        year -= 1;
+    }
+    else if (mon == 2)
+    {
+        mon = 12;
+        year -= 1;
+    }
+    else
+    {
+        mon -= 2;
+    }
+    return ((((uint32_t)
+              (year / 4 - year / 100 + year / 400 + 367 * (uint32_t)(mon) / 12 + day) +
+              (uint32_t)(year) * 365 - 719499
+             ) * 24 + hour /* now have hours */
+            ) * 60 + min /* now have minutes */
+           ) * 60 + sec - 28800; /* finally seconds */
+}
+
+/*****************************
+功能：  计算BCD码的时间戳
+输入参数：rtc_time *tm  >  BCD码RTC时间结构体
+返回结果：秒时间戳
+*****************************/
+uint32_t HAL_RTC_TmToTime(RTCType *tm )
+{
+    //Bcd转Bin，计算当前时间戳
+    return RTC_mktime(Math_Bcd2Bin(tm->year) +2000, Math_Bcd2Bin(tm->month ), Math_Bcd2Bin(tm->day), //年+1900屏蔽
+                      Math_Bcd2Bin(tm->hour), Math_Bcd2Bin(tm->minuter), Math_Bcd2Bin(tm->second));
+}
+
+/*****************************
+功能：计算平年润年
+输入参数： 年份
+返回结果： 0平年  1闰年
+*****************************/
+static uint8_t is_leap_year(int16_t year)
+{
+    return (!(year % 4) && (year % 100)) || !(year % 400);
+}
+
+/*****************************
+功能：计算当天自1月1日的天数
+输入参数：day > 十进制日
+                    month > 十进制日
+                    year > 十进制年
+返回结果：天数
+*****************************/
+static uint8_t rtc_month_days(int8_t month, int16_t year)
+{
+    // month -= 1; //数组rtc_days_in_month[0] = Jan;
+    //该月天数+
+    return rtc_days_in_month[month] + (is_leap_year(year) && month == 1);
+}
+
+/*****************************
+功能：将时间戳转换成时间 0 > 1970-01-01 00:00:00 格林威治时间
+输入： time > 时间戳
+       RTCType *tm 时间结构体指针
+*****************************/
+void HAL_RTC_TimeToTm(uint32_t time, RTCType *tm)
+{
+    uint16_t month, year;
+    int32_t days;
+
+    time = time + 28800; // 格林威治时间戳+8小时 =北京时间
+    days = time / 86400;
+    time -= (uint32_t) days * 86400;
+
+    /* day of the week, 1970-01-01 was a Thursday */
+    tm->week = (days + 4) % 7;
+    tm->week = 1 << tm->week;//周统一按位记录,bit0无效，bit0~bit7对应周一至周日
+
+    year = 1970 + days / 365;
+    days -= ((uint32_t)year - 1970) * 365
+            + LEAPS_THRU_END_OF(year - 1)
+            - LEAPS_THRU_END_OF(1970 - 1);
+    if (days < 0)
+    {
+        year -= 1;
+        days += 365 + is_leap_year(year);
+    }
+
+    tm->year = year - 1900;//1900      //Gregorian
+    tm->day = days + 1;
+    for (month = 0; month < 11; month++)
+    {
+        int32_t newdays;
+
+        newdays = days - rtc_month_days(month, year);
+        if (newdays < 0)
+            break;
+        days = newdays;
+    }
+    tm->month = month + 1;
+    tm->day = days + 1;
+
+    tm->hour = time / 3600;
+    time -= (uint32_t)(tm->hour) * 3600;
+    tm->minuter = time / 60;
+    tm->second = time - (uint32_t)(tm->minuter) * 60;
+	return;
+}
+
+/*****************************
+功能：时分秒对比
+输入参数：tmnow>当前时间结构体
+          tmstr>有效起始时间结构体
+          tmstp>有效结束时间结构体
+          注：时间均为十进制
+*****************************/
+Return_Type_RTC RTC_daytime_is_timesize(RTCType *tm_str, RTCType *tm_stp, RTCType *tm_now)
+{
+    uint32_t sec_str, sec_stp, sec_now;
+
+    sec_str = ((uint32_t)(tm_str->hour) * 60 + (uint32_t)(tm_str->minuter)) * 60 + (uint32_t)(tm_str->second);
+    sec_stp = ((uint32_t)(tm_stp->hour) * 60 + (uint32_t)(tm_stp->minuter)) * 60 + (uint32_t)(tm_stp->second);
+    sec_now = ((uint32_t)(tm_now->hour) * 60 + (uint32_t)(tm_now->minuter)) * 60 + (uint32_t)(tm_now->second);
+
+    if (sec_str < sec_now && sec_now < sec_stp)
+    {
+        return RTC_Successfully;
+    }
+    else
+    {
+        return RTC_Fail;
+    }
+}
+
+/*****************************
+功能：时效验证，判断当前时间是否在有效起始范围内
+输入参数：tmnow>当前时间结构体
+          tmstr>有效起始时间结构体
+          tmstp>有效结束时间结构体
+          validwday>有效周
+          注：时间均为十进制
+*****************************/
+Return_Type_RTC RTC_mktime_is_timesize(RTCType *tmnow, RTCType *tmstr, RTCType *tmstp, uint8_t validwday)
+{
+    uint32_t sec_str, sec_stp, sec_now;
+
+    //存储格式bit几代表周几，BM8563时钟格式0代表周日
+    if (tmnow->week == 0)   //当前时间为星期天
+    {
+        tmnow->week = 0x40; //改为存储格式bit7
+    }
+
+    //1.比较小时和分
+    tmstr->second = 0;                                        //Str xx:xx:00
+    tmstp->second = 59;                                       //Stp xx:xx:59
+    if (RTC_daytime_is_timesize(tmstr, tmstp, tmnow) == RTC_Fail) //时分秒对比，开始<当前<结束
+        return RTC_Fail;
+
+    //2.从起始的日期00:00:00到截止日期的23:59:59 判断日期段和周
+    tmstr->hour = 0;
+    tmstr->minuter = 0;
+    tmstp->hour = 23;
+    tmstp->minuter = 59;
+    sec_str = HAL_RTC_TmToTime(tmstr); //起始时间戳
+    sec_stp = HAL_RTC_TmToTime(tmstp); //结束时间戳
+    sec_now = HAL_RTC_TmToTime(tmnow); //当前时间戳
+    if (sec_str < sec_now && sec_now < sec_stp)   //开始<当前<结束
+    {
+        if ((tmnow->week & validwday) == 0) //当前周是否满足
+            return RTC_Fail;
+    }
+    else
+    {
+        return RTC_Fail;
+    }
+
+    return RTC_Successfully;
+}
+
+/*****************************
+功能：时效验证，判单当前时间是否在有效起始时间范围内
+输入参数：tmnow>当前时间结构体
+          tmstr>有效起始时间结构体
+          tmstp>有效结束时间结构体
+          validwday>有效周
+          注：时间均为BCD码，进来转换
+输入：时效对比结果
+      有效RTC_Successfully
+      失效RTC_Fail
+*****************************/
+Return_Type_RTC HAL_RTC_TimeIsTimesize( RTCType *tmstr, RTCType *tmstp, uint8_t validwday)
+{
+    RTCType tmnow = {0};
+    //当前时间转十进制
+    tmnow.second = Math_Bcd2Bin(Rtc_Real_Time.second);
+    tmnow.minuter = Math_Bcd2Bin(Rtc_Real_Time.minuter);
+    tmnow.hour = Math_Bcd2Bin(Rtc_Real_Time.hour);
+    tmnow.day = Math_Bcd2Bin(Rtc_Real_Time.day);
+    tmnow.month = Math_Bcd2Bin(Rtc_Real_Time.month);
+    tmnow.year = Math_Bcd2Bin(Rtc_Real_Time.year);
+    tmnow.week = Rtc_Real_Time.week; //周不变
+    //开始时间转十进制
+    tmstr->second = Math_Bcd2Bin(tmstr->second);
+    tmstr->minuter = Math_Bcd2Bin(tmstr->minuter);
+    tmstr->hour = Math_Bcd2Bin(tmstr->hour);
+    tmstr->day = Math_Bcd2Bin(tmstr->day);
+    tmstr->month = Math_Bcd2Bin(tmstr->month);
+    tmstr->year = Math_Bcd2Bin((tmstr->year));
+    //结束时间转十进制
+    tmstp->second = Math_Bcd2Bin(tmstp->second);
+    tmstp->minuter = Math_Bcd2Bin(tmstp->minuter);
+    tmstp->hour = Math_Bcd2Bin(tmstp->hour);
+    tmstp->day = Math_Bcd2Bin(tmstp->day);
+    tmstp->month = Math_Bcd2Bin(tmstp->month);
+    tmstp->year = Math_Bcd2Bin((tmstp->year));
+
+    //验证时间有效性
+    if (RTC_mktime_is_timesize(&tmnow, tmstr, tmstp, validwday) == RTC_Fail)
+    {
+        return RTC_Fail;
+    }
+    else
+    {
+        return RTC_Successfully;
+    }
+}
+
+/*****************************
+功能：获取最新时间或者时间戳
+输入  RTC_TIME_CLOCK >  可根据时间戳更新系统时间
+      例  RTC_Time_Update(RTC_TIME_CLOCK_BCD,&Rtc_Real_Time);
+输出  无,更新Rtc_Real_Time结构体
+
+输入  RTC_TIME_STAMP >  直接获取滴答计时时间戳
+      例  RTC_Time_Update(RTC_TIME_STAMP,NULL);
+输出  当前时间戳
+
+注：调用此函数更新系统时间更具时效性，避免重复读取RCT芯片造成的意外出错
+*****************************/
+uint32_t RTC_TimeUpdate(RTC_TIME_Type mode)
+{
+    switch (mode)
+    {
+    case RTC_TIME_STAMP://时间戳
+        return Rtc_Real_Time.timestamp; //软时钟
+
+    case RTC_TIME_CLOCK_BCD: //BCD时间
+    case RTC_TIME_CLOCK_BIN: //十进制时间
+        HAL_RTC_TimeToTm(Rtc_Real_Time.timestamp, &Rtc_Real_Time); //软件时间戳转十进制时间
+        if(mode == RTC_TIME_CLOCK_BCD)   //时间转BCD码
+        {
+            Rtc_Real_Time.year  = Math_Bin2Bcd(Rtc_Real_Time.year);
+            Rtc_Real_Time.month = Math_Bin2Bcd(Rtc_Real_Time.month);
+            Rtc_Real_Time.day   = Math_Bin2Bcd(Rtc_Real_Time.day);
+            Rtc_Real_Time.hour  = Math_Bin2Bcd(Rtc_Real_Time.hour);
+            Rtc_Real_Time.minuter = Math_Bin2Bcd(Rtc_Real_Time.minuter);
+            Rtc_Real_Time.second = Math_Bin2Bcd(Rtc_Real_Time.second);
+        }
+        break;
+    default:
+        break;
+    }
+    return 0;
+}
+ 
+//.end of the file.
+

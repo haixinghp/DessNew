@@ -1,0 +1,62 @@
+#ifndef _DRV_GPIO_H_
+#define _DRV_GPIO_H_
+#ifdef __cplusplus
+extern "C"
+{
+#endif
+
+#include "stdint.h"
+#include "rtl876x_gpio.h"
+#include "rtl876x_rcc.h"
+#include "rtl876x_pinmux.h"
+typedef void (*DRV_GPIOPtr)();
+
+typedef enum
+{
+	DRV_GPIO_LOTOHI =0 ,       ///<  Low to high.
+	DRV_GPIO_HITOLO ,       ///<  High to low.
+} DRV_GPIO_POL_E;
+
+
+void DRV_GpioHighOut1(uint32_t pinNumber );
+	
+void DRV_GpioHighOut0(uint32_t pinNumber );
+	
+void DRV_GpioOutPP(uint32_t pinNumber );
+
+void DRV_GpioOut1(uint32_t pinNumber);
+
+void DRV_GpioOut0(uint32_t pinNumber);
+
+void DRV_GpioInputPullup(uint32_t pinNumber);
+
+void DRV_GpioInputPulldown(uint32_t pinNumber);
+
+void DRV_GpioInputPullnull(uint32_t pinNumber);
+
+uint8_t DRV_GpioRead(uint32_t pinNumber);
+
+void DRV_GpioDisconnect(uint32_t pinNumber);
+
+void DRV_GpioDefault(void);
+
+void DRV_GpioInterruptEnable(uint32_t pinNumber ,DRV_GPIO_POL_E Polarity ,DRV_GPIOPtr handler);
+
+void DRV_GpioInterruptDisable(uint32_t pinNumber );
+
+void DRV_GpioSleep(void);
+
+void DRV_GpioSWOut1(uint32_t pinNumber );
+
+void DRV_GpioSWOut0(uint32_t pinNumber );
+
+void DRV_GpioSWInput(uint32_t pinNumber );
+
+void DRV_EdegInterruptEnable(DRV_GPIOPtr handler);
+void DRV_EdegInterruptDisable(uint32_t pinNumber );
+void DRV_GpioSWMode(uint32_t pinNumber );
+#ifdef __cplusplus
+}
+#endif
+#endif
+//.end of the file.

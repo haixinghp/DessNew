@@ -1,0 +1,815 @@
+/*
+ * Copyright (C) 2018 Alibaba Group Holding Limited
+ */
+
+
+#include <string.h>
+#include "se_driver.h"
+#include "se_timer.h"
+#include "DRV_GPIO.h"
+#include "App_ID2.h"
+
+#include "LockConfig.h"
+#include "APP_ID2.h"
+#include "scp.h"
+#include "sm_apdu.h"
+#include "smComSCI2C.h"
+#include "irot_hal.h"
+
+//define debug 
+//#define SE_DEBUG
+//#define DEBUG_I2C
+
+#define a7_i2c_delay(x)				Id2_SeDelayus(x)
+
+#define A7_I2C_DELAY  2
+
+#define A7_I2C_ADDR                (0x48 << 1)
+#define FDW_SE_ADDR					0xE2
+
+#define MJ_SDA_PIN 						    M_SE_SDA_GPIO_PIN
+#define MJ_SCL_PIN 						    M_SE_SCL_GPIO_PIN
+
+
+
+
+
+uint8_t a7_i2c_restart(void)
+{
+	DRV_GpioOut1(MJ_SDA_PIN);
+	DRV_GpioOut1(MJ_SCL_PIN);
+	a7_i2c_delay(A7_I2C_DELAY / 2);
+	DRV_GpioOut0(MJ_SDA_PIN);
+	a7_i2c_delay(A7_I2C_DELAY / 2);
+	DRV_GpioOut0(MJ_SCL_PIN);
+
+  return 1;
+}
+ void a7_i2c_send_noack(void)
+{
+	DRV_GpioOut1(MJ_SDA_PIN);
+	a7_i2c_delay(A7_I2C_DELAY);
+	DRV_GpioOut1(MJ_SCL_PIN);
+	a7_i2c_delay(A7_I2C_DELAY);
+	DRV_GpioOut0(MJ_SCL_PIN);
+}
+
+uint8_t a7_i2c_wait_ack(void)
+{
+	uint16_t err = 1;  // 50000;
+	DRV_GpioOut1(MJ_SDA_PIN);
+
+	DRV_GpioInputPullup(MJ_SDA_PIN);
+	DRV_GpioOut1(MJ_SCL_PIN);
+	a7_i2c_delay(A7_I2C_DELAY);
+	if (DRV_GpioRead(MJ_SDA_PIN) != 0) {
+	err = 0;
+	}
+	DRV_GpioOut0(MJ_SCL_PIN);
+	DRV_GpioOutPP(MJ_SDA_PIN);
+	a7_i2c_delay(A7_I2C_DELAY);
+
+	return err;
+}
+ void a7_i2c_write_byte(uint8_t data)
+{
+    uint8_t i;
+
+	for (i = 0; i < 8; i++) {
+	if (data & 0x80) {
+	DRV_GpioOut1(MJ_SDA_PIN);
+	} else {
+	DRV_GpioOut0(MJ_SDA_PIN);
+	}
+	data <<= 1;
+	a7_i2c_delay(A7_I2C_DELAY);
+	DRV_GpioOut1(MJ_SCL_PIN);
+	a7_i2c_delay(A7_I2C_DELAY);
+	DRV_GpioOut0(MJ_SCL_PIN);
+	}
+	a7_i2c_delay(A7_I2C_DELAY);
+
+}
+ uint8_t a7_i2c_read_byte(void)
+{
+	uint8_t i;
+	uint8_t bReadValue = 0;
+	uint8_t bit;
+
+	DRV_GpioOut1(MJ_SDA_PIN);
+	DRV_GpioInputPullup(MJ_SDA_PIN);
+	a7_i2c_delay(A7_I2C_DELAY);
+	i = 0;
+	for (i = 0; i < 8; i++)
+	{
+		DRV_GpioOut1(MJ_SCL_PIN);
+		a7_i2c_delay(A7_I2C_DELAY);
+		if (DRV_GpioRead(MJ_SDA_PIN))
+		bit = 0x01;
+		else
+		bit = 0x00;
+		bReadValue = bReadValue << 1;
+		bReadValue = bReadValue | bit;
+		DRV_GpioOut0(MJ_SCL_PIN);
+		a7_i2c_delay(A7_I2C_DELAY);
+	}
+	//    A7_SDA_SET();
+	DRV_GpioOutPP(MJ_SDA_PIN);
+	return bReadValue;
+}
+ void a7_i2c_send_ack(void)
+{
+	DRV_GpioOut0(MJ_SCL_PIN);
+	a7_i2c_delay(A7_I2C_DELAY);
+	DRV_GpioOut0(MJ_SDA_PIN);
+	a7_i2c_delay(A7_I2C_DELAY);
+	DRV_GpioOut1(MJ_SCL_PIN);
+	a7_i2c_delay(A7_I2C_DELAY);
+	DRV_GpioOut0(MJ_SCL_PIN);
+	a7_i2c_delay(A7_I2C_DELAY);
+}
+static uint8_t a7_i2c_start(void)
+{
+	DRV_GpioOut1(MJ_SDA_PIN);
+	DRV_GpioOut1(MJ_SCL_PIN);
+	a7_i2c_delay(A7_I2C_DELAY / 2);
+	DRV_GpioOut0(MJ_SDA_PIN);
+	a7_i2c_delay(A7_I2C_DELAY / 2);
+	DRV_GpioOut0(MJ_SCL_PIN);
+	return 1;
+}
+
+
+static void a7_i2c_stop(void)
+{
+	DRV_GpioOut0(MJ_SDA_PIN);
+	a7_i2c_delay(A7_I2C_DELAY / 2);
+	DRV_GpioOut1(MJ_SCL_PIN);
+	a7_i2c_delay(A7_I2C_DELAY / 2);
+	DRV_GpioOut1(MJ_SDA_PIN);
+	a7_i2c_delay(A7_I2C_DELAY / 2);
+}
+
+i2c_error_t axI2CWrite(uint8_t bus, uint8_t addr, uint8_t* pTx,
+                       uint16_t txLen)
+{
+  uint32_t i;
+
+  a7_i2c_start();
+  a7_i2c_write_byte(addr);
+  if (a7_i2c_wait_ack() == 0) {
+    a7_i2c_stop();
+//	   my_printf("*************************************************ID2 I2C_NACK_ON_ADDRESS \n");
+    return I2C_NACK_ON_ADDRESS;
+  }
+
+  for (i = 0; i < txLen; i++) {
+    a7_i2c_write_byte(*pTx);
+    if (a7_i2c_wait_ack() == 0) {
+//      my_printf(" --- axI2CWrite 2 Addr 0x%x FAILED, Cnt %d\r\n", addr, i);
+      a7_i2c_stop();
+      return I2C_NACK_ON_DATA;
+
+    }
+    pTx++;
+  }
+  a7_i2c_stop();
+
+  return I2C_OK;
+}
+
+i2c_error_t axI2CWriteRead(uint8_t bus, uint8_t addr, uint8_t* pTx,
+                           uint16_t txLen, uint8_t* pRx, uint16_t* pRxLen)
+{
+
+  uint16_t i, j;
+
+  a7_i2c_start();
+  a7_i2c_write_byte(addr);
+  if (a7_i2c_wait_ack() == 0) {
+		a7_i2c_stop();
+//		 my_printf("*************************************************ID2 I2C_NACK_ON_ADDRESS \n");
+
+    return I2C_NACK_ON_ADDRESS;
+  }
+
+  for (i = 0; i < txLen; i++) {
+    a7_i2c_write_byte(*pTx);
+    if (a7_i2c_wait_ack() == 0) {
+      a7_i2c_stop();
+      return I2C_NACK_ON_DATA;
+		
+    }
+    pTx++;
+  }
+
+  a7_i2c_delay(A7_I2C_DELAY * 100);
+  // --------------------------------------------------------------------------------------
+  // restart
+  a7_i2c_start();
+  a7_i2c_write_byte(addr | 0x01);
+  if (a7_i2c_wait_ack() == 0) {
+    a7_i2c_stop();
+    return I2C_NACK_ON_ADDRESS;
+//	  my_printf("*************************************************ID2 I2C_OK \n");
+  }
+
+  // why delay here
+   a7_i2c_delay(A7_I2C_DELAY * 100); 
+
+  j = a7_i2c_read_byte();
+  a7_i2c_send_ack();
+  *pRx = j;
+  pRx++;
+
+  for (i = 0; i < j; i++) {
+    *pRx = a7_i2c_read_byte();
+    if (i == j - 1) {
+      a7_i2c_send_noack();
+    } else {
+      a7_i2c_send_ack();
+    }
+    pRx++;
+  }
+
+  a7_i2c_stop();
+  *pRxLen = j + 1;
+//  my_printf("*************************************************ID2 I2C_OK \n");
+  return I2C_OK;
+}
+
+
+#if (ID2_SE_TYPE==ID2_ENCRYPT_FDW)
+
+
+static uint8_t gfm_I2CAddr;
+static StSeFunc *pgfm_SeFunc = NULL;
+static StSeI2CDriver *pgfm_I2CDrv = NULL;
+
+
+void user_i2c_dev_power_on(void)
+{
+//	DRV_GpioOut0(MJ_POW);
+//	Id2_SeDelayms(I2C_PWR_ON_DELAY);
+	return;
+}
+
+void user_i2c_dev_power_off(void)
+{
+//	DRV_GpioOut1(MJ_POW);
+//	Id2_SeDelayms(I2C_PWR_OFF_DELAY);\]
+	return;
+}
+
+void user_i2c_init(void)
+{
+	DRV_GpioInputPullup(MJ_SDA_PIN);
+	if (DRV_GpioRead(MJ_SDA_PIN) == 0)
+	{
+		a7_i2c_restart();
+		a7_i2c_write_byte(0xff);
+        a7_i2c_send_noack();
+		
+		DRV_GpioOut0(MJ_SDA_PIN);
+		a7_i2c_delay(A7_I2C_DELAY / 2);
+		DRV_GpioOut1(MJ_SCL_PIN);
+		a7_i2c_delay(A7_I2C_DELAY / 2);
+		DRV_GpioOut1(MJ_SDA_PIN);
+		a7_i2c_delay(A7_I2C_DELAY / 2);
+	}
+
+}
+
+void user_i2c_start(void)
+{	
+	DRV_GpioOut1(MJ_SDA_PIN);
+	DRV_GpioOut1(MJ_SCL_PIN);
+	a7_i2c_delay(A7_I2C_DELAY / 2);
+	DRV_GpioOut0(MJ_SDA_PIN);
+	a7_i2c_delay(A7_I2C_DELAY / 2);
+	DRV_GpioOut0(MJ_SCL_PIN);
+}
+
+void user_i2c_stop(void)
+{
+	DRV_GpioOut0(MJ_SDA_PIN);
+	a7_i2c_delay(A7_I2C_DELAY / 2);
+	DRV_GpioOut1(MJ_SCL_PIN);
+	a7_i2c_delay(A7_I2C_DELAY / 2);
+	DRV_GpioOut1(MJ_SDA_PIN);
+	a7_i2c_delay(A7_I2C_DELAY / 2);
+}
+uint8_t user_i2c_send_char(uint8_t ch)
+{	
+	a7_i2c_write_byte(ch);
+	uint8_t ret=a7_i2c_wait_ack();
+	Id2_SeDelayus(BYTE_DELAY_I2C);
+
+	if(ret)
+		return 0;
+
+	else 
+		return 12;	//timeout err
+}
+
+uint8_t user_i2c_recv_char(void)
+{
+	uint8_t rcv_byte= a7_i2c_read_byte();
+	a7_i2c_send_ack();
+
+	Id2_SeDelayus(BYTE_DELAY_I2C);
+        
+    return rcv_byte;
+}
+
+uint8_t user_i2c_send_addr(uint8_t ch)
+{
+	a7_i2c_write_byte(ch);
+	uint8_t ret=a7_i2c_wait_ack();
+	Id2_SeDelayus(BYTE_DELAY_I2C);
+
+	if(ret){
+		return 0;
+	}
+	else {
+		return 12;	//timeout err
+	}
+}
+
+StSeI2CDriver gusr_i2c_drv = 
+{
+	FDW_SE_ADDR,
+	user_i2c_dev_power_on,
+	user_i2c_dev_power_off,
+	user_i2c_init,
+	user_i2c_start,
+	user_i2c_stop,
+	user_i2c_send_char,
+	user_i2c_recv_char,
+	user_i2c_send_addr
+};
+
+void fm_i2c_drv_reg(StSeI2CDriver *fm_i2c_drv)
+{
+	pgfm_I2CDrv = fm_i2c_drv;
+}
+
+void fm_i2c_drv_unreg(void)
+{
+	pgfm_I2CDrv = NULL;
+}
+
+void fm_i2c_dev_init(void)
+{
+	if(pgfm_I2CDrv)
+		pgfm_I2CDrv->fm_i2c_init();
+}
+
+void fm_i2c_open_device(void)
+{
+	if(pgfm_I2CDrv)
+	{
+		gfm_I2CAddr = pgfm_I2CDrv->se_i2c_addr;
+		pgfm_I2CDrv->fm_i2c_power_on();
+	}
+}
+
+void fm_i2c_close_device(void)
+{
+	if(pgfm_I2CDrv)
+	{
+		gfm_I2CAddr = 0;
+		pgfm_I2CDrv->fm_i2c_power_off();
+	}
+}
+
+uint8_t fm_i2c_send_frame(uint8_t cmd, uint8_t *sbuf, uint16_t slen)
+{
+	FM_I2C_HEAD fm_i2c_hd;
+	uint16_t i;
+	uint8_t bcc;
+	uint8_t ret;
+	
+	fm_i2c_hd.lenlo = slen+3;
+	fm_i2c_hd.lenhi = (slen+3)>>8;
+	fm_i2c_hd.nad = 0;
+	fm_i2c_hd.flag.cmd = cmd;
+
+	if(!pgfm_I2CDrv)
+		return 11;
+	
+	pgfm_I2CDrv->fm_i2c_start();
+
+	//send se addr,write slaver
+	ret = pgfm_I2CDrv->fm_i2c_send_addr(gfm_I2CAddr);
+	if(ret) goto END;
+
+	//send pack head
+	for(i=0; i<4; i++)
+	{
+		ret = pgfm_I2CDrv->fm_i2c_send_char(*(&fm_i2c_hd.lenlo+i));
+		if(ret) goto END;
+	}
+
+	//calc bcc
+	bcc = fm_i2c_hd.lenlo ^ fm_i2c_hd.lenhi ^ fm_i2c_hd.nad ^ fm_i2c_hd.flag.cmd; 
+
+	//send data
+	for(i=0; i<slen; i++)
+	{
+		ret = pgfm_I2CDrv->fm_i2c_send_char(*(sbuf+i));
+		bcc ^= sbuf[i];
+		if(ret) goto END;
+	}
+
+	//send bcc
+	ret = pgfm_I2CDrv->fm_i2c_send_char(bcc);
+
+	pgfm_I2CDrv->fm_i2c_stop();
+
+	//debug
+	#ifdef DEBUG_I2C
+	//my_printf("HEAD:%02x,%02x,LRC:%02x\r\n",fm_i2c_hd.lenhi,fm_i2c_hd.lenlo,bcc);
+	#endif
+
+	Id2_SeDelayms(FRAME_DELAY_I2C);
+
+END:
+ 	return ret;
+}
+
+uint8_t fm_i2c_recv_frame(uint8_t *rbuf, uint16_t *rlen)
+{
+	uint16_t i;
+	uint16_t recvLen;
+	uint8_t bcc;
+	uint8_t ret;
+	FM_I2C_HEAD fm_i2c_hd;
+
+	*rlen = 0;
+	
+	if(!pgfm_I2CDrv)
+		return 11;
+	
+	pgfm_I2CDrv->fm_i2c_start();
+	
+	//send se addr,read slaver
+	ret = pgfm_I2CDrv->fm_i2c_send_addr(gfm_I2CAddr+1);
+	if(ret)
+	{
+		return ret;
+	}
+
+	//recv length
+	fm_i2c_hd.lenlo = pgfm_I2CDrv->fm_i2c_recv_char();
+	fm_i2c_hd.lenhi = pgfm_I2CDrv->fm_i2c_recv_char();
+
+	recvLen  = (fm_i2c_hd.lenhi << 8) + fm_i2c_hd.lenlo;
+	
+	if(recvLen < I2C_MIN_LEN || recvLen > I2C_MAX_LEN)
+	{
+		//my_printf("err_recvLen=%04x\r\n",recvLen);
+		*rlen = 0;
+		return 13;
+	}
+
+	//recv nad and sta
+	fm_i2c_hd.nad = pgfm_I2CDrv->fm_i2c_recv_char();
+	fm_i2c_hd.flag.sta = pgfm_I2CDrv->fm_i2c_recv_char();
+
+	bcc = fm_i2c_hd.lenlo ^ fm_i2c_hd.lenhi ^ fm_i2c_hd.nad ^ fm_i2c_hd.flag.sta;
+
+	//recv data length
+	*rlen = recvLen - 3;
+	
+	//recv data
+	for(i=0; i<*rlen; i++)
+	{
+		rbuf[i] = pgfm_I2CDrv->fm_i2c_recv_char();
+		bcc ^= rbuf[i];
+	}
+	
+
+	//recv and check bcc
+//	bcc ^= pgfm_I2CDrv->fm_i2c_recv_char();
+	bcc ^=a7_i2c_read_byte();
+	a7_i2c_send_noack();
+		//stop
+	pgfm_I2CDrv->fm_i2c_stop();
+	
+	if(bcc)
+	{
+		*rlen = 0;
+		return 14;
+	}
+
+	Id2_SeDelayms(FRAME_DELAY_I2C);
+	
+	return fm_i2c_hd.flag.sta;
+}
+
+uint8_t fm_i2c_get_atr(uint8_t *rbuf, uint16_t *rlen)
+{
+	uint8_t ret;
+
+	ret = fm_i2c_send_frame(I2C_CMD_GET_ATR, 0, 0);
+	if(ret) return ret;
+
+	Id2Tim_InitTimeOut_ms(POLL_TIMEOUT);
+	do{
+		ret = fm_i2c_recv_frame(rbuf, rlen);
+		if(!ret) break;
+	}while(!Id2Tim_CheckTimeOut_ms());
+
+	return ret;	
+}
+
+uint8_t fm_i2c_transceive(uint8_t *sbuf, uint16_t slen, uint8_t *rbuf, uint16_t *rlen, 
+						uint16_t poll_inv, uint32_t poll_timeout)
+{
+	uint8_t ret;
+
+	//debug
+	#ifdef DEBUG_I2C_SEND
+	for(i=0; i<slen; i++)
+		my_printf("%02x,",sbuf[i]);
+	my_printf("\r\n");
+	#endif
+
+	*rlen = 0;
+	ret = fm_i2c_send_frame(I2C_CMD_IBLOCK, sbuf, slen);
+	#ifdef DEBUG_I2C
+	my_printf("fm_i2c_send_frame_ret=%02x\r\n",ret);
+	#endif
+	if(ret) return ret;
+
+	Id2Tim_InitTimeOut_ms(poll_timeout);
+	do{
+		ret = fm_i2c_recv_frame(rbuf, rlen);
+
+		if(ret == 12){	//timeout
+			Id2_SeDelayms(poll_inv);
+		}else if(ret==13||ret==14){	//bcc err
+			fm_i2c_send_frame(I2C_CMD_NAK, 0, 0);
+			Id2Tim_InitTimeOut_ms(poll_timeout);
+		}else if(ret == 0xF2){	//WTX
+			Id2Tim_InitTimeOut_ms(poll_timeout);
+		}else
+			break;
+	}while(!Id2Tim_CheckTimeOut_ms());
+	
+	#ifdef DEBUG_I2C
+	/*for(i=0; i<*rlen; i++)
+		my_printf("%02x,",rbuf[i]);
+	my_printf("\r\n");*/
+	#endif
+	
+	return ret;
+}
+
+StSeFunc gfm_se_i2c = 
+{
+	SE_IF_I2C,
+	fm_i2c_drv_reg,
+	fm_i2c_dev_init,
+	fm_i2c_open_device,
+	fm_i2c_close_device,
+	fm_i2c_get_atr,
+	fm_i2c_transceive,
+	fm_i2c_drv_unreg
+};
+/*************************I2C inf end**************************************/
+
+StSeFunc *fm_se_register(StSeFunc *fm_se)
+{
+	StSeFunc *pfm_SeFunc = NULL;
+	
+	pfm_SeFunc = fm_se;
+	if(pfm_SeFunc)
+	{
+		if(pfm_SeFunc->se_name == SE_IF_I2C){
+			pfm_SeFunc->fm_driver_register(&gusr_i2c_drv);
+			
+		}
+//		else if(pfm_SeFunc->se_name == SE_IF_SPI){
+//			pfm_SeFunc->fm_driver_register(&gusr_spi_drv);
+//			
+//		}
+	}
+
+	return pfm_SeFunc;
+}
+irot_result_t se_open_session(void** handle)
+{
+	uint8_t result = 0;
+	uint8_t rbuf[32];
+	uint16_t rlen = 0;
+
+	#ifdef SE_TYPE_I2C
+	pgfm_SeFunc = fm_se_register(&gfm_se_i2c);
+	#else
+	pgfm_SeFunc = fm_se_register(&gfm_se_spi);
+	#endif
+	
+	if(pgfm_SeFunc == NULL) return IROT_ERROR_GENERIC;
+
+	*handle = pgfm_SeFunc;
+	
+	pgfm_SeFunc->fm_open_device();
+
+	pgfm_SeFunc->fm_device_init();
+
+	result = pgfm_SeFunc->fm_dev_power_on(rbuf, &rlen);
+
+	#ifdef SE_DEBUG
+	my_printf("PowerOn:ret=%x,rlen=%d\r\n",result,rlen);
+	for(i=0;i<rlen;i++)
+	{
+		my_printf("%02x,",rbuf[i]);
+	}
+	my_printf("\r\n");
+	#endif
+
+	if(result) return IROT_ERROR_TIMEOUT;
+	
+    return IROT_SUCCESS;
+}
+
+irot_result_t se_transmit(void* handle, const uint8_t* cmd_apdu, const uint32_t cmd_len, uint8_t* rsp_buf, uint32_t* rsp_len)
+{
+	uint8_t result = 0;
+	StSeFunc *pfm_SeFunc = handle;
+	
+    memset(rsp_buf, 0x00, *rsp_len);
+
+	if(handle == NULL) return IROT_ERROR_GENERIC;
+
+	#ifdef SE_DEBUG
+	my_printf("Send:slen=%d\r\n",cmd_len);
+	for(i=0;i<cmd_len;i++)
+	{
+		my_printf("%02x,",cmd_apdu[i]);
+	}
+	my_printf("\r\n");
+	#endif
+	
+	result = pfm_SeFunc->fm_apdu_transceive((uint8_t*)cmd_apdu, cmd_len, rsp_buf, (uint16_t *)rsp_len, POLL_INTERVAL, POLL_TIMEOUT);
+
+	#ifdef SE_DEBUG
+	my_printf("Recv:ret=%x,rlen=%d\r\n",result,*rsp_len);
+	for(i=0;i<*rsp_len;i++)
+	{
+		my_printf("%02x,",rsp_buf[i]);
+	}
+	my_printf("\r\n");
+	#endif
+
+	if(result) return IROT_ERROR_TIMEOUT;
+		
+    return IROT_SUCCESS;
+}
+
+irot_result_t se_close_session(void* handle)
+{
+	StSeFunc *pfm_SeFunc = handle;
+	
+	if(pfm_SeFunc == NULL) return IROT_ERROR_GENERIC;
+	
+	pfm_SeFunc->fm_close_device();
+
+	handle = NULL;
+
+	#ifdef SE_DEBUG
+	my_printf("PowerOff!\r\n");
+	#endif
+	
+    return IROT_SUCCESS;
+}
+#elif (ID2_SE_TYPE==ID2_ENCRYPT_NXP)
+
+
+
+
+
+
+
+
+
+
+
+
+#define MAX_SE_HAL_LIB_HANDLES		16
+static U8 handles[MAX_SE_HAL_LIB_HANDLES] = { 0 };
+static U8 sHandlesInited = 0;
+
+
+irot_result_t se_open_session(void** handle)
+{
+  // Open connection!!!
+  U8 Atr[64];
+  U16 AtrLen = sizeof(Atr);
+  U16 lReturn;
+
+  if (handle == NULL) {
+    return IROT_ERROR_BAD_PARAMETERS;
+  }
+
+  if (!sHandlesInited) {
+    memset(handles, 0, sizeof(handles));
+    sHandlesInited = 1;
+  }
+
+  // search for an available handle
+  U16 index;
+
+  for (index = 0; index < MAX_SE_HAL_LIB_HANDLES; ++index) {
+    if (handles[index] == 0) {
+      handles[index] = 1; // occupied
+
+      lReturn = smComSCI2C_Open(ESTABLISH_SCI2C, 0x00,Atr, &AtrLen);
+      if (lReturn != SMCOM_OK) {
+        return IROT_ERROR_ITEM_NOT_FOUND;
+      }
+      *handle = (void*)(index + 1);
+
+      return IROT_SUCCESS;
+    }
+  }
+
+  // number of handles has exceeded MAX_SE_HAL_LIB_HANDLES
+  return IROT_ERROR_OVER_HANDLER_LIMITATION;
+}
+
+irot_result_t se_transmit(void* handle, const uint8_t* cmd_apdu,
+                          const uint32_t cmd_len, uint8_t* rsp_buf,
+                          uint32_t* rsp_len)
+{
+  apdu_t apdu = { 0 };
+  apdu_t *pApdu = (apdu_t*)&apdu;
+  U16 rv = 0;
+  U8 isOk = 0;
+  uint16_t  response_len = *rsp_len;
+
+  if (handles[((uint32_t)handle) - 1] != 1) {
+    return IROT_ERROR_BAD_PARAMETERS;
+  }
+
+  memset(rsp_buf, 0x00, *rsp_len);
+
+  pApdu->cla = cmd_apdu[0];
+  pApdu->ins = cmd_apdu[1];
+  pApdu->p1 = cmd_apdu[2];
+  pApdu->p2 = cmd_apdu[3];
+  pApdu->lc = cmd_apdu[4];
+
+  AllocateAPDUBuffer(pApdu);
+
+  SetApduHeader(pApdu, USE_STANDARD_APDU_LEN);
+  if (cmd_len == 5 && cmd_apdu[4] != 0) {
+    pApdu->hasLe = 1;
+    pApdu->le = cmd_apdu[4];
+  }
+  if ((cmd_len - 5) > 0) {
+    smApduAppendCmdData(pApdu, (const U8*)&cmd_apdu[5],
+                        cmd_len - 5);
+  }
+
+  rv = (U16)scp_Transceive(pApdu, SCP_MODE);
+  if (rv == SMCOM_OK) {
+    rv = smGetSw(pApdu, &isOk);
+    if (isOk) {
+      rv = smApduGetResponseBody(pApdu, rsp_buf, &response_len);
+      if (rv == SW_OK) {
+        /* if (response_len != *rsp_len) { */
+          /* rv = ERR_WRONG_RESPONSE; */
+        /* } */
+        *rsp_len = response_len;
+        return IROT_SUCCESS;
+      }
+    }
+  }
+  return IROT_ERROR_GENERIC;
+}
+
+irot_result_t se_close_session(void* handle)
+{
+  if (handle == NULL) {
+    return IROT_ERROR_BAD_PARAMETERS;
+  }
+
+  if ((uint32_t)handle > MAX_SE_HAL_LIB_HANDLES) {
+    return IROT_ERROR_OVER_HANDLER_LIMITATION;
+  }
+
+  if (handles[((uint32_t)handle) - 1] != 1) {
+    return IROT_ERROR_BAD_PARAMETERS;
+  }
+
+  handles[((uint32_t)handle) - 1] = 0;
+
+  // close connection!!!
+  smComSCI2C_Close(0);
+  return IROT_SUCCESS;
+}
+#endif
+

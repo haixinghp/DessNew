@@ -1,0 +1,46 @@
+/*============================================================================*
+ *                              Header Files
+ *============================================================================*/
+#include <stdlib.h>
+#include <os_sched.h>
+#include <string.h>
+#include <trace.h>
+#include <gap.h>
+#include <gap_adv.h>
+#include <gap_bond_le.h>
+#include <profile_server.h>
+#include <gap_msg.h>
+#include <app_task.h>
+#include "lock_ble_service.h"
+#include "SystemInit.h"
+#include "DRV_CLK.h"
+#if F_BT_ANCS_CLIENT_SUPPORT
+#include <profile_client.h>
+#include <ancs.h>
+#endif
+
+
+
+/**
+ * @brief    Entry of APP code
+ * @return   int (To avoid compile warning)
+ */
+
+
+int main(void)
+{
+//	__enable_irq();
+    extern uint32_t random_seed_value;
+    srand(random_seed_value);
+
+	SystemConfigInit();
+
+    DRV_Pwr_Mgr_Init();
+    app_task_init();
+    os_sched_start();
+
+    return 0;
+}
+/** @} */ /* End of group PERIPH_DEMO_MAIN */
+
+

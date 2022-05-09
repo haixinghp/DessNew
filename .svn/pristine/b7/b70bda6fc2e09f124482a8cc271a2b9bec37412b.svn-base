@@ -1,0 +1,32 @@
+/*********************************************************************************************************************
+ * @file:        Encrypto.h
+ * @author:      zhanglin
+ * @version:     V01.00
+ * @date:        2021-08-19
+ * @Description: 加密模块
+ * @ChangeList:  01. 初版
+**********************************************************************************************************************/
+#ifndef  _ENCRYPTO_H
+#define  _ENCRYPTO_H
+
+
+#include <stdlib.h>
+#include "stdint.h"
+#include "public.h"
+#include "rijndael.h"
+
+/*--------------------------------------------------宏定义-----------------------------------------------------------*/
+typedef enum
+{
+	ENCRYPTION =0,
+	DECRYPTION =1,
+}ENCRYPTIO_FLAG;
+/*--------------------------------------------------函数声明---------------------------------------------------------*/
+extern unsigned char * Encrypto_my_md5(unsigned char * content ,int len ,unsigned char  * md5_res );
+extern unsigned char * Encrypto_my_aes(ENCRYPTIO_FLAG flag,uint8_t *data, int len, uint8_t *key);
+extern void  Encrypto_my_base64(uint8_t *data_in, int in_len, unsigned char *data_out, int *out_len);
+extern unsigned int Encrypto_my_sha256(uint8_t* data_in, uint32_t in_len, uint8_t* data_out, uint32_t* out_len);
+extern unsigned int Encrypto_my_id2_decrypt(uint8_t* data_in, uint32_t in_len, uint8_t* data_out, uint32_t out_len);
+extern unsigned int Encrypto_my_id2_get_challenge_auth_code(uint8_t* challenge, uint8_t* auth_code, uint32_t len);
+extern unsigned int Encrypto_my_id2_get_id(uint8_t* id2, uint32_t len);
+#endif 

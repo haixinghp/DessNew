@@ -1,0 +1,14 @@
+/*
+ * Copyright (C) 2016-2019 Alibaba Group Holding Limited
+ */
+
+#ifndef _LS_HAL_H_
+#define _LS_HAL_H_
+
+#include "ls_osa.h"
+#include "ls_hal_km.h"
+#include "ls_hal_sst.h"
+#include "ls_hal_crypt.h"
+
+#endif /* _LS_HAL_H_ */
+

@@ -1,0 +1,1494 @@
+/********************************************************************************************************************
+ * @file:      SystemInit.c
+ * @author:    gushengchi
+ * @version:   V01.00
+ * @date:      2021-07-26
+ * @brief:     系统初始化功能文件
+*********************************************************************************************************************/
+  
+/*-------------------------------------------------文件包含---------------------------------------------------------*/
+#include "SystemInit.h"
+#include "Public.h"
+#include "System.h" 
+#include "SystemTim.h" 
+#include "ISR.h" 
+
+#include "DRV_BLE.h"
+#include "DRV_GPIO.h"
+#include "DRV_CLK.h"
+
+#include "..\HAL\HAL_ADC\HAL_ADC.h"
+#include "..\HAL\HAL_RTC\HAL_RTC.h"
+#include "..\HAL\HAL_EXPORT\HAL_EXPORT.h"
+#include "..\HAL\HAL_VOICE\HAL_Voice.h"
+#include "..\HAL\HAL_Motor\HAL_Motor.h"
+#include "../HAL/HAL_UART/HAL_UART.h"
+
+#include "APP_SmartKey.h" 
+#include "App_LED.h"
+#include "App_Touch.h" 
+#include "App_Export.h" 
+#include "App_GUI.h" 
+#include "App_Key.h" 
+#include "App_Finger.h" 
+#include "App_Screen.h" 
+#include "App_PWD.h" 
+#include "App_FACE.h" 
+#include "App_BLE.h" 
+#include "App_WIFI.h" 
+#include "App_ID2.h"
+#include "APP_FACE_PRO.h"
+#include "APP_CAM.h"
+#include "App_HumanSensor.h"
+#include "App_NB.h"
+/*-------------------------------------------------宏定义-----------------------------------------------------------*/
+#define TIMER_5000_MS            500
+
+/*-------------------------------------------------枚举定义---------------------------------------------------------*/
+typedef enum
+{
+	DEFULT_CHECK = 0,    
+	WAIT_SYS_STEADY,        	//等待系统稳定
+	BAT_VOL_EER_CHECK,        	//电量过低检测
+	EEPROM_EER_CHECK,         	//EEPROM故障检测
+	ALARM_WARM_CHECK,    		//防撬检测
+	BAT_VOL_WARM_CHECK,    		//电量告警检测
+    BUTTON_STATE_CHECK,    		//按键状态检测
+	TRY_PROTECT_CHECK,    		//禁试检测
+	
+	SELF_CHECK_BREAK,    		//自检流程中断
+    SELF_CHECK_DONONE,    		//自检流程中断不动作继续休眠
+    SELF_NORMAL_END,   		    //自检流程正常结束
+	PLAY_VOICE_DELAY,    		//语音播报提示延时
+	
+}SelfCheckType_E;
+ 
+/*-------------------------------------------------常量定义---------------------------------------------------------*/
+
+
+/*-------------------------------------------------全局变量定义-----------------------------------------------------*/         
+uint16_t SelfCheckDelayTimMs = 0; 
+bool SystemPowerOnFlg = false;
+bool SystemPowerLedStsFlg = false;
+/*-------------------------------------------------局部变量定义-----------------------------------------------------*/
+static bool SystemClockInitFlg = 0;  
+static bool EepromErrState = 0;    //0:normal 1:error
+static bool buttoncheckflg;
+
+/*-------------------------------------------------函数声明---------------------------------------------------------*/
+
+
+/*-------------------------------------------------函数定义---------------------------------------------------------*/
+
+/*********************************************************************************************************************
+* Function Name :  SystemManagerModelInit()
+* Description   :  系统工作工作模式   PowerOFF模式
+* Para          :  无
+* Return        :  void
+*********************************************************************************************************************/
+static void SystemManagerModelInit( void )
+{
+    DRV_SysMgmt_Init();
+}
+
+/*********************************************************************************************************************
+* Function Name :  SystemWorkBusClkInit()
+* Description   :  系统工作时候对应的总线时钟配置  唤醒后系统开启外部晶振
+* Para          :  无
+* Return        :  void
+*********************************************************************************************************************/
+void SystemWorkBusClkInit( void )
+{
+	if( SystemClockInitFlg == 1 )
+	    return;
+
+	DRV_HFClock_Request();  //唤醒开启外部高频
+	SystemClockInitFlg = 1;
+}
+
+/*********************************************************************************************************************
+* Function Name :  SystemSleepBusClkInit()
+* Description   :  系统休眠时候对应的总线时钟配置  切换至内部低频时钟
+* Para          :  无
+* Return        :  void
+*********************************************************************************************************************/
+void SystemSleepBusClkInit( void )
+{
+	if( SystemClockInitFlg == 1 )
+	{
+		SystemClockInitFlg = 0;
+		DRV_HFClock_Release();  //休眠前释放
+	}
+}
+
+/*********************************************************************************************************************
+* Function Name :  SystemSleepBusClkInit()
+* Description   :  系统休眠时候对应的总线时钟配置  切换至内部低频时钟
+* Para          :  无
+* Return        :  void
+*********************************************************************************************************************/
+static void SystemSdkRTTLogInit( void )
+{
+//    ret_code_t err_code1 = NRF_LOG_INIT(NULL);
+//    APP_ERROR_CHECK(err_code1);
+//    NRF_LOG_DEFAULT_BACKENDS_INIT();
+}
+
+/*********************************************************************************************************************
+* Function Name :  GetSystemParaFromFlash()
+* Description   :  从eeprom中获取系统配置参数
+* Para          :  无
+* Return        :  void
+*********************************************************************************************************************/
+static void GetSystemParaFromFlash( void ) 
+{
+    uint8_t ret = SystemReadFlash();
+    EepromErrState = (ret == 1) ? 0:1; 
+}
+
+/*********************************************************************************************************************
+* Function Name :  SystemParaBackFactoryIntoFlash()
+* Description   :  将eeprom中的系统参数恢复出厂设置
+* Para          :  pfirstFlg: 是否首次调用该函数 
+* Return        :  -1= 失败  0= 执行中  1= 成功
+*********************************************************************************************************************/
+int8_t SystemParaBackFactoryIntoFlash( uint8_t *pfirstFlg ) 
+{
+#ifdef  XM_CAM_FUNCTION_ON
+    static uint8_t factoryTaskId = 0;
+#endif
+	if( *pfirstFlg == 0 )
+	{
+#ifdef  XM_CAM_FUNCTION_ON
+        factoryTaskId = 0;
+#endif
+		*pfirstFlg = 1;
+		
+		my_printf("SystemParaBackFactoryIntoFlash()\r\n");	
+	   /*--系统参数恢复出厂设置--*/
+		if( 0 == SystemInitFlash() )
+		{
+			return 0;
+		}
+		OpenDoorTimeCnt = 0;   //重新锁体适配
+	   /*--密码模块恢复出厂设置--*/
+		App_PWD_ClearAllPwdMegFromEeprom();
+	   /*--临时密码恢复出厂设置--*/
+		App_PWD_ClearAllTmpPwdsFromEeprom();
+	   /*--报警密码恢复出厂设置--*/
+		App_PWD_ClearAllSosPwdsFromEeprom();
+		/*--手机号恢复出厂设置--*/
+		APP_BleDelPhone();
+		SmartKeyDeleteClear();
+	   /*--人脸模块恢复出厂设置--*/
+		#if defined FACE_FUNCTION_ON  || defined IRIS_FUNCTION_ON 
+		FaceEepromEmpty();
+		#endif
+		#if defined OB_CAM_FUNCTION_ON ||  defined ST_CAM_FUNCTION_ON 
+		FaceProDeleteFile();
+		#endif
+		#if defined ST_CAM_FUNCTION_ON 
+		FaceProSetLightSensor();//设置商汤猫眼光敏灵敏度
+		#endif
+	   /*--猫眼模块恢复出厂设置--*/
+        #ifdef  XM_CAM_FUNCTION_ON
+        factoryTaskId = CAM_ClearCameraData();
+        #endif
+    }
+    else if( *pfirstFlg == 1 )
+    {
+        #ifdef  XM_CAM_FUNCTION_ON
+        if(CAM_FAIL == CAM_GetServerState(factoryTaskId))
+            *pfirstFlg = 10;
+        else 
+            if(CAM_SUCCESSFUL == CAM_GetServerState(factoryTaskId))
+        #endif
+#ifdef FINGER_PROTOCAL_V2_SUPPORT
+            *pfirstFlg = 2;
+#else
+            *pfirstFlg = 4;
+#endif
+    }
+    else if( *pfirstFlg == 2 )
+    {
+	   /*--指纹模块恢复出厂设置--*/
+		FingerAppParam_S fingerPara;
+		memset( (void*)&fingerPara, 0, sizeof fingerPara );
+		fingerPara.emAppFlow = EM_FINGER_APP_FLOW8_CLEAR_V2;
+		APP_FINGER_Operate(fingerPara);
+        *pfirstFlg = 3;
+    }
+    else if( *pfirstFlg == 3 )
+	{
+		uint16_t temp;
+        FINGER_APP_FLOW_RESULT_E  ret = APP_FINGER_GetFlowResult( &temp );
+		if( ret == FINGER_APP_RESULT_SUC )       //success
+		{
+            *pfirstFlg = 6;
+        }
+        else if( ret == FINGER_APP_RESULT_FAIL || FINGER_APP_RESULT_TIMEOUT == ret ) //fail
+        {
+            /* EM_FINGER_APP_FLOW8_CLEAR_V2 失败 尝试EM_FINGER_APP_FLOW0_CLEAR  */
+            *pfirstFlg = 4;
+        }
+    }
+    else if( *pfirstFlg == 4 )
+    {
+       /*--指纹模块恢复出厂设置--*/
+        FingerAppParam_S fingerPara;
+        memset( (void*)&fingerPara, 0, sizeof fingerPara );
+        fingerPara.emAppFlow = EM_FINGER_APP_FLOW0_CLEAR;
+        APP_FINGER_Operate(fingerPara);
+        *pfirstFlg = 3;
+    }
+    else if( *pfirstFlg == 5 )
+	{
+		uint16_t temp;
+        FINGER_APP_FLOW_RESULT_E  ret = APP_FINGER_GetFlowResult( &temp );
+        if( ret == FINGER_APP_RESULT_SUC )       //success
+        {
+			SystemSeting.SysFactDoneFig = MEM_FACT_MEM_FIG;   		   //65  //固定标记
+		    (void)SystemWriteSeting( &SystemSeting.SysFactDoneFig, sizeof SystemSeting.SysFactDoneFig );
+		    (void)SystemCfgVersionUpdate(true);
+            *pfirstFlg = 6;
+		}
+		else if( ret == FINGER_APP_RESULT_FAIL || FINGER_APP_RESULT_TIMEOUT == ret ) //fail
+		{
+            *pfirstFlg = 10;
+		}
+	}
+    else if( *pfirstFlg == 6 )
+    {
+
+        SystemSeting.SysFactDoneFig = MEM_FACT_MEM_FIG;   		   //65  //固定标记
+        (void)SystemWriteSeting( &SystemSeting.SysFactDoneFig, sizeof SystemSeting.SysFactDoneFig );
+        (void)SystemCfgVersionUpdate(true);
+#ifdef SMART_SCREEN_ON 
+        *pfirstFlg = 7;
+#else
+        return 1;
+#endif
+
+    }
+#ifdef SMART_SCREEN_ON 
+    else if( *pfirstFlg == 7 )
+    {
+        if(APP_SCREEN_Operate(EM_SCREEN_APP_FLOW7_FACTORY_RESET, 0))
+        {
+            return 1;
+        }
+        else
+        {
+            *pfirstFlg = 10;
+        }
+    }
+#endif
+    else
+    {
+        SystemSeting.SysFactDoneFig = MEM_FACT_MEM_FIG;   		   //65  //固定标记
+        (void)SystemWriteSeting( &SystemSeting.SysFactDoneFig, sizeof SystemSeting.SysFactDoneFig );
+        return -1;
+    }
+
+	return 0;
+}
+ 
+/*********************************************************************************************************************
+* Function Name :  SystemConfigInit()
+* Description   :  系统初始化函数   注意调用顺序
+* Para          :  无
+* Return        :  void
+*********************************************************************************************************************/
+void SystemConfigInit( void ) 
+{
+    /*--系统上电软启动--*/
+	PUBLIC_Delayms(500); 
+
+	App_GUI_SetSystemWorkSts( E_SYSTEM_INIT	);
+	SystemPowerOnFlg = true;
+	OpenDoorTimeCnt = 0;
+	
+	/* GPIO初始化 */
+	(void)DRV_GpioDefault();
+	
+    /*--系统工作方式---*/
+	SystemManagerModelInit();	
+
+	/*--系统变量配置---*/
+    SystemTick = 0;
+	SystemWorkHoldTim =0;
+	    
+	/*--1s定时器配置--*/
+	SystemLifeTickTimerInit();
+	
+	/*--BLE初始化------*/
+    SystemAppBleInit();      //需要在app_timer_init后
+ 
+	/*--系统时钟配置--*/
+	SystemWorkBusClkInit();  //需要在协议栈开启后
+
+   /*--10ms定时器开启-*/
+    SystemTimerIint(true);
+    
+	/*--RTT配置-------*/
+	SystemSdkRTTLogInit();
+
+    /*------随机数开启-------*/
+    DRV_InterRandVecInit();  //随机数
+
+	/*--扩展口配置----*/	
+	App_Export_FileInit(); 
+    my_printf("App_Export_FileInit =%d\n", SystemTick);
+	
+	/*--读系统配置----*/
+    GetSystemParaFromFlash();
+    my_printf("SystemReadFlash =%d\n", SystemTick);
+	
+	/*--语音配置------*/	
+    HAL_Voice_FileInit();
+	my_printf("HAL_Voice_FileInit =%d\n", SystemTick);
+	
+	/*--RTC初始化配置-*/
+    HAL_RTC_Init();
+	HAL_RTC_ReadTime();
+	my_printf("HAL_RTC_Init =%d\n", SystemTick);
+
+	/*--电机配置------*/	
+    HAL_Motor_FileInit();  
+	my_printf("HAL_Motor_FileInit =%d\n", SystemTick);
+
+	/*--人体感应配置------*/	
+    App_HumanSensorFileInit(SystemSeting.SysDrawNear );
+	my_printf("App_HumanSensorFileInit =%d\n", SystemTick);
+
+//	/*--ID2初始化配置------*/
+//	APP_ID2Init();
+//	my_printf("APP_ID2Init =%d\n", SystemTick);
+
+	/*--ADC配置-------*/	
+	HAL_ADC_FileInit(); 
+	my_printf("HAL_ADC_FileInit =%d\n", SystemTick);
+	
+	/*--机械按键配置--*/	
+	App_Key_FileInit();
+	my_printf("App_Key_FileInit =%d\n", SystemTick);
+	
+	/*--触摸按键配置--*/	
+    App_Touch_FileInit(); 
+	my_printf("App_Touch_FileInit =%d\n", SystemTick);
+	
+	/*--LED灯配置-----*/
+    App_LED_FileInit();
+	my_printf("App_LED_FileInit =%d\n", SystemTick);
+ 
+    /*--FINGER模组初始化-*/
+    APP_FINGER_Init();
+	my_printf("APP_FINGER_Init=%d\n", SystemTick);
+    
+    /*--SCREEN 模组初始化-*/
+    APP_SCREEN_WakeUp();
+    my_printf("APP_SCREEN_WakeUp = %d\n", SystemTick);
+
+   /*--FACE模组初始化-*/
+ 
+   /*--WIFI模组初始化-*/
+    App_WIFI_Init();
+ 
+	
+   /*--GUI初始化配置--*/
+    App_GUI_FileInit();
+	my_printf("App_GUI_FileInit=%d\n", SystemTick);
+	
+    my_printf("SystemConfigInit()\r\n");	
+	SystemWorkHoldTim =0;
+	App_GUI_SetSystemWorkSts( E_SYSTEM_SELFCHECK );
+}
+ 
+/*********************************************************************************************************************
+* Function Name :  SystemWakeupInit()
+* Description   :  系统唤醒后初始化函数   注意调用顺序
+* Para          :  无
+* Return        :  void
+*********************************************************************************************************************/
+void SystemWakeupInit( void ) 
+{
+    uint8_t buf[8] = {0};
+    
+	App_GUI_SetSystemWorkSts( E_SYSTEM_INIT	);
+	SystemPowerOnFlg = false;
+   /*--系统变量配置---*/
+    SystemTick = 0;
+	SystemWorkHoldTim =0;
+    
+    bool screenpower = true;
+	/*------------雷达唤醒-------------*/
+	#if defined IR_FUNCTION_ON || defined RADAR_FUNCTION_ON
+		#if !(defined FACE_FUNCTION_ON || defined IRIS_FUNCTION_ON)
+		if( E_WAKE_NEAR_SENSE == App_GUI_GetSysWakeupType() )      //接近感应唤醒
+		{
+			screenpower = false;
+		}
+		#endif
+	#endif
+	/*------------网络同步-------------*/
+	#if defined OB_CAM_FUNCTION_ON || defined ST_CAM_FUNCTION_ON   //二代猫眼
+	if( E_WAKE_NETWORK_UPDATE == App_GUI_GetSysWakeupType() )      //网络同步唤醒
+	{
+		screenpower = false;
+	}
+	#endif
+	/*------------天气同步-------------*/
+	#ifdef WEATHER_FORECAST_ON
+	if( E_WAKE_WEATHER_UPDATE == App_GUI_GetSysWakeupType() )      //天气同步唤醒
+	{
+		screenpower = false;
+	}
+	#endif 
+
+	/*------------默认为自动上锁--------*/
+	#if defined LOCK_BODY_218_MOTOR || defined LOCK_BODY_AUTO_MOTOR
+	if( E_WAKE_MOTOR_LATCH == App_GUI_GetSysWakeupType() )  //斜舌唤醒
+	{
+		screenpower = false;
+	} 
+	#elif defined LOCK_BODY_216_MOTOR  
+	if( E_WAKE_MOTOR_TRIGGER == App_GUI_GetSysWakeupType() )  //三角舌唤醒
+	{
+		screenpower = false;
+	} 
+	#endif		
+		
+	if( screenpower == true )
+	    APP_SCREEN_WakeUp();
+
+    PUBLIC_GetMacAdd(&buf[0]);//MAC地址
+
+    my_printf("Device Mac Addr : %02x:%02x:%02x:%02x:%02x:%02x \n", buf[0], buf[1], buf[2], buf[3], buf[4], buf[5]);
+    
+   /*--1s定时器关闭---*/
+	SystemLifeTickTimerCtrl( false );
+	
+   /*--系统时钟配置---*/
+	SystemWorkBusClkInit();
+
+   /*--10ms定时器开启-*/
+    SystemTimerIint(true);
+	
+   /*--关闭引脚中断---*/
+	SystemWakeupPin_ISR_Disable();
+
+   /*--Export唤醒配置-*/	
+	App_Export_WakeupInit(); 
+//    my_printf("App_Export_WakeupInit =%d\n", SystemTick);
+	
+   /*--读系统配置-----*/
+    GetSystemParaFromFlash();
+//    my_printf("SystemReadFlash =%d\n", SystemTick);	
+
+   /*--Voice唤醒配置--*/
+    HAL_Voice_WakeupInit();
+//    my_printf("HAL_Voice_WakeupInit =%d\n", SystemTick);
+
+   /*--RTC唤醒配置----*/
+	HAL_RTC_ReadTime();
+//    my_printf("HAL_RTC_Init =%d\n", SystemTick);
+
+   /*--电机唤醒配置----*/
+	HAL_Motor_WakeupInit();
+//    my_printf("HAL_Motor_WakeupInit =%d\n", SystemTick);
+
+	/*--人体感应配置------*/	
+    App_HumanSensorWakeupInit(SystemSeting.SysDrawNear );
+//	my_printf("App_HumanSensorWakeupInit =%d\n", SystemTick);
+
+//	/*--ID2唤醒配置------*/
+//	APP_ID2Init();
+//	my_printf("APP_ID2Init =%d\n", SystemTick);
+
+   /*--ADC唤醒配置----*/	
+	HAL_ADC_WakeupInit(); 
+//    my_printf("HAL_ADC_WakeupInit =%d\n", SystemTick);
+
+   /*--Touch唤醒配置--*/	
+	App_Touch_WakeupInit(); 
+//    my_printf("App_Touch_WakeupInit =%d\n", SystemTick);
+
+   /*--机械按键唤醒配置-*/	
+    App_Key_WakeupInit();
+//    my_printf("App_Key_WakeupInit =%d\n", SystemTick);
+
+   /*--LED唤醒配置-----*/	
+    App_LED_WakeupInit();
+//    my_printf("App_LED_WakeupInit =%d\n", SystemTick);
+
+   /*--指纹唤醒配置----*/	
+
+
+   /*--GUI唤醒配置-----*/	
+	App_GUI_WakeupInit();
+	
+    my_printf("SystemWakeupInit =%d\n", SystemTick);
+	my_printf("SystemWakeupInit()\r\n");
+	
+	SystemWorkHoldTim =0;
+	
+	App_GUI_SetSystemWorkSts( E_SYSTEM_SELFCHECK );
+    return;
+}
+
+/*********************************************************************************************************************
+* Function Name :  SystemSleepInit()
+* Description   :  系统休眠配置   注意调用顺序
+* Para          :  无
+* Return        :  void
+*********************************************************************************************************************/
+void SystemSleepInit( void ) 
+{
+	my_printf("SystemSleepInit()\r\n");	
+
+    /* -- 休眠前同步一次配置*/
+    (void)SystemCfgVersionUpdate(false);
+	
+   /*--ID2休眠-----*/
+	APP_ID2HWSleep();
+	
+   /*--电机休眠配置----*/	
+	HAL_Motor_SleepInit();
+
+	/*--人脸休眠-----*/
+	#if defined FACE_FUNCTION_ON  || defined IRIS_FUNCTION_ON 
+	FacePowerDown();
+	#endif
+	
+   /*--FINGER休眠配置----*/	
+	APP_FINGER_Sleep();
+	
+   /*--机械按键休眠配置--*/	
+    App_Key_SleepInit();
+	
+   /*--LED休眠配置-------*/	
+    App_LED_SleepInit();
+
+   /*--ADC休眠配置-------*/	
+	HAL_ADC_SleepInit();
+	
+   /*--Voice休眠配置-----*/
+    HAL_Voice_SleepInit();
+
+   /*--GUI休眠配置-------*/	
+    App_GUI_SleepInit();
+	
+   /*--10ms定时关闭------*/	
+	SystemTimerIint( false );  
+	
+   /*--Touch休眠配置-----*/	
+    App_Touch_SleepInit();
+	
+	/*--WIFI休眠配置----*/	
+	#ifdef WIFI_FUNCTION_ON
+	APP_Wifi_Sleep();
+	#endif
+    /*--Screen休眠配置----*/ 
+    APP_SCREEN_Sleep();
+	
+   /*--Export休眠配置----*/	
+	App_Export_SleepInit();
+	
+   /*--Uart休眠配置----*/	
+	HAL_Uart_SleepInit(); 
+	
+	/*NB休眠配置*/
+	#ifdef NB_FUNCTION
+	App_NB_SleepInit();
+	#endif
+	
+   /*--唤醒源休眠配置----*/	
+	SystemWakeupPin_ISR_Enable();  //设置唤醒源	
+	
+   /*--1s定时开启--------*/	
+	SystemLifeTickTimerCtrl( true );   
+	
+   /*--时钟休眠配置------*/	
+	SystemSleepBusClkInit();   //时钟切到低频
+
+	/*--BLE初始化------*/
+//    SystemAppBleInit();      //需要在app_timer_init后
+
+	SystemTick = 0;
+	
+}
+
+/*********************************************************************************************************************
+* Function Name :  SystemWorkLedStateDisplay()
+* Description   :  系统工作指示灯状态显示
+* Input  Para   :  none
+* Output Para   :  none
+* Return        :  false- 异常   true- 正常
+*********************************************************************************************************************/
+static bool SystemWorkLedStateDisplay( void )
+{
+	#ifdef BAT_UNINSET_WARM_TIP_ON
+		if( true == HAL_ADC_GetSysVolLowWarmState() )   //系统电压低
+		{
+			return false;
+		}
+		else 
+		{
+			return true;			
+		}
+	#else 
+		int8_t tp1 = HAL_ADC_GetVolLowGradeWarm(); 
+		if( tp1 == 1 )
+		{
+			if( (-3 == HAL_ADC_GetCellBatVolState( E_UPPER_BAT )) && (-3== HAL_ADC_GetCellBatVolState( E_UNDER_BAT ))) 
+			{
+				return false;
+			}
+			else 
+			{
+				return true;
+			}
+		}
+		else if( tp1 < 0 )
+		{
+			return false;
+		}
+	#endif
+}
+
+/*********************************************************************************************************************
+* Function Name :  SystemWaitSteady()
+* Description   :  等待系统稳定  同时检测机械按键状态  用于确保系统已经稳定   只在自检时调用
+* Input  Para   :  none
+* Output Para   :  phandleOpen: 把手开门状态 0-invalue 1-value   phandleColse: 把手关门状态 0-invalue 1-value  
+                   pkeysts: 组合按键状态     pcheckStep: 下一步检测项索引  
+* Return        :  0= 执行中  1= 完成   
+*********************************************************************************************************************/
+static uint8_t SystemWaitSteady( uint8_t *phandleOpen, uint8_t *phandleColse, BUTTON_TYPE_E *pkeysts, SelfCheckType_E *pcheckStep ) 
+{
+	 static uint32_t delaytime;
+	 if( 1 == App_Key_GetOpenHandleSts() )      //把手开门
+	 {
+		 *phandleOpen = 1;
+	 }
+	 else if( 1 == App_Key_GetCloseHandleSts() )//把手关门
+	 {
+		 *phandleColse = 1;
+	 }
+	 
+	 *pkeysts = App_Key_GetCombinKeyState();
+	 if( *pkeysts != EM_SCANNING_KEY )    //有按键被按下
+	 {
+		 buttoncheckflg = true;
+		 delaytime = SystemWorkHoldTim;
+		 if( *pkeysts != EM_SCAN_NONE_KEY )   //释放掉
+		 {
+			 my_printf("button is checked\n");
+			 *pcheckStep = BAT_VOL_EER_CHECK; 
+			 return 1;
+		 } 
+	 }
+	 else if( buttoncheckflg == true )   //有按键被按下并释放
+	 {
+		 if( SystemWorkHoldTim >= delaytime + SYS_BUTTON_CHECK_TIMER_MS )
+		 {
+			 my_printf("button checked and timeout\n");
+			 *pcheckStep = BAT_VOL_EER_CHECK; 
+			 return 1; 
+		 } 
+	 }
+	 else if( SystemWorkHoldTim >= SYS_STEADY_TIMER_MS )
+	 {
+		 my_printf("button none and timeout\n");
+		 *pcheckStep = BAT_VOL_EER_CHECK; 
+		 return 1;
+	 }
+
+	return 0;
+}
+
+/*********************************************************************************************************************
+* Function Name :  SelfCheckBatErrorHandler()
+* Description   :  自检电压低无法工作处理函数  只在自检时调用  若故障需要再次确认可排除系统未稳定导致的误检
+* Input  Para   :  none
+* Output Para   :  pcheckStep: 下一步检测项索引   
+* Return        :  none
+*********************************************************************************************************************/
+static void SelfCheckBatErrorHandler( SelfCheckType_E *pcheckStep ) 
+{
+	 int8_t tp1;
+	 static bool tempret;
+	 static uint8_t step;
+
+	 switch( step )
+	 {
+		 case 0:
+				 tempret = false;
+				 tp1 = HAL_ADC_GetVolLowGradeErr();
+				 if( -1 == tp1 )
+				 {
+					SelfCheckDelayTimMs = 10;
+					step =1;
+				 }
+				 else if( 1 == tp1 )
+				 {
+					my_printf( "upper bat vol = %d\n", HAL_ADC_GetValidVal( EM_UPPER_BAT_DATA ) );  
+					my_printf( "under bat vol = %d\n", HAL_ADC_GetValidVal( EM_UNDER_BAT_DATA ) );  
+					step =2;
+				 }
+		 break;
+		 
+		 case 1:
+				 tp1 = HAL_ADC_GetVolLowGradeErr();
+				 if( 1 == tp1 )
+				 {
+					my_printf( "upper bat vol = %d\n", HAL_ADC_GetValidVal( EM_UPPER_BAT_DATA ) );  
+					my_printf( "under bat vol = %d\n", HAL_ADC_GetValidVal( EM_UNDER_BAT_DATA ) );  
+ 					step =2;
+				 }
+				 else if( SelfCheckDelayTimMs == 0 )
+				 {
+					tempret = true;
+					my_printf( "upper bat vol = %d\n", HAL_ADC_GetValidVal( EM_UPPER_BAT_DATA ) );  
+					my_printf( "under bat vol = %d\n", HAL_ADC_GetValidVal( EM_UNDER_BAT_DATA ) );  
+					App_GUI_MenuJump( EM_MENU_BAT_UNWORK );
+					step =2;					 
+				 }
+		 break;	
+				 
+		 case 2:  //统一出口	
+				 HAL_ADC_UpBatValLockCtrl( true );      //上方电池电压锁住
+				 HAL_ADC_UnderBatValLockCtrl( true );   //下方电池电压锁住
+
+				 /*------------电池切换-------------*/
+			     #ifdef BAT_CHARGE_SWITCH_ON
+			     HAL_ADC_BatSupplyPowerSwitch(); 
+				 #endif
+		 
+				 /*------------雷达唤醒-------------*/
+				 #if defined IR_FUNCTION_ON || defined RADAR_FUNCTION_ON
+					 #if !(defined FACE_FUNCTION_ON || defined IRIS_FUNCTION_ON)
+					 if( E_WAKE_NEAR_SENSE == App_GUI_GetSysWakeupType() )      //接近感应唤醒
+					 {
+						 App_GUI_MenuJump( EM_MENU_BELL_LAMP_DISPLAY );
+						 *pcheckStep = SELF_CHECK_DONONE;  
+						 step =0; 
+						 return;
+					 }
+					 #endif
+				 #endif
+				 /*------------网络同步-------------*/
+		         #if defined OB_CAM_FUNCTION_ON || defined ST_CAM_FUNCTION_ON   //二代猫眼
+				 if( E_WAKE_NETWORK_UPDATE == App_GUI_GetSysWakeupType() )      //网络同步唤醒
+				 {
+					 if( App_GUI_CheckNetworkAction() )  //执行网络同步
+					 {
+						 App_GUI_MenuJump( EM_MENU_NETWORK_UPDATE );
+					 }
+					 else
+					 {
+						 App_GUI_MenuJump( MENU_SYSTEM_SLEEP );
+					 }
+					 *pcheckStep = SELF_CHECK_DONONE;  
+					 step =0; 
+					 return;
+		         }
+				 #endif
+		 
+		         /*------------天气同步-------------*/
+                 #ifdef WEATHER_FORECAST_ON
+				 if( E_WAKE_WEATHER_UPDATE == App_GUI_GetSysWakeupType() )      //天气同步唤醒
+				 {
+					 if( App_GUI_CheckWeatherUpdateAction() )  //执行同步
+					 {
+						 App_GUI_MenuJump( EM_MENU_WEATHER_UPDATE );
+					 }
+					 else
+					 {
+						 App_GUI_MenuJump( MENU_SYSTEM_SLEEP );
+					 }
+					 *pcheckStep = SELF_CHECK_DONONE;  
+					 step =0; 
+					 return;
+		         }
+				 #endif 
+				 /*------------THE END--------------*/
+		 
+				*pcheckStep = (tempret==true)?SELF_CHECK_BREAK:EEPROM_EER_CHECK;
+				step =0; 
+		 return;
+		 
+		 default:break;
+	 }	 
+}
+
+/*********************************************************************************************************************
+* Function Name :  SelfCheckEepromErrHandler()
+* Description   :  电池电量低无法工作状态检测
+* Input  Para   :  pkeysts: 组合按键状态
+* Output Para   :  pcheckStep: 下一步检测项索引  
+* Return        :  none
+*********************************************************************************************************************/
+static void SelfCheckEepromErrHandler( BUTTON_TYPE_E pkeysts, SelfCheckType_E *pcheckStep ) 
+{
+	if( pkeysts == EM_BACK_FACTORY_KEY ) 
+	{
+		App_GUI_MenuJump( EM_MENU_BACK_FACTORY );
+		*pcheckStep = SELF_CHECK_BREAK; 
+	}
+	else if( 1 == EepromErrState )
+	{
+		App_GUI_MenuJump( EM_MENU_EEPROM_ERR );
+		*pcheckStep = SELF_CHECK_BREAK; 
+	}
+	else if( 0 == EepromErrState )
+	{
+		*pcheckStep = BAT_VOL_WARM_CHECK; 
+	}	
+}
+
+/*********************************************************************************************************************
+* Function Name :  SelfCheckBatVolWarmHandler()
+* Description   :  自检电池电量低告警
+* Input  Para   :  none
+* Output Para   :  pcheckStep: 下一步检测项索引  
+* Return        :  none
+*********************************************************************************************************************/
+static void SelfCheckBatVolWarmHandler( SelfCheckType_E *pcheckStep ) 
+{
+	int8_t tp1 = 0;
+	static uint8_t step;
+	
+	/*-----------不执行电量低告警----------*/
+    if( E_WAKE_ALARM_BREAK == App_GUI_GetSysWakeupType() )    //中断防撬唤醒
+	{
+		*pcheckStep = BUTTON_STATE_CHECK;       
+		return;
+	} 
+	else if( E_WAKE_AUTO_LOCK == App_GUI_GetSysWakeupType() )    //自动上锁
+	{
+		App_GUI_SetCloseModel( EM_CLOSE_AUTO );
+		SystemEventLogSave( AUTO_CLOSE_DOOR, 0 );  
+		App_GUI_MenuJump( EM_MENU_CLOSE_DOOR );
+		*pcheckStep = SELF_CHECK_DONONE; 
+		return;
+	} 
+	else if( E_WAKE_STAY_DEFENSE == App_GUI_GetSysWakeupType() ) //主动防御唤醒
+	{
+		App_GUI_MenuJump( EM_MENU_STAY_WARM );
+		*pcheckStep = SELF_CHECK_BREAK; 
+		return;
+	} 
+	else if( E_WAKE_FALSE_LOCK == App_GUI_GetSysWakeupType() )  //假锁报警唤醒
+	{
+		App_GUI_MenuJump( EM_MENU_FALSE_LOCK_WARM );
+		*pcheckStep = SELF_CHECK_BREAK; 
+		return;
+	} 
+	else if( E_WAKE_FORGET_LOCK == App_GUI_GetSysWakeupType() ) //门未锁报警唤醒
+	{
+		App_GUI_MenuJump( EM_MENU_FORGET_LOCK_WARM );
+		*pcheckStep = SELF_CHECK_BREAK; 
+		return;
+	} 
+	else if( E_WAKE_HANDLE_TRY == App_GUI_GetSysWakeupType() ) //把手试玩报警唤醒
+	{
+		App_GUI_MenuJump( EM_MENU_FALSE_LOCK_WARM );
+		*pcheckStep = SELF_CHECK_BREAK; 
+		return;
+	} 
+    /*---------------锁体触发布防报警------------*/	
+	else if( E_WAKE_DEPLOY_WARM == App_GUI_GetSysWakeupType() ) //布防报警唤醒 （推送WIFI过程中被打断的情况）
+	{
+		App_GUI_MenuJump( EM_MENU_DEPLAY_WARM );
+		*pcheckStep = SELF_CHECK_BREAK; 
+		return;
+	} 
+	else if( 1 == HAL_Motor_DefendActionCheck(false) )  
+	{
+		my_printf( "auto lock pus door!\n"); 
+		App_GUI_SetOpenModel( EM_OPEN_HANDLER );   
+		SystemEventLogSave( BAC_OPEN_IN_DOOR, 0 );  
+		
+		if( SystemSeting.SysKeyDef == FUNCTION_ENABLE )  //布防状态开启
+		{
+			App_GUI_MenuJump( EM_MENU_DEPLAY_WARM );
+			*pcheckStep = SELF_CHECK_BREAK; 
+			return;
+		}
+	}
+	/*------------默认为自动上锁--------*/
+	#if defined LOCK_BODY_218_MOTOR || defined LOCK_BODY_AUTO_MOTOR
+	if( E_WAKE_MOTOR_LATCH == App_GUI_GetSysWakeupType() )  //斜舌唤醒
+	{
+		App_GUI_RelieveTryProtect();  //解除禁试
+		App_GUI_MenuJump( EM_MENU_WAKEUP_BUT_SLEEP );
+		*pcheckStep = SELF_CHECK_DONONE;  
+		return;
+	} 
+	#elif defined LOCK_BODY_216_MOTOR  
+	if( E_WAKE_MOTOR_TRIGGER == App_GUI_GetSysWakeupType() )  //三角舌唤醒
+	{
+		App_GUI_RelieveTryProtect();  //解除禁试
+		App_GUI_MenuJump( EM_MENU_WAKEUP_BUT_SLEEP );
+		*pcheckStep = SELF_CHECK_DONONE;  
+		return;
+	} 
+	#endif
+ 
+	/*-----------the end-------------------*/
+
+	switch( step )
+	{
+	   #ifndef BAT_UNINSET_WARM_TIP_ON
+		 case 0:
+				tp1 = HAL_ADC_GetVolLowGradeWarm(); 
+		        if( 0 > tp1 )  //上方/下方电池电压低 
+				{
+					VOL_GRADE_E mode = EM_VOL_GRADE_OFF;
+					if( SystemWorkHoldTim >= SYS_STEADY_TIMER_MS )  
+					{
+		                mode = (EM_VOL_GRADE_OFF == SystemSeting.SysVoice)? EM_VOL_GRADE_HIGH:(VOL_GRADE_E)SystemSeting.SysVoice;
+						HAL_Voice_VolumeSet( mode );
+		            }
+					else 
+					{
+						uint8_t para = (SystemWorkHoldTim >= 10)? 0: 10-SystemWorkHoldTim;
+						PUBLIC_Delayms( para );
+		                mode = (EM_VOL_GRADE_OFF == SystemSeting.SysVoice)? EM_VOL_GRADE_HIGH:(VOL_GRADE_E)SystemSeting.SysVoice;
+						HAL_Voice_VolumeSet( mode );
+					}
+					App_LED_OutputCtrl( EM_LED_ALL, EM_LED_ON );
+					App_LED_OutputCtrl( EM_LED_POW_R, EM_LED_ON );
+				}
+		 
+				if( -3 == tp1 )  //上方+下方电池电压低
+				{
+                    APP_SCREEN_Operate(EM_SCREEN_APP_FLOW0_SHOW_MOTION , EM_SCREEN_FLOW0_LOW_POWER);
+					HAL_Voice_PlayingVoice( EM_BOTH_BAT_LOW_TIPS_MP3, 0 ); 
+					SelfCheckDelayTimMs = 600;
+				}
+				else if( -2 == tp1 ) //下方电池电压低
+				{
+                    APP_SCREEN_Operate(EM_SCREEN_APP_FLOW0_SHOW_MOTION , EM_SCREEN_FLOW0_LOW_POWER);
+					#ifdef BATTERY_MP3_TIPS_ON
+						HAL_Voice_PlayingVoice( EM_UPPER_BAT_LOW_AND_REPLACE_MP3, 0 ); 
+					#else
+						HAL_Voice_PlayingVoice( EM_UNDER_BAT_LOW_AND_REPLACE_MP3, 0 ); 
+					#endif 
+					SelfCheckDelayTimMs = 300;
+				}
+				else if( -1 == tp1 ) //上方电池电压低
+				{
+                    APP_SCREEN_Operate(EM_SCREEN_APP_FLOW0_SHOW_MOTION , EM_SCREEN_FLOW0_LOW_POWER);
+					#ifdef BATTERY_MP3_TIPS_ON
+						HAL_Voice_PlayingVoice( EM_UNDER_BAT_LOW_AND_REPLACE_MP3, 0 ); 
+					#else
+						HAL_Voice_PlayingVoice( EM_UPPER_BAT_LOW_AND_REPLACE_MP3, 0 );  
+					#endif
+					SelfCheckDelayTimMs = 300;
+				}
+				step = 1;
+		 break;
+		 
+		 case 1:
+				if( 0 == SelfCheckDelayTimMs )
+				{
+					*pcheckStep = BUTTON_STATE_CHECK; 		
+					step = 0;
+				}
+		 break;	
+	  #else
+		 case 0:
+				SelfCheckDelayTimMs = 0;
+                if( true == HAL_ADC_GetSysVolLowWarmState() )   //系统电压低
+				{
+					VOL_GRADE_E mode = EM_VOL_GRADE_OFF;
+					if( SystemWorkHoldTim >= SYS_STEADY_TIMER_MS )  
+					{
+		                mode = (EM_VOL_GRADE_OFF == SystemSeting.SysVoice)? EM_VOL_GRADE_HIGH:(VOL_GRADE_E)SystemSeting.SysVoice;
+						HAL_Voice_VolumeSet( mode );
+		            }
+					else 
+					{
+						uint8_t para = (SystemWorkHoldTim >= 10)? 0: 10-SystemWorkHoldTim;
+						PUBLIC_Delayms( para );
+		                mode = (EM_VOL_GRADE_OFF == SystemSeting.SysVoice)? EM_VOL_GRADE_HIGH:(VOL_GRADE_E)SystemSeting.SysVoice;
+						HAL_Voice_VolumeSet( mode );
+					}
+					App_LED_OutputCtrl( EM_LED_ALL, EM_LED_ON );
+					App_LED_OutputCtrl( EM_LED_POW_R, EM_LED_ON );
+				}
+
+				#ifdef UPPER_BAT_ADC_ON
+				tp1 = HAL_ADC_GetCellBatVolState( E_UPPER_BAT );
+				if( -3 == tp1 )      //未插电池
+				{	
+                    APP_SCREEN_Operate(EM_SCREEN_APP_FLOW0_SHOW_MOTION , EM_SCREEN_FLOW0_LOW_POWER);
+					#ifdef BATTERY_MP3_TIPS_ON
+						HAL_Voice_PlayingVoice( EM_INSERT_UNDER_BAT_TIPS_MP3, 0 );
+					#else
+						HAL_Voice_PlayingVoice( EM_INSERT_UPPER_BAT_TIPS_MP3, 0 ); 
+					#endif 
+					SelfCheckDelayTimMs = 300;
+				}
+				else if( -2 == tp1 ) //电压低无法工作
+				{
+                    APP_SCREEN_Operate(EM_SCREEN_APP_FLOW0_SHOW_MOTION , EM_SCREEN_FLOW0_LOW_POWER);
+					my_printf( "Upper battery vol low grade2()\n" );  
+					#ifdef BATTERY_MP3_TIPS_ON
+						HAL_Voice_PlayingVoice( EM_UNDER_BAT_UNWORK_MP3, 0 );
+					#else
+						HAL_Voice_PlayingVoice( EM_UPPER_BAT_UNWORK_MP3, 0 ); 
+					#endif 
+					SelfCheckDelayTimMs = 300;
+				}
+				else if( -1 == tp1 ) //电池电压低告警
+				{
+                    APP_SCREEN_Operate(EM_SCREEN_APP_FLOW0_SHOW_MOTION , EM_SCREEN_FLOW0_LOW_POWER);
+					my_printf( "Upper battery vol low grade1()\n" );  
+					#ifdef BATTERY_MP3_TIPS_ON
+						HAL_Voice_PlayingVoice( EM_UNDER_BAT_LOW_AND_REPLACE_MP3, 0 );
+					#else
+						HAL_Voice_PlayingVoice( EM_UPPER_BAT_LOW_AND_REPLACE_MP3, 0 );
+					#endif 
+					SelfCheckDelayTimMs = 300;
+				}
+				#endif	
+				step = 1;
+		 break;
+					
+		 case 1:
+			    if( 0 == SelfCheckDelayTimMs )
+				{
+					#ifdef UNDER_BAT_ADC_ON
+					tp1 = HAL_ADC_GetCellBatVolState( E_UNDER_BAT );
+					if( -3 == tp1 )      //未插电池
+					{	
+                        APP_SCREEN_Operate(EM_SCREEN_APP_FLOW0_SHOW_MOTION , EM_SCREEN_FLOW0_LOW_POWER);
+						#ifdef BATTERY_MP3_TIPS_ON
+							HAL_Voice_PlayingVoice( EM_INSERT_UPPER_BAT_TIPS_MP3, 0 );
+						#else
+							HAL_Voice_PlayingVoice( EM_INSERT_UNDER_BAT_TIPS_MP3, 0 ); 
+						#endif 
+						SelfCheckDelayTimMs = 300;
+					}
+					else if( -2 == tp1 ) //电压低无法工作
+					{
+                        APP_SCREEN_Operate(EM_SCREEN_APP_FLOW0_SHOW_MOTION , EM_SCREEN_FLOW0_LOW_POWER);
+						#ifdef BATTERY_MP3_TIPS_ON
+							HAL_Voice_PlayingVoice( EM_UPPER_BAT_UNWORK_MP3, 0 );
+						#else
+							HAL_Voice_PlayingVoice( EM_UNDER_BAT_UNWORK_MP3, 0 );   
+						#endif
+						SelfCheckDelayTimMs = 300;
+					}
+					else if( -1 == tp1 ) //电池电压低告警
+					{
+                        APP_SCREEN_Operate(EM_SCREEN_APP_FLOW0_SHOW_MOTION , EM_SCREEN_FLOW0_LOW_POWER);
+						#ifdef BATTERY_MP3_TIPS_ON
+							HAL_Voice_PlayingVoice( EM_UPPER_BAT_LOW_AND_REPLACE_MP3, 0 );
+						#else
+							HAL_Voice_PlayingVoice( EM_UNDER_BAT_LOW_AND_REPLACE_MP3, 0 );
+						#endif 
+						SelfCheckDelayTimMs = 300;
+					}
+					#endif
+					step = 2;
+				}
+		 break;		
+ 
+		 case 2:
+				if( 0 == SelfCheckDelayTimMs )
+				{
+					*pcheckStep = BUTTON_STATE_CHECK; 		
+					step = 0;
+				}
+		 break;	
+ 
+      #endif		
+
+		 default:break;
+	}	 
+}
+
+/*********************************************************************************************************************
+* Function Name :  SelfCheckButtonStateHandler()
+* Description   :  自检按键状态处理
+* Input  Para   :  pkeysts: 组合按键状态
+* Output Para   :  pcheckStep: 下一步检测项索引  
+* Return        :  none
+*********************************************************************************************************************/
+static void SelfCheckButtonStateHandler( uint8_t handleOpen, uint8_t handleColse, BUTTON_TYPE_E keysts, SelfCheckType_E *pcheckStep ) 
+{
+    if( keysts == EM_ENTER_LOCAL_MODEL_KEY )    //进入工程模式
+	{
+		App_GUI_RelieveTryProtect();  //解除禁试
+		if( ADMIN_NONE_REGISTERED == App_GUI_GetRegisterSts() )  //非体验模式
+		{
+			#if defined FACE_FUNCTION_ON || defined IRIS_FUNCTION_ON
+		    App_GUI_MenuJump( EM_MENU_SET_FACE_MENU );
+			*pcheckStep = SELF_CHECK_BREAK;  
+			#endif
+		}
+	}
+	else if( keysts == EM_ENTER_APP_MODEL_KEY ) //APP模式
+	{
+		App_GUI_RelieveTryProtect();  //解除禁试
+		App_GUI_MenuJump( EM_MENU_APP_MODEL );
+		*pcheckStep = SELF_CHECK_BREAK;  
+	}
+	else if( keysts == EM_OPEN_DOOR_KEY )       //按键开门
+	{
+		App_GUI_RelieveTryProtect();  //解除禁试
+	    App_GUI_SetOpenModel( EM_OPEN_BUTTON );
+		SystemEventLogSave( KEY_OPEN_IN_DOOR, 0 );
+#ifdef XM_CAM_SCREEN_FUNCTION_ON
+		CAM_GoOutGiveNotice();
+#endif
+		App_GUI_MenuJump( EM_MENU_OPEN_DOOR );
+		*pcheckStep = SELF_CHECK_BREAK;  
+	}
+	#ifdef CLOSE_BUTTON_ON
+	else if( keysts == EM_CLOSE_DOOR_KEY )      //按键关门
+	{
+		App_GUI_RelieveTryProtect();  //解除禁试
+		App_GUI_SetCloseModel( EM_CLOSE_BUTTON );
+		SystemEventLogSave( KEY_CLOSE_IN_DOOR, 0 );
+	    App_LED_OutputCtrl( EM_LED_ALL, EM_LED_ON );        //亮屏
+		App_GUI_MenuJump( EM_MENU_CLOSE_DOOR );
+		*pcheckStep = SELF_CHECK_BREAK;  
+	}
+	#endif
+	else if( 1 == handleOpen )     //把手开门
+	{
+		App_GUI_RelieveTryProtect();  //解除禁试
+		App_GUI_SetOpenModel( EM_OPEN_HANDLER );
+		SystemEventLogSave( BAC_OPEN_IN_DOOR, 0 );  //事件记录
+#ifdef XM_CAM_SCREEN_FUNCTION_ON
+		CAM_GoOutGiveNotice();
+#endif
+		if(SystemSeting.SysKeyDef == FUNCTION_ENABLE )
+		{
+			App_GUI_MenuJump( EM_MENU_DEPLAY_WARM );
+			*pcheckStep = SELF_CHECK_BREAK;  
+		}
+	}
+	else if( 1 == handleColse )    //把手关门
+	{
+		SystemEventLogSave( BAC_CLOSE_IN_DOOR, 0 );  //事件记录
+		App_GUI_RelieveTryProtect();  //解除禁试
+		App_GUI_SetCloseModel( EM_CLOSE_HANDLER );
+	} 
+
+	*pcheckStep = TRY_PROTECT_CHECK;  
+}
+
+/*********************************************************************************************************************
+* Function Name :  SelfCheckTryProtectHandler()
+* Description   :  自检禁试告警处理
+* Input  Para   :  none
+* Output Para   :  pcheckStep: 下一步检测项索引  
+* Return        :  none
+*********************************************************************************************************************/
+static void SelfCheckTryProtectHandler( SelfCheckType_E *pcheckStep ) 
+{
+    if( E_WAKE_CAMERA_WIFI == App_GUI_GetSysWakeupType() ) //猫眼WiFi唤醒      
+	{
+		if( SystemSeting.SysWifiMainSw == FUNCTION_ENABLE )
+		{
+			App_GUI_MenuJump( EM_MENU_BELL_VIDEO );
+		}
+		*pcheckStep = SELF_NORMAL_END;	
+		return;
+	} 
+ 
+	if( (SystemSeting.CheckErrAllCnt >= LOCKERR_ALL_MAX) || ( SystemSeting.CheckErrPwdCnt >= LOCKERR_PWD_MAX ) )  //禁试
+	{
+		if( Rtc_Real_Time.timestamp > SystemSeting.TryForbitUtc + 180 )
+		{
+			SystemSeting.CheckErrAllCnt = 0;    
+			(void)SystemWriteSeting( (uint8_t *)&SystemSeting.CheckErrAllCnt, sizeof SystemSeting.CheckErrAllCnt );
+			SystemSeting.CheckErrPwdCnt = 0;  
+			(void)SystemWriteSeting( (uint8_t *)&SystemSeting.CheckErrPwdCnt, sizeof SystemSeting.CheckErrPwdCnt );	
+			SystemSeting.TryForbitUtc = 0;
+			(void)SystemWriteSeting( (uint8_t *)&SystemSeting.TryForbitUtc, sizeof SystemSeting.TryForbitUtc );	
+			my_printf( "TryProtect is release!\n" ); 
+		}
+		else 
+		{
+			App_GUI_MenuJump( EM_MENU_TRY_PROTECT );	
+		    *pcheckStep = SELF_CHECK_BREAK;	
+			my_printf( "TryProtect is set!\n" ); 
+			return;
+		}
+	}
+	
+	*pcheckStep = ALARM_WARM_CHECK;	
+}
+
+/*********************************************************************************************************************
+* Function Name :  SelfCheckAlarmButtonHandler()
+* Description   :  自检防撬按键处理
+* Input  Para   :  none
+* Output Para   :  pcheckStep: 下一步检测项索引  
+* Return        :  none
+*********************************************************************************************************************/
+static void SelfCheckAlarmButtonHandler( SelfCheckType_E *pcheckStep ) 
+{
+	my_printf( "SelfCheckAlarmButtonHandler()!\n" ); 
+    if( E_WAKE_ALARM_BREAK == App_GUI_GetSysWakeupType() )    //中断防撬唤醒
+	{
+		my_printf( "wake up source is alrm break!\n" ); 
+		*pcheckStep = SELF_CHECK_BREAK; 
+		return;
+	}
+
+	if( true == App_Export_GetAlrmWarmState() )  //防撬触发
+	{
+		App_GUI_MenuJump( EM_MENU_ALARM_WARM );
+		*pcheckStep = SELF_CHECK_BREAK; 
+		return;
+	}
+    /*-------------判定是否进行联网------------*/
+	#if defined OB_CAM_FUNCTION_ON || defined ST_CAM_FUNCTION_ON   //二代猫眼
+	if( SystemPowerOnFlg == true )  //首次上电 
+	{
+		if( App_GUI_CheckNetworkAction() )  //执行网络同步
+		{
+			App_GUI_MenuJump( EM_MENU_NETWORK_UPDATE );
+			*pcheckStep = SELF_CHECK_DONONE;	
+	        return;
+		}
+	}
+	#endif
+	
+	/*NB是否进行联网*/
+	#if defined NB_FUNCTION
+	if( SystemPowerOnFlg == true )  //首次上电 
+	{
+//		if( App_GUI_CheckNetworkAction() )  //执行网络同步,不需要限制大小电池
+		{
+			App_GUI_MenuJump( EM_MENU_NETWORK_UPDATE );
+			*pcheckStep = SELF_CHECK_DONONE;	
+	        return;
+		}
+	}
+	#endif
+    /*-------------蓝牙唤醒-------------------*/
+	if( E_WAKE_BLE_COM == App_GUI_GetSysWakeupType() ) 
+	{
+		App_GUI_MenuJump( EM_MENU_APP_MODEL );
+	    *pcheckStep = SELF_NORMAL_END;  
+		return;
+	}
+
+   /*-------------把手左转唤醒------------*/
+	if( E_WAKE_LEFT_HANDLER == App_GUI_GetSysWakeupType() )      
+	{
+		if( true == SystemWorkLedStateDisplay() )  //电压正常
+		{
+			App_GUI_MenuJump( EM_MENU_WAKEUP_BUT_SLEEP );
+			*pcheckStep = SELF_CHECK_DONONE;  
+			return;
+		}
+	}
+   /*-------------把手中间唤醒------------*/
+	else if( E_WAKE_MIDDLE_HANDLER == App_GUI_GetSysWakeupType() )   
+	{
+		if( true == SystemWorkLedStateDisplay() ) //电压正常
+		{
+			App_GUI_MenuJump( EM_MENU_WAKEUP_BUT_SLEEP );
+			*pcheckStep = SELF_CHECK_DONONE;  
+			return;
+		}
+	}
+   /*-------------把手右转唤醒------------*/
+	else if( E_WAKE_RIGHT_HANDLER == App_GUI_GetSysWakeupType() )             
+	{
+		if( true == SystemWorkLedStateDisplay() ) //电压正常
+		{
+			App_GUI_MenuJump( EM_MENU_WAKEUP_BUT_SLEEP );
+			*pcheckStep = SELF_CHECK_DONONE;  
+			return;
+		}
+	}
+	*pcheckStep = SELF_NORMAL_END;   
+}
+
+/*********************************************************************************************************************
+* Function Name :  SelfCheckProBreakHandler()
+* Description   :  自检流程被打断处理
+* Input  Para   :  none
+* Output Para   :  pcheckStep: 下一步检测项索引  
+* Return        :  none
+*********************************************************************************************************************/
+static void SelfCheckProBreakHandler( SelfCheckType_E *pcheckStep ) 
+{
+    if( true == SystemWorkLedStateDisplay() )
+	{
+		App_LED_OutputCtrl( EM_LED_POW_G, EM_LED_ON ); 
+		SystemPowerLedStsFlg = true;
+	}
+	else
+	{
+		App_LED_OutputCtrl( EM_LED_POW_R, EM_LED_ON );  
+		SystemPowerLedStsFlg = false;
+	}
+	*pcheckStep = DEFULT_CHECK;
+}
+
+/*********************************************************************************************************************
+* Function Name :  SelfCheckProNormalHandler()
+* Description   :  自检流程正常结束
+* Input  Para   :  none
+* Output Para   :  pcheckStep: 下一步检测项索引  
+* Return        :  none
+*********************************************************************************************************************/
+static void SelfCheckProNormalHandler( SelfCheckType_E *pcheckStep ) 
+{
+    if( true == SystemWorkLedStateDisplay() )
+	{
+		App_LED_OutputCtrl( EM_LED_POW_G, EM_LED_ON ); 
+		SystemPowerLedStsFlg = true;
+	}
+	else
+	{
+		App_LED_OutputCtrl( EM_LED_POW_R, EM_LED_ON );  
+		SystemPowerLedStsFlg = false;
+	}
+	*pcheckStep = DEFULT_CHECK;
+}
+
+/*********************************************************************************************************************
+* Function Name :  SystemSelfCheck()
+* Description   :  系统自检功能函数
+* Para          :  无
+* Return        :  0= 自检中  1= 完成
+*********************************************************************************************************************/
+uint8_t SystemSelfCheck( void ) 
+{
+	uint8_t ret = 0;
+	static uint8_t handleOpenState;
+	static uint8_t handleCloseState;
+	
+	static BUTTON_TYPE_E keyState;
+	static SelfCheckType_E  SelfCheckStep = DEFULT_CHECK;
+
+	switch( SelfCheckStep )
+	{
+		case DEFULT_CHECK:         //初始化  
+		{
+			 buttoncheckflg = false;
+             handleOpenState = 0;
+		     handleCloseState = 0;
+		     FingerWorkState = false;
+			 SystemPowerLedStsFlg = false;
+		
+			 if( E_WAKE_TOUCH == App_GUI_GetSysWakeupType() )  //键盘唤醒
+			 {
+				if( TOUCH_KEY_BELL == HAL_Touch_GetKeyValue() )
+				{
+					my_printf( "wake up source is change touch bell!\n" ); 
+					App_GUI_SetSysWakeupType( E_WAKE_BELL_KEY );  
+					App_Touch_FuncEnCtrl( EM_SCAN_ONLY_BELL ); 
+				}   
+			 }
+
+		     #ifdef FINGER_VEIN_FUNCTION_ON
+			 FingerAppParam_S fingerPara;
+		     if( E_WAKE_FINGER == App_GUI_GetSysWakeupType() )   //手指唤醒
+			 {
+				 if( FUNCTION_DISABLE == App_GUI_GetDoubleCheckSwSts() )   //双重认证关闭
+				 {
+					fingerPara.emAppFlow = EM_FINGER_APP_FLOW3_SEARCH;
+					APP_FINGER_Operate( fingerPara );   
+					FingerWorkState = true;	
+					SystemWorkHoldTim = 0;					 
+				 }
+				 else if( FUNCTION_ENABLE == App_GUI_GetDoubleCheckSwSts() )//双重认证开启
+				 {
+					#if defined FACE_FUNCTION_ON || defined IRIS_FUNCTION_ON 
+					#else
+					fingerPara.emAppFlow = EM_FINGER_APP_FLOW3_SEARCH;
+					APP_FINGER_Operate( fingerPara );    
+					FingerWorkState = true;	
+					SystemWorkHoldTim = 0;				 
+					#endif
+				 }
+			 }
+			 #endif
+		     App_GUI_MenuJump( EM_MENU_MAIN_DESK );
+		     SelfCheckStep = WAIT_SYS_STEADY;
+			 my_printf("DEFULT_CHECK =%d\n", SystemTick); 
+		}
+		break;
+ 
+		case WAIT_SYS_STEADY:  		//等待系统稳定 & 按键状态确认
+		     SystemWaitSteady( &handleOpenState, &handleCloseState, &keyState, &SelfCheckStep ); 
+		break;
+		
+		case BAT_VOL_EER_CHECK:     //电量过低无法工作检测
+			 SelfCheckBatErrorHandler( &SelfCheckStep ); 
+		break;
+		
+		case EEPROM_EER_CHECK:		//EEPROM故障检测
+		     SelfCheckEepromErrHandler( keyState, &SelfCheckStep );
+		break;
+ 
+		case BAT_VOL_WARM_CHECK:	//电量告警检测  
+			 SelfCheckBatVolWarmHandler( &SelfCheckStep ); 
+		break;	 
+	 
+		case BUTTON_STATE_CHECK:	//按键状态执行处理
+			 SelfCheckButtonStateHandler( handleOpenState, handleCloseState, keyState, &SelfCheckStep );  
+		break; 
+ 
+		case TRY_PROTECT_CHECK:		//禁试检测及处理
+			 SelfCheckTryProtectHandler( &SelfCheckStep ); 
+		break;
+			
+		case ALARM_WARM_CHECK:		//防撬检测  		
+			 SelfCheckAlarmButtonHandler( &SelfCheckStep ); 
+		break;
+			 
+		case SELF_NORMAL_END:		//自检流程正常结束
+			 SelfCheckProNormalHandler( &SelfCheckStep ); 
+			 ret = 1;
+		break;	 	 
+			 
+		case SELF_CHECK_BREAK:		//自检流程中断
+             SelfCheckProBreakHandler( &SelfCheckStep ); 
+		     #ifdef FINGER_VEIN_FUNCTION_ON
+		     if( FingerWorkState == true )
+			 {
+				 FingerWorkState = false;
+				 APP_FINGER_Sleep();  //关闭指纹模组	
+			 }
+    		 #endif		
+			 ret = 1;
+		break;		  
+
+		case SELF_CHECK_DONONE:		//自检流程中断不动作继续休眠
+			if( true == SystemWorkLedStateDisplay() )
+			{
+				SystemPowerLedStsFlg = true;
+			}
+			else
+			{
+				SystemPowerLedStsFlg = false;
+			}
+			 SelfCheckStep = DEFULT_CHECK;
+			 ret = 1;
+		break;	 
+			  
+		default:break;
+	}
+
+	return ret;
+}
+
+
+
+/*-------------------------------------------------THE FILE END-----------------------------------------------------*/
+

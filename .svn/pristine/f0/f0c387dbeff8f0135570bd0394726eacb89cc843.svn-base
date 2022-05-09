@@ -1,0 +1,149 @@
+#ifndef _LOCKCONFIG_H_
+#define _LOCKCONFIG_H_
+// <<< Use Configuration Wizard in Context Menu >>>\n
+
+#ifdef __cplusplus
+extern "C"
+{
+#endif
+
+
+/*  新硬件添加硬件头文件第1 步:  增加产品型号宏定义  */
+/*---项目型号定义----*/
+/* 芯片平台定义 */
+#define LOCK_PROJECT_NRF52832   0
+#define LOCK_PROJECT_NRF52833   1
+#define LOCK_PROJECT_RTL8762    2
+
+/* 单芯片平台支持定义的最大数量 */
+#define LOCK_PROJECT_CHIP_MAX   1000
+
+/* nRF52832 */
+#define nRF52832_HW_BASE                (LOCK_PROJECT_NRF52832*LOCK_PROJECT_CHIP_MAX)
+#define nRF52832_Q5S                    (nRF52832_HW_BASE +     0)      //Q5S 项目
+#define nRF52832_R9_OB                  (nRF52832_HW_BASE +     1)      //R9_OB 项目
+#define nRF52832_K10                    (nRF52832_HW_BASE +     2)      //K10 项目
+#define nRF52832_Q5M_218                (nRF52832_HW_BASE +     3)      //Q5M 项目
+#define nRF52832_Q50                    (nRF52832_HW_BASE +     4)      //Q50 项目
+#define nRF52832_R7P                    (nRF52832_HW_BASE +     5)      //R7P 项目
+#define nRF52832_Q50M                   (nRF52832_HW_BASE +     6)      //Q50 项目
+#define nRF52832_Q50MPro                (nRF52832_HW_BASE +     7)      //Q50 项目
+#define nRF52832_Q50FPro_OB             (nRF52832_HW_BASE +     8)      //Q50FPro_OB项目
+#define nRF52832_COMMON         		(nRF52832_HW_BASE +     9)      //COMMON项目
+#define nRF52832_R9_ST                  (nRF52832_HW_BASE +     10)      //R9_ST 项目
+#define nRF52832_Q50FPro_ST             (nRF52832_HW_BASE +     11)      //Q50FPro_ST项目
+#define nRF52832_Q50NB					(nRF52832_HW_BASE +     12)      //Q50NB项目
+/* nRF52833 */
+#define nRF52833_HW_BASE                (LOCK_PROJECT_NRF52833*LOCK_PROJECT_CHIP_MAX)
+#define nRF52833_Q5S                    (nRF52833_HW_BASE +     0)      //Q5S 项目
+#define nRF52833_Q5MPlus                (nRF52833_HW_BASE +     1)      //Q5MPlus项目
+#define nRF52833_Q5MS                	(nRF52833_HW_BASE +     2)      //Q5MS项目
+
+/* RTL8762 */
+#define RTL8762_HW_BASE                 (LOCK_PROJECT_RTL8762*LOCK_PROJECT_CHIP_MAX)
+#define RTL8762_Q50                     (RTL8762_HW_BASE +      0)      //Q50 项目
+#define RTL8762_G112                     (RTL8762_HW_BASE +      1)      //G112 项目
+
+
+/* 新硬件添加硬件头文件第2 步:  根据第1 步宏定义，增加下拉选项 */
+// <o>锁型号选择
+//  <i>Default: 0
+//  <0=> ------ 以下是nRF52832  ------
+//  <0=> nRF52832_Q5S
+//  <1=> nRF52832_R9_OB
+//  <2=> nRF52832_K10
+//  <3=> nRF52832_Q5M_218
+//  <4=> nRF52832_Q50
+//  <5=> nRF52832_R7P
+//  <6=> nRF52832_Q50M
+//  <7=> nRF52832_Q50MPro
+//  <8=> nRF52832_Q50FPro_OB
+//  <9=> nRF52832_COMMON
+//  <10=> nRF52832_R9_ST
+//  <11=> nRF52832_Q50FPro_ST
+//  <12=> nRF52832_Q50NB
+//  <1000=> ------ 以下是nRF52833  ------
+//  <1000=> nRF52833_Q5S
+//  <1001=> nRF52833_Q5MPlus
+//  <1002=> nRF52833_Q5MS
+//  <2000=> ------ 以下是TL8762  ------
+//  <2000=> RTL8762_Q50
+//  <2001=> RTL8762_G112
+#define PROJETCT_NAME 12
+
+/*---各类版本信息(勿改)----*/
+#define LOCK_VERSION  "DR0.0.A00_20210101"
+#define EEPROM_CFG_VERSION_1    1               //EEPROM数据变更版本记录
+#define EEPROM_CFG_VERSION_2    2               //EEPROM数据变更版本记录
+
+#define EEPROM_CFG_DEFAULT  EEPROM_CFG_VERSION_2
+
+
+/*--- Jenkins 打包头文件----*/
+#include "JenkinsDefine.h"
+
+#if (PROJETCT_NAME < (LOCK_PROJECT_NRF52832 + 1)*LOCK_PROJECT_CHIP_MAX)
+#define LOCK_PROJECT_CHIP LOCK_PROJECT_NRF52832
+#elif (PROJETCT_NAME < (LOCK_PROJECT_NRF52833 + 1)*LOCK_PROJECT_CHIP_MAX)
+#define LOCK_PROJECT_CHIP LOCK_PROJECT_NRF52833
+#elif (PROJETCT_NAME < (LOCK_PROJECT_RTL8762 + 1)*LOCK_PROJECT_CHIP_MAX)
+#define LOCK_PROJECT_CHIP LOCK_PROJECT_RTL8762
+#else
+#define LOCK_PROJECT_CHIP LOCK_PROJECT_NRF52832
+#endif
+
+/*--- 加密配置---*/
+#define BLE_ID2_AES_ENC                  //蓝牙全数据加密
+#define BLE_ADVERTISING                  //蓝牙开启广播
+
+
+/* 新硬件添加硬件头文件第3 步:  包含新增硬件头文件
+    请各自平台目录下修改头文件 - 例如: emb/HW/芯片平台/ */
+/*--- 硬件定义---*/
+#if (PROJETCT_NAME == nRF52832_Q5S)
+    #include "HW_Q5S.h"
+#elif (PROJETCT_NAME == nRF52832_R9_OB)
+    #include "HW_R9_OB.h"
+#elif (PROJETCT_NAME == nRF52832_R9_ST)
+    #include "HW_R9_ST.h"
+#elif (PROJETCT_NAME == nRF52832_K10)
+    #include "HW_K10.h"
+#elif (PROJETCT_NAME == nRF52832_Q5M_218)
+    #include "HW_Q5M_218.h"
+#elif (PROJETCT_NAME == nRF52832_Q50)
+    #include "HW_Q50.h"
+#elif (PROJETCT_NAME == nRF52832_R7P)
+    #include "HW_R7P.h"
+#elif (PROJETCT_NAME == nRF52832_Q50M)
+    #include "HW_Q50M.h"
+#elif (PROJETCT_NAME == nRF52832_Q50MPro)
+    #include "HW_Q50MPro.h"	
+#elif (PROJETCT_NAME == nRF52832_Q50FPro_ST)
+    #include "HW_Q50FPro_ST.h"
+#elif (PROJETCT_NAME == nRF52832_Q50FPro_OB)
+    #include "HW_Q50FPro_OB.h"
+#elif (PROJETCT_NAME == nRF52832_COMMON)
+    #include "HW_ConfigLib.h"
+#elif (PROJETCT_NAME == nRF52832_Q50NB)
+   #include "HW_Q50NB.h"	
+#elif (PROJETCT_NAME == nRF52833_Q5S)
+    #include "HW_Q5S.h"
+#elif (PROJETCT_NAME == nRF52833_Q5MPlus)
+    #include "HW_Q5MPlus.h"
+#elif (PROJETCT_NAME == nRF52833_Q5MS)
+    #include "HW_Q5MS.h"	
+#elif (PROJETCT_NAME == RTL8762_Q50)
+    #include "HW_Q50.h"
+#elif (PROJETCT_NAME == RTL8762_G112)
+    #include "HW_G112.h"
+
+#endif
+
+
+#ifdef __cplusplus
+}
+#endif
+// <<< end of configuration section >>>
+#endif
+
+//.end of the file.

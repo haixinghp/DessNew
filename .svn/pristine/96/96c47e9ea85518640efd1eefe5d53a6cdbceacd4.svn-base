@@ -1,0 +1,68 @@
+#ifndef _HAL_RTC_H_
+#define _HAL_RTC_H_
+#ifdef __cplusplus
+extern "C"
+{
+#endif
+
+/* 标准头文件 */
+#include "stdint.h"
+
+//时间类型
+typedef enum
+{
+    RTC_TIME_CLOCK_BCD, //BCD码时间
+    RTC_TIME_CLOCK_BIN, //BCD码时间
+    RTC_TIME_STAMP  //时间戳
+} RTC_TIME_Type;
+
+//RTC	错误类型
+typedef enum
+{
+    RTC_Successfully,
+    RTC_I2C_Start_Fail, //IIC start 失败
+    RTC_No_ACK,         // 从器件无应答
+    RTC_Write_Time_Err,      //写时间错误
+    RTC_Fail
+} Return_Type_RTC;
+
+//RTC时间结构体
+typedef struct
+{
+    uint8_t second;
+    uint8_t minuter;
+    uint8_t hour;
+    uint8_t week;       //周统一按位记录,bit0无效，bit0~bit7对应周一至周日
+    uint8_t day;
+    uint8_t month;
+    uint8_t year;
+    uint32_t timestamp; //时间戳，可在1秒定时器中自加
+} RTCType;
+
+typedef struct
+{
+    RTCType tm_now; //当前时间
+    RTCType tm_str; //起始时间
+    RTCType tm_stp; //结束时间
+} timervailType; //时效结构体
+
+extern RTCType Rtc_Real_Time; //锁具当前时间 结构体
+
+Return_Type_RTC HAL_RTC_HWCheck(void);
+Return_Type_RTC HAL_RTC_WriteTime(RTCType *_writeRTC);//RTC时间写入
+Return_Type_RTC HAL_RTC_ReadTime(void);//RTC时间读取
+void HAL_RTC_Init(void);//RTC初始化
+void HAL_RTC_ClkOutEN(uint8_t frequency);//开启CLKOUT方波输出
+uint32_t HAL_RTC_TmToTime(RTCType *tm );//BCD码时间转时间戳
+void HAL_RTC_TimeToTm(uint32_t time, RTCType *tm);//时间戳转BCD码时间
+Return_Type_RTC HAL_RTC_TimeIsTimesize( RTCType *tmstr, RTCType *tmstp, uint8_t validwday);//BCD码时效校验
+void HAL_RTC_Systick (void);//时间戳软时钟
+void RTC_ReadNowSec(uint32_t *_sec);//获取当前时间戳
+uint32_t RTC_TimeUpdate(RTC_TIME_Type mode);
+ 
+
+#ifdef __cplusplus
+}
+#endif
+#endif
+//.end of the file.

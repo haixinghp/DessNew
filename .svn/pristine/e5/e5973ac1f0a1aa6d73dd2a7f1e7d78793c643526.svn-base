@@ -1,0 +1,406 @@
+/********************************************************************************************************************
+ * @file:      DRV_Motor.c
+ * @author:    gushengchi
+ * @version:   V01.00
+ * @date:      2021-08-06
+ * @brief:     电机驱动层文件
+*********************************************************************************************************************/
+  
+/*-------------------------------------------------文件包含---------------------------------------------------------*/
+#include "DRV_Motor.h"
+#include "System.h"
+#include "Public.h"
+#include "DRV_GPIO.h"    
+#include "DRV_ADC.h"
+/*-------------------------------------------------宏定义-----------------------------------------------------------*/
+#if defined LOCK_BODY_212_MOTOR || defined LOCK_BODY_AUTO_MOTOR
+
+#define  MOTOR_POWER_PIN       M_MOTOR_POW_GPIO_PIN
+#define  MOTOR_M1_PIN          M_MOTOR_M1_GPIO_PIN
+#define  MOTOR_M2_PIN          M_MOTOR_M2_GPIO_PIN
+// #define  MOTOR_POWER_ON()      DRV_GpioOut0( MOTOR_POWER_PIN ); 
+#define  MOTOR_POWER_ON()      DRV_GpioHighOut1( MOTOR_POWER_PIN ); 
+#define  MOTOR_POWER_OFF()     DRV_GpioHighOut0( MOTOR_POWER_PIN ); 
+#define  MOTOR_M1_ON()         DRV_GpioHighOut1( MOTOR_M1_PIN ); 
+#define  MOTOR_M1_OFF()        DRV_GpioHighOut0( MOTOR_M1_PIN ); 
+#define  MOTOR_M2_ON()         DRV_GpioHighOut1( MOTOR_M2_PIN ); 
+#define  MOTOR_M2_OFF()        DRV_GpioHighOut0( MOTOR_M2_PIN ); 
+ 
+#define  LEFT_OPEN_TYPE        LEFT_HAND_DOOR      //左开门
+#define  RIGHT_OPEN_TYPE       RIGHT_HAND_DOOR     //右开门 
+ 
+#define  HIGH_MOTOR_TORQUE     HIGH_TORQUE         //高电机扭力
+#define  LOW_MOTOR_TORQUE      LOW_TORQUE     	   //低电机扭力
+ 
+#define  HIGH_TORQUE_STOP_AMP  CFG_HIGH_TORQUE_AMP    //高扭力对应电流 精度1mA
+#define  LOW_TORQUE_STOP_AMP   CFG_LOW_TORQUE_AMP     //低扭力对应电流 精度1mA 
+ 
+#define  TIME_10_MS            1
+#define  TIME_20_MS            2
+#define  TIME_200_MS           20
+#define  TIME_250_MS           25
+#define  TIME_300_MS           30 
+#define  TIME_3000_MS          300 
+#define  TIME_3800_MS          380
+#define  TIME_500_MS           50 
+
+#define  MOTOR_TURN_BACK_TIM   TIME_250_MS 
+/*-------------------------------------------------枚举定义---------------------------------------------------------*/
+typedef enum
+{
+   EM_TURN_LEFT_CMD,       //左开 
+   EM_TURN_RIGH_CMD,       //右开 
+   EM_STOP_BOTH_ON_CMD,    //停转 M1 M2 都输出高
+   EM_STOP_BOTH_OFF_CMD,   //停转 M1 M2 都输出低
+	 	
+}MOTOR_CTRL_CMD_E;
+
+/*-------------------------------------------------常量定义---------------------------------------------------------*/
+
+
+/*-------------------------------------------------全局变量定义-----------------------------------------------------*/         
+ 
+
+/*-------------------------------------------------局部变量定义-----------------------------------------------------*/
+static uint32_t MotorDelayTimMs = 0; 
+
+/*-------------------------------------------------函数声明---------------------------------------------------------*/
+ 
+
+/*-------------------------------------------------函数定义---------------------------------------------------------*/
+
+/*********************************************************************************************************************
+* Function Name :  DRV_Motor_OutputCtrl()
+* Description   :  电机输出控制    
+* Para          :  cmd-控制命令       
+* Return        :  none
+*********************************************************************************************************************/
+static void DRV_Motor_OutputCtrl( MOTOR_CTRL_CMD_E cmd )  
+{
+	switch( cmd )
+	{
+ 		case EM_TURN_LEFT_CMD:       //左开 
+		     MOTOR_M1_ON(); 
+		     MOTOR_M2_OFF();
+		break;	
+		
+		case EM_TURN_RIGH_CMD:       //右开
+		     MOTOR_M1_OFF();
+		     MOTOR_M2_ON();
+		break;
+			
+		case EM_STOP_BOTH_ON_CMD:    //停转 M1 M2 都输出高
+		     MOTOR_M1_ON();
+		     MOTOR_M2_ON();
+		break;
+		
+		case EM_STOP_BOTH_OFF_CMD:   //停转 M1 M2 都输出低
+		     MOTOR_M1_OFF();
+		     MOTOR_M2_OFF();
+		break;
+		
+		default:break;
+	}	
+	return;
+}
+ 
+/*********************************************************************************************************************
+* Function Name :  DRV_Motor_GetTurnDirSts()
+* Description   :  获取电机旋转方向状态   
+* Para          :  none
+* Return        :  电机方向状态  1: 左开  0x55: 右开
+*********************************************************************************************************************/
+static uint8_t DRV_Motor_GetTurnDirSts( void )  
+{
+	return SystemFixSeting.MotorDirection;
+}
+
+/*********************************************************************************************************************
+* Function Name :  DRV_Motor_GetTurnTorqueSts()
+* Description   :  电机扭力状态   
+* Para          :  none      
+* Return        :  LOW_MOTOR_TORQUE: 低扭力  HIGH_MOTOR_TORQUE: 高扭力
+*********************************************************************************************************************/
+static uint8_t DRV_Motor_GetTurnTorqueSts( void )  
+{
+	return SystemFixSeting.MotorTorque;
+}
+
+/*********************************************************************************************************************
+* Function Name :  DRV_Motor_GetTurnDirFromFlash()
+* Description   :  从EEPROM中读取电机开门方向设置信息   
+* Para          :  none      
+* Return        :  0: 失败   1: 左开  0x55: 右开
+*********************************************************************************************************************/
+static uint8_t DRV_Motor_GetTurnDirFromFlash( void )  
+{
+	if( 1 == SystemWriteFixSeting( &SystemFixSeting.MotorDirection, sizeof SystemFixSeting.MotorDirection ) )    //读取EEPROM
+	{
+		return SystemFixSeting.MotorDirection;
+	} 
+    return  0;
+}
+ 
+/*********************************************************************************************************************
+* Function Name :  DRV_Motor_GetAmpAdcVal()
+* Description   :  获取电流采样值   精度 1mA
+* Para          :  none    
+* Return        :  AD值  加权平均数  
+*********************************************************************************************************************/
+static uint32_t DRV_Motor_GetAmpAdcVal( void )  
+{
+	uint32_t ret = 0;
+	uint32_t tp4 = DRV_ADC_GetAdcVal( MOTO_AMP_ADC_CH ); 
+	ret = DRV_ADC_GetVoltage(tp4,2);
+//	my_printf ( "MOTO VAL = %d\n", ret );	
+	return ret;
+}
+
+/*********************************************************************************************************************
+* Function Name :  DRV_Motor_OpenDoorThread()
+* Description   :  开门流程     左开是1  右开是0x55
+* Para          :  none       
+* Return        :  执行结果   -1=失败  0=执行中  1=执行完成  2=主锁舌已收回(语音可播报)
+*********************************************************************************************************************/
+int8_t DRV_Motor_OpenDoorThread( void )  
+{
+	int8_t  ret = 0;
+	uint8_t tp1 =0, tm1 =0;
+	uint32_t tp4;
+
+	static MOTOR_CTRL_CMD_E actionDir;
+	static uint8_t step;
+	
+	switch( step )
+	{
+		case 0:  //获取电机动作方向+电机动作   左开 OR 右开   
+			   tp1 = DRV_Motor_GetTurnDirSts();  
+               tm1 = DRV_Motor_GetTurnDirFromFlash();
+		       if( tp1 != tm1 )	  //开门方向数据异常
+			   {
+                  return (-1); 
+			   }
+ 
+			   if( LEFT_OPEN_TYPE == tp1 )       //左开
+			   {
+				  actionDir = EM_TURN_LEFT_CMD; 
+			   }
+			   else if( RIGHT_OPEN_TYPE == tp1 ) //右开
+			   {
+				  actionDir = EM_TURN_RIGH_CMD;  
+			   }
+			   else   //再次确认开门方向的可靠性
+			   {
+				  return (-1);  
+			   }
+			   MOTOR_POWER_ON();
+			   DRV_Motor_OutputCtrl( actionDir ); //电机动作
+			   MotorDelayTimMs = TIME_300_MS;
+			   step = 1;
+		break;
+		
+		case 1: //持续3800ms
+			   if( 0 == MotorDelayTimMs )
+			   {
+				   MotorDelayTimMs = TIME_3800_MS;
+				   step = 2;  
+			   }
+		break;	   
+  
+		case 2: //3800ms内不断判定电机停止条件  时间到or阻转
+			   tp1 = DRV_Motor_GetTurnTorqueSts();
+			   tp4 = (tp1 == HIGH_MOTOR_TORQUE) ? HIGH_TORQUE_STOP_AMP : LOW_TORQUE_STOP_AMP;
+ 
+			   if( DRV_Motor_GetAmpAdcVal() > tp4 ) //阻转 
+			   {
+				   DRV_Motor_OutputCtrl( EM_STOP_BOTH_ON_CMD ); //电机停止动作
+				   MotorDelayTimMs = TIME_3000_MS;
+				   step = 3;  
+				   ret = 2; 
+			   }
+		       else if( 0 == MotorDelayTimMs )       //超时
+			   {
+				   DRV_Motor_OutputCtrl( EM_STOP_BOTH_ON_CMD ); //电机停止动作
+				   MotorDelayTimMs = TIME_3000_MS;
+				   step = 3;  
+				   ret = 2; 
+			   }
+		break;	   
+			   
+		case 3: //3000ms后弹出斜舌  
+			   if( 0 == MotorDelayTimMs )
+			   {
+				   actionDir = (actionDir == EM_TURN_LEFT_CMD) ? EM_TURN_RIGH_CMD : EM_TURN_LEFT_CMD; 
+				   DRV_Motor_OutputCtrl( actionDir );  
+				   MotorDelayTimMs = MOTOR_TURN_BACK_TIM;
+				   step = 4;  
+			   }
+		break;		   
+			   
+		case 4: //200ms后电机停止
+			   if( 0 == MotorDelayTimMs )
+			   {
+				   DRV_Motor_OutputCtrl( EM_STOP_BOTH_ON_CMD ); 
+				   MotorDelayTimMs = TIME_20_MS;	   
+				   step = 5; 
+			   }
+		break;		    
+		
+		case 5: //20ms后停止
+			   if( 0 == MotorDelayTimMs )
+			   {
+				   DRV_Motor_OutputCtrl( EM_STOP_BOTH_OFF_CMD );  
+				   MOTOR_POWER_OFF();				   
+				   step = 0; 
+				   ret = 1; 
+			   }
+		break;   
+			   
+		default:break;
+	}
+	
+	return ret;
+}
+
+/*********************************************************************************************************************
+* Function Name :  DRV_Motor_CloseDoorThread()
+* Description   :  关门门流程    
+* Para          :  none   
+* Return        : 执行结果   -1=失败  0=执行中  1=执行完成  
+*********************************************************************************************************************/
+int8_t DRV_Motor_CloseDoorThread( void )  
+{
+	int8_t   ret = 0;
+	uint8_t  tp1, tm1;
+	uint32_t tp4;
+	
+	static MOTOR_CTRL_CMD_E actionDir;
+	static uint8_t step;
+	
+	switch( step )
+	{
+		case 0:  //获取电机动作方向+电机动作   左开 OR 右开   
+			   tp1 = DRV_Motor_GetTurnDirSts();  
+               tm1 = DRV_Motor_GetTurnDirFromFlash();
+		       if( tp1 != tm1 )	  //电机动作方向数据异常
+			   {
+                  return (-1); 
+			   }
+ 
+			   if( LEFT_OPEN_TYPE == tp1 )       //左开
+			   {
+				  actionDir = EM_TURN_RIGH_CMD; 
+			   }
+			   else if( RIGHT_OPEN_TYPE == tp1 ) //右开
+			   {
+				  actionDir = EM_TURN_LEFT_CMD; 				   
+			   }
+			   else   //再次确认开门方向的可靠性
+			   {
+				  return (-1);  
+			   }
+			   MOTOR_POWER_ON();
+			   DRV_Motor_OutputCtrl( actionDir ); //电机动作
+			   MotorDelayTimMs = TIME_300_MS;
+			   step = 1;
+		break;
+		
+		case 1: //持续300ms
+			   if( 0 == MotorDelayTimMs )
+			   {
+				   MotorDelayTimMs = TIME_3800_MS;
+				   step = 2;  
+			   }
+		break;	   
+  
+		case 2: //3800ms内不断判定电机停止条件  时间到or阻转
+			   tp1 = DRV_Motor_GetTurnTorqueSts();
+			   tp4 = (tp1 == HIGH_MOTOR_TORQUE) ? HIGH_TORQUE_STOP_AMP : LOW_TORQUE_STOP_AMP;
+ 
+			   if( DRV_Motor_GetAmpAdcVal() > tp4 ) //阻转 
+			   {
+				   DRV_Motor_OutputCtrl( EM_STOP_BOTH_OFF_CMD ); //电机停止动作
+				   MotorDelayTimMs = TIME_500_MS;
+				   step = 3;  
+			   }
+		       else if( 0 == MotorDelayTimMs )       //超时
+			   {
+				   DRV_Motor_OutputCtrl( EM_STOP_BOTH_OFF_CMD ); //电机停止动作
+				   MotorDelayTimMs = TIME_500_MS;
+				   step = 3;  
+			   }
+		break;	   
+			   
+		case 3: //500ms后电机回转，释放扭力
+			   if( 0 == MotorDelayTimMs )
+			   {
+				   actionDir = (actionDir == EM_TURN_LEFT_CMD) ? EM_TURN_RIGH_CMD : EM_TURN_LEFT_CMD; 
+				   DRV_Motor_OutputCtrl( actionDir );  
+				   MotorDelayTimMs = MOTOR_TURN_BACK_TIM;
+				   step = 4;  
+			   }
+		break;		   
+			   
+		case 4: //200ms后电机停止
+			   if( 0 == MotorDelayTimMs )
+			   {
+				   DRV_Motor_OutputCtrl( EM_STOP_BOTH_ON_CMD );  
+				   MotorDelayTimMs = TIME_20_MS;	   
+				   step = 5; 
+			   }
+		break;		    
+		
+		case 5: // 20ms后停止
+			   if( 0 == MotorDelayTimMs )
+			   {
+				   DRV_Motor_OutputCtrl( EM_STOP_BOTH_OFF_CMD ); 
+				   MOTOR_POWER_OFF();				   
+				   step = 0; 
+				   ret = 1; 
+			   }
+		break;        
+			   
+		default:break;
+	}
+	
+	return ret;
+}
+ 
+/*********************************************************************************************************************
+* Function Name :  DRV_Motor_Tim10Ms()
+* Description   :  相关定时器    
+* Para          :  none   
+* Return        :  none
+*********************************************************************************************************************/
+void DRV_Motor_Tim10Ms( void )  
+{
+	if( MotorDelayTimMs )
+	{
+		MotorDelayTimMs--;
+	}
+	return;
+}
+
+/*********************************************************************************************************************
+* Function Name :  DRV_Motor_FileInit()
+* Description   :  相关文件初始化    
+* Para          :  none   
+* Return        :  none
+*********************************************************************************************************************/
+void DRV_Motor_FileInit( void )  
+{
+	DRV_Motor_OutputCtrl( EM_STOP_BOTH_OFF_CMD );  
+	MOTOR_POWER_OFF();
+	return;
+}
+
+
+
+
+#endif
+
+
+
+
+/*-------------------------------------------------THE FILE END-----------------------------------------------------*/
+

@@ -1,0 +1,72 @@
+/*********************************************************************************************************************
+ * @file:      HAL_Motor.h
+ * @author:    gushengchi
+ * @version:   V01.00
+ * @date:      2021-08-09
+ * @brief:     电机接口功能文件
+**********************************************************************************************************************/
+  
+#ifndef  _HAL_MOTOR_H
+#define  _HAL_MOTOR_H
+
+/*--------------------------------------------------文件包含---------------------------------------------------------*/
+#include <stdint.h> 
+#include <stdbool.h> 
+ 
+/*--------------------------------------------------宏定义-----------------------------------------------------------*/
+#define  MOTOR_RUN_FAIL_STEP          -1    //执行失败
+#define  MOTOR_RUNNING_STEP           0     //执行中
+#define  MOTOR_RUN_OK_STEP            1     //执行完成
+#define  MOTOR_CLOSE_OK_STEP          2     //主锁舌已弹出
+#define  MOTOR_OPEN_OK_STEP           2     //主锁舌已收回
+
+/*--------------------------------------------------枚举声明---------------------------------------------------------*/
+ 
+ 
+/*--------------------------------------------------常量声明---------------------------------------------------------*/
+
+
+/*--------------------------------------------------变量声明---------------------------------------------------------*/             
+ 
+ 
+/*--------------------------------------------------函数声明---------------------------------------------------------*/
+void HAL_Motor_FileInit( void );  
+void HAL_Motor_WakeupInit( void );  
+void HAL_Motor_SleepInit( void );  
+void HAL_Motor_Tim10Ms( void ); 
+void HAL_Motor_Tim1000Ms( void );  
+	
+int8_t HAL_Motor_OpenDoorThread( void ); 
+int8_t HAL_Motor_ForceOpenDoorThread( void ); 
+int8_t HAL_Motor_CloseDoorThread( void );
+int8_t HAL_Motor_ForceCloseDoorThread( void );
+int8_t HAL_Motor_BurnTestCloseDoorThread( void );
+uint8_t HAL_Motor_AutoLockCheck( bool *pfirstflg );  
+
+uint8_t HAL_Motor_ForgetLockWarmCheck( void );
+uint8_t HAL_Motor_FalseLockWarmCheck( void );
+uint8_t HAL_Motor_HandleTryForbitWarmCheck( void );
+uint8_t HAL_Motor_ReleaseTryProtectCheck( void );
+uint8_t HAL_Motor_DefendActionCheck( bool resetflg );
+
+bool HAL_Motor_GetForgetLockWarmState( void );
+bool HAL_Motor_GetFalseLockWarmState( void ); 
+bool HAL_Motor_GetHandleTryForbitWarmState( void );
+
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+#endif
+ 
+ 
+/*--------------------------------------------------THE FILE END-----------------------------------------------------*/
+

@@ -1,0 +1,358 @@
+/********************************************************************************************************************
+ * @file:      HAL_Uart.c
+ * @author:    gushengchi
+ * @version:   V01.00
+ * @date:      2022-01-13
+ * @brief:     uart功能调度中间层次接口文件
+*********************************************************************************************************************/
+  
+/*-------------------------------------------------文件包含---------------------------------------------------------*/
+#include <string.h> 
+#include <stdbool.h> 
+
+#include "HAL_Uart.h"
+#include "app_fifo.h" 
+#include "Public.h"
+/*-------------------------------------------------宏定义-----------------------------------------------------------*/
+#define  UART_COM_NUM          2u
+#define  COM_RX_QUEUE_SIZE   ( 256u )
+/*-------------------------------------------------枚举定义---------------------------------------------------------*/
+
+
+/*-------------------------------------------------常量定义---------------------------------------------------------*/
+
+
+/*-------------------------------------------------全局变量定义-----------------------------------------------------*/         
+ 
+ 
+/*-------------------------------------------------局部变量定义-----------------------------------------------------*/
+static uint8_t UartRxBuff[ UART_COM_NUM ][COM_RX_QUEUE_SIZE] ={0}; 
+static app_fifo_t   UartRxQueue[ UART_COM_NUM ] ={0};     
+static UART_STATE_U UartCurSts[ UART_COM_NUM ]={0};
+ 
+/*-------------------------------------------------函数声明---------------------------------------------------------*/
+static void HAL_Uart_PushByteIntoQueue0( uint8_t para ); 
+static void HAL_Uart_PushByteIntoQueue1( uint8_t para ); 
+#if LOCK_PROJECT_CHIP == LOCK_PROJECT_RTL8762
+static void HAL_Uart_PushMessageIntoQueue( uint8_t comNo, uint8_t *pbuf, uint8_t length ); 
+#endif
+static void HAL_Uart_SetCurDeviceType( UART_TYPE_E uartType, bool cmd );
+static uint8_t HAL_Uart_GetComCurNo( UART_TYPE_E uartType );
+/*-------------------------------------------------函数定义---------------------------------------------------------*/
+
+/*********************************************************************************************************************
+* Function Name :  HAL_Uart_FileInit()
+* Description   :  功能文件初始化 
+* Para          :  无
+* Return        :  void
+*********************************************************************************************************************/
+void HAL_Uart_FileInit( void ) 
+{
+ 
+}
+
+/*********************************************************************************************************************
+* Function Name :  HAL_Uart_SleepInit()
+* Description   :  休眠前的处理 
+* Para          :  无
+* Return        :  void
+*********************************************************************************************************************/
+void HAL_Uart_SleepInit( void ) 
+{
+	DRV_Uart_SleepInit();
+}
+
+/*********************************************************************************************************************
+* Function Name :  HAL_Uart_ConfifInit()
+* Description   :  UART初始化配置 
+* Para   Input  :  uartType- 设备类型  人脸、指纹、WIFI...  uartCfg- 串口配置数据结构
+* Para   Output :  none
+* Return        :  void
+*********************************************************************************************************************/
+void HAL_Uart_ConfigInit( UART_TYPE_E uartType, UartCfg_S uartCfg ) 
+{
+	my_printf("HAL_Uart_ConfigInit()!\n");
+	
+	uint8_t comNo = HAL_Uart_GetComCurNo( uartType );
+	if( comNo == E_UART_COM_NONE )  //设备未注册
+	{
+		return;
+	}
+
+	if( UartCurSts[ comNo ].UartEnabled )  //若串口已开启 需要关闭
+	{
+		#if (LOCK_PROJECT_CHIP == LOCK_PROJECT_NRF52832) || (LOCK_PROJECT_CHIP == LOCK_PROJECT_NRF52833)
+			uint8_t uartKind = UART_KIND_OTHERS;
+		    if( (E_WIFI_UART == HAL_Uart_GetCurDeviceType( comNo )) ||
+				(E_NB_UART == HAL_Uart_GetCurDeviceType( comNo )))
+			{
+				uartKind = UART_KIND_WIFI;
+			}
+			DRV_Uart_DeInit( uartKind );
+		#elif LOCK_PROJECT_CHIP == LOCK_PROJECT_RTL8762
+			DRV_Uart_DeInit( comNo );
+		#endif
+		UartCurSts[ comNo ].UartEnabled = 0;
+	}
+
+    HAL_Uart_SetCurDeviceType( uartType, true );
+	(void)app_fifo_init(&UartRxQueue[comNo], UartRxBuff[comNo], COM_RX_QUEUE_SIZE );
+	/*-----------NORDIC平台------------*/
+	#if (LOCK_PROJECT_CHIP == LOCK_PROJECT_NRF52832) || (LOCK_PROJECT_CHIP == LOCK_PROJECT_NRF52833)
+		uint8_t uartSource = ((uartType == E_WIFI_UART) || (uartType == E_NB_UART)) ? UART_KIND_WIFI : UART_KIND_OTHERS;
+		
+		DRV_Uart_ConfigInit( uartSource, uartCfg );
+	    if( E_UART_COM0 == comNo )
+		{
+			PtrPushQueue0HandlerCallBack = HAL_Uart_PushByteIntoQueue0;
+		}
+		else if( E_UART_COM1 == comNo )
+		{
+			PtrPushQueue1HandlerCallBack = HAL_Uart_PushByteIntoQueue1;	
+		}
+	/*-----------RT8762CKF平台--------*/
+	#elif LOCK_PROJECT_CHIP == LOCK_PROJECT_RTL8762
+		DRV_Uart_ConfigInit( comNo, &uartCfg );
+		PtrPushBytesQueueCallBack = HAL_Uart_PushMessageIntoQueue; 
+	/*-----------OTHERS平台-----------*/
+	#endif
+ 
+	/*-----------THE EDN--------------*/
+}
+
+/*********************************************************************************************************************
+* Function Name :  DRV_Uart_DeInit()
+* Description   :  uart 解除资源
+* Para   Input  :  uartType- 设备类型  人脸、指纹、WIFI...
+* Para   Output :  none
+* Return        :  void
+*********************************************************************************************************************/
+void HAL_Uart_DeInit( UART_TYPE_E uartType )
+{
+	my_printf("HAL_Uart_DeInit()!\n");
+	uint8_t comNo = HAL_Uart_GetComCurNo( uartType );
+	if( comNo == E_UART_COM_NONE )  //设备未注册
+	{
+		return;
+	}
+	#if (LOCK_PROJECT_CHIP == LOCK_PROJECT_NRF52832) || (LOCK_PROJECT_CHIP == LOCK_PROJECT_NRF52833)
+		if( UartCurSts[ comNo ].UartEnabled )
+		{
+			uint8_t uartSource = uartType == E_WIFI_UART ? UART_KIND_WIFI : UART_KIND_OTHERS;
+			DRV_Uart_DeInit( uartSource );
+			UartCurSts[ comNo ].UartEnabled = 0;
+		}
+		if( E_UART_COM0 == comNo )
+		{
+			PtrPushQueue0HandlerCallBack = NULL;
+		}
+		else if( E_UART_COM1 == comNo )
+		{
+			PtrPushQueue1HandlerCallBack = NULL;
+		}		
+	#elif LOCK_PROJECT_CHIP == LOCK_PROJECT_RTL8762
+		if( UartCurSts[ comNo ].UartEnabled )
+		{
+			DRV_Uart_DeInit( comNo );
+			UartCurSts[ comNo ].UartEnabled = 0;
+			PtrPushBytesQueueCallBack = NULL;
+		}
+	#endif
+ 
+	HAL_Uart_SetCurDeviceType( uartType, false );
+    app_fifo_flush(&UartRxQueue[comNo]); //清队列
+
+}
+
+/*********************************************************************************************************************
+* Function Name :  HAL_Uart_SetCurDeviceType()
+* Description   :  存储当前设备的工作状态
+* Para   Input  :  uartType- 设备类型  人脸、指纹、WIFI...  cmd- 标记当前设备状态  true:工作  false: 空闲
+* Para   Output :  none
+* Return        :  void
+*********************************************************************************************************************/
+void HAL_Uart_SetCurDeviceType( UART_TYPE_E uartType, bool cmd )
+{
+	if( E_FINGER_UART == uartType )
+	{
+		UartCurSts[ FINGER_UART_COM ].UartOption.FingerUart = cmd; 
+	}
+	else if( E_FACE_UART == uartType )
+	{
+		UartCurSts[ FACE_UART_COM ].UartOption.FaceUart = cmd; 
+	}
+	else if( E_WIFI_UART == uartType )
+	{
+		UartCurSts[ WIFI_UART_COM ].UartOption.WifiUart = cmd; 
+	}
+	else if( E_CAMERA_UART == uartType )
+	{
+		UartCurSts[ CAMERA_UART_COM ].UartOption.CameraUart = cmd; 
+	}
+	else if( E_IR_UART == uartType )
+	{
+		UartCurSts[ IR_UART_COM ].UartOption.IrUart = cmd; 
+	}
+	else if( E_LCD_UART == uartType )
+	{
+		UartCurSts[ LCD_UART_COM ].UartOption.LcdUart = cmd; 
+	}
+	#if defined NB_FUNCTION
+	else if( E_NB_UART == uartType )
+	{
+		UartCurSts[ NB_UART_COM ].UartOption.NBUart = cmd; 
+	}
+	#endif
+}
+
+/*********************************************************************************************************************
+* Function Name :  HAL_Uart_GetCurDeviceType()
+* Description   :  获取当前设备类型  指纹、人脸...
+* Para   Input  :  uartCom- 串口资源  uart0  or  uart1
+* Para   Output :  none
+* Return        :  设备类型
+*********************************************************************************************************************/
+UART_TYPE_E HAL_Uart_GetCurDeviceType( uint8_t uartCom )
+{
+	if( UartCurSts[ uartCom ].UartOption.FingerUart )
+		return E_FINGER_UART;
+	else if( UartCurSts[ uartCom ].UartOption.FaceUart )
+		return E_FACE_UART;
+	else if( UartCurSts[ uartCom ].UartOption.CameraUart )
+		return E_CAMERA_UART;
+	else if( UartCurSts[ uartCom ].UartOption.WifiUart )
+		return E_WIFI_UART;
+	else if( UartCurSts[ uartCom ].UartOption.IrUart )
+		return E_IR_UART;
+	else if( UartCurSts[ uartCom ].UartOption.LcdUart )
+		return E_LCD_UART;
+	else if( UartCurSts[ uartCom ].UartOption.NBUart )
+		return E_NB_UART;
+	else 
+		return E_NO_UART;
+}
+
+/*********************************************************************************************************************
+* Function Name :  HAL_Uart_GetComCurNo()
+* Description   :  获取当前设备的串口通道  uart0 or uart1
+* Para   Input  :  uartType- 设备类型   指纹、人脸...
+* Para   Output :  none
+* Return        :  串口资源- uart0  or  uart1
+*********************************************************************************************************************/
+uint8_t HAL_Uart_GetComCurNo( UART_TYPE_E uartType )
+{
+	if( E_FINGER_UART == uartType )
+	{
+		return FINGER_UART_COM;
+	}
+	else if( E_FACE_UART == uartType )
+	{
+		return FACE_UART_COM;
+	}
+	else if( E_WIFI_UART == uartType )
+	{
+		return WIFI_UART_COM;
+	}
+	else if( E_CAMERA_UART == uartType )
+	{
+		return CAMERA_UART_COM;
+	}
+	else if( E_IR_UART == uartType )
+	{
+		return IR_UART_COM;
+	}
+	else if( E_LCD_UART == uartType )
+	{
+		return LCD_UART_COM;
+	}
+	#if defined NB_FUNCTION
+	else if( E_NB_UART == uartType )
+	{
+		return NB_UART_COM;
+	}
+	#endif
+	else
+	{
+		return E_UART_COM_NONE;
+	}	
+}
+
+/*********************************************************************************************************************
+* Function Name :  HAL_Uart_PopByteFromQueue()
+* Description   :  从队列中取单个字节
+* Para          :  pdat-取出后的数据
+* Return        :  UART_ERROR-失败    UART_SUCCESS-成功
+*********************************************************************************************************************/
+uint32_t HAL_Uart_PopByteFromQueue( uint8_t com, uint8_t *pdat ) 
+{
+	if( app_fifo_get(&UartRxQueue[com], pdat ) == 0)
+	{
+		return UART_SUCCESS;
+	}
+	else
+	{
+		return UART_ERROR;
+	}	
+}
+
+/*********************************************************************************************************************
+* Function Name :  HAL_Uart_PushByteIntoQueue0()
+* Description   :  放入单个字节入队列
+* Para   Input  :  para-待放入的数据 
+* Para   Output :  none 
+* Return        :  none
+*********************************************************************************************************************/
+void HAL_Uart_PushByteIntoQueue0( uint8_t para ) 
+{
+	(void)app_fifo_put(&UartRxQueue[E_UART_COM0], para);    
+}
+ 
+/*********************************************************************************************************************
+* Function Name :  HAL_Uart_PushByteIntoQueue1()
+* Description   :  放入单个字节入队列
+* Para   Input  :  para-待放入的数据 
+* Para   Output :  none 
+* Return        :  none
+*********************************************************************************************************************/
+void HAL_Uart_PushByteIntoQueue1( uint8_t para ) 
+{
+	(void)app_fifo_put(&UartRxQueue[E_UART_COM1], para);    
+}
+
+/*********************************************************************************************************************
+* Function Name :  HAL_Uart_PushMessageIntoQueue()
+* Description   :  放入多个字节入队列
+* Para   Input  :  para-待放入的数据 
+* Para   Output :  none 
+* Return        :  none
+*********************************************************************************************************************/
+#if LOCK_PROJECT_CHIP == LOCK_PROJECT_RTL8762
+void HAL_Uart_PushMessageIntoQueue( uint8_t comNo, uint8_t *pbuf, uint8_t length ) 
+{
+    for(uint8_t i=0; i<length; i++) 
+	{
+		(void)app_fifo_put( &UartRxQueue[comNo], pbuf[i] );    
+	}
+}
+#endif
+
+/*********************************************************************************************************************
+* Function Name :  HAL_Uart_TxMessage()
+* Description   :  uart 发送数据
+* Para   Input  :  uartCom-串口资源  p_data-待发送数据指针   length- 待发送数据长度
+* Para   Output :  none
+* Return        :  void
+*********************************************************************************************************************/
+void HAL_Uart_TxMessage( uint8_t uartCom, const uint8_t *p_data, uint16_t length )
+{
+	#if (LOCK_PROJECT_CHIP == LOCK_PROJECT_NRF52832) || (LOCK_PROJECT_CHIP == LOCK_PROJECT_NRF52833)
+		DRV_Uart_TxMessage( p_data, length );
+	#elif LOCK_PROJECT_CHIP == LOCK_PROJECT_RTL8762
+		DRV_Uart_TxMessage( uartCom, p_data, length );
+	#endif
+}
+
+
+
+/*-------------------------------------------------THE FILE END-----------------------------------------------------*/
+

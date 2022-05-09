@@ -1,0 +1,178 @@
+/**************************************************************************** 
+* Copyright (C), 2008-2022,德施曼机电（中国）有限公司 
+* 文件名: DRV_MIB5204.c 
+* 作者：dwh
+* 版本：V01
+* 时间：20220401
+* 内容简述：MIB5204模块驱动
+****************************************************************************/
+
+
+/* 标准头文件 */
+#include "stddef.h"
+#include "DRV_GPIO.h"
+#include "Public.h"
+#include "LockConfig.h"
+#include "DRV_MIB5024.h"
+#include "..\HAL\HAL_EXPORT\HAL_EXPORT.h"
+/*-------------------------------------------------宏定义-----------------------------------------------------------*/ 
+
+#ifdef KEYBOARD_CHIP_MBI5024_ON
+
+
+#define M_MBI5024_POW_FUN_OFF           DRV_GpioHighOut0(M_MBI_POW_GPIO_PIN)
+#define M_MBI5024_POW_FUN_ON            DRV_GpioHighOut1(M_MBI_POW_GPIO_PIN) // DRV_GpioSWOut1
+
+#define M_SCK_FUN_ON            		DRV_GpioHighOut1(M_MBI_CLK_GPIO_PIN)
+#define M_SCK_FUN_OFF           		DRV_GpioHighOut0(M_MBI_CLK_GPIO_PIN)
+
+#define M_MOSI_FUN_ON        			DRV_GpioHighOut1(M_MBI_SDI_GPIO_PIN)
+#define M_MOSI_FUN_OFF        			DRV_GpioHighOut0(M_MBI_SDI_GPIO_PIN)
+
+
+#define M_BL_LE_FUN_ON            		DRV_GpioHighOut1(M_MBI_LE_GPIO_PIN)
+#define M_BL_LE_FUN_OFF           		DRV_GpioHighOut0(M_MBI_LE_GPIO_PIN)
+
+// spi控制
+#define MBI5024_POWER_FUN_ON			M_MBI5024_POW_FUN_OFF
+#define MBI5024_POWER_FUN_OFF			M_MBI5024_POW_FUN_ON
+#define MBI5024_SDI_FUN_ON			  	M_MOSI_FUN_ON
+#define MBI5024_SDI_FUN_OFF			  	M_MOSI_FUN_OFF
+#define MBI5024_CLK_FUN_ON			  	M_SCK_FUN_ON
+#define MBI5024_CLK_FUN_OFF			  	M_SCK_FUN_OFF
+#define MBI5024_LE_FUN_ON			    M_BL_LE_FUN_ON 
+#define MBI5024_LE_FUN_OFF			 	M_BL_LE_FUN_OFF
+	
+
+/*-------------------------------------------------枚举定义---------------------------------------------------------*/
+
+
+/*-------------------------------------------------常量定义---------------------------------------------------------*/
+
+
+/*-------------------------------------------------全局变量定义-----------------------------------------------------*/         
+
+
+/*-------------------------------------------------局部变量定义-----------------------------------------------------*/
+
+static uint16_t  PinCtrlSet = 0;
+
+
+/*-------------------------------------------------函数声明---------------------------------------------------------*/
+ 
+
+/*-------------------------------------------------函数定义---------------------------------------------------------*/
+
+
+/*********************************************************************************************************************
+* Function Name :  DRV_MIB5024_SpiWrite()
+* Description   :  写数据
+* Para          :  data=待写入数据
+* Return        :  I2C_FALSE = 失败  I2C_TRUE = 成功
+*********************************************************************************************************************/
+static uint8_t DRV_MIB5024_SpiWrite(const uint16_t data)
+{
+    uint16_t i;
+    uint16_t tmp = 0;
+    MBI5024_POWER_FUN_ON;
+
+    tmp = data;
+    
+    for( i =0 ; i < 16; i++ )
+    {
+        MBI5024_CLK_FUN_OFF;
+        PUBLIC_Delayus(80);		//fmax = 25Mhz
+        if (tmp & 0x8000)
+            MBI5024_SDI_FUN_ON;
+        else
+            MBI5024_SDI_FUN_OFF;
+
+        tmp <<=1;
+        PUBLIC_Delayus(80);
+        MBI5024_CLK_FUN_ON;
+        PUBLIC_Delayus(160);
+    }
+    PUBLIC_Delayus(80);
+    MBI5024_LE_FUN_ON; //  LE高脉冲锁存 20ns
+    PUBLIC_Delayus(80);
+    MBI5024_LE_FUN_OFF;
+    PUBLIC_Delayus(160);
+    return BUS1_TRUE;
+}
+
+/*********************************************************************************************************************
+* Function Name :  DRV_MIB5024_PinSet()
+* Description   :  单个引脚控制
+* Para          :  pinNo= 引脚编号  pinSet= 输出类型
+* Return        :  I2C_FALSE = 失败  I2C_TRUE = 成功
+*********************************************************************************************************************/
+uint8_t DRV_MIB5024_PinSet(uint16_t pinNo, uint16_t pinSet )
+{
+    
+   pinNo = pinNo - PIN_OFFSET;
+   if( MIB5024_OUT_LOW == pinSet )
+   {
+	  PinCtrlSet &= ~(1 << pinNo);
+   }
+   else 
+   {
+	  PinCtrlSet |= (1 << pinNo);
+   }
+    
+   uint8_t ret = DRV_MIB5024_SpiWrite(PinCtrlSet);
+	
+   return ret;
+}
+
+
+/*********************************************************************************************************************
+* Function Name :  DRV_MIB5024_FileInit()
+* Description   :  初始化
+* Para          :  无
+* Return        :  I2C_FALSE = 失败  I2C_TRUE = 成功
+*********************************************************************************************************************/
+void DRV_MIB5024_FileInit( void )
+{
+    MBI5024_CLK_FUN_OFF;
+    MBI5024_SDI_FUN_OFF;
+    MBI5024_LE_FUN_ON;
+    MBI5024_POWER_FUN_ON;
+    
+    PUBLIC_Delayms(50);
+    
+    PinCtrlSet = 0xFFFF;
+    
+    return;
+}
+
+/*********************************************************************************************************************
+* Function Name :  DRV_MIB5024_WakeupInit()
+* Description   :  唤醒后配置
+* Para          :  无
+* Return        :  void
+*********************************************************************************************************************/
+void DRV_MIB5024_WakeupInit( void ) 
+{
+   
+    MBI5024_CLK_FUN_OFF;
+    MBI5024_SDI_FUN_OFF;
+    MBI5024_LE_FUN_ON;
+    MBI5024_POWER_FUN_ON;
+    
+	return;
+}
+
+/*********************************************************************************************************************
+* Function Name :  DRV_MIB5024_SleepInit()
+* Description   :  休眠配置
+* Para          :  无
+* Return        :  void
+*********************************************************************************************************************/
+void DRV_MIB5024_SleepInit( void ) 
+{
+    MBI5024_POWER_FUN_OFF;
+	return; 
+}
+
+#endif
+

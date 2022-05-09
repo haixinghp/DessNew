@@ -1,0 +1,705 @@
+/**************************************************************************** 
+* Copyright (C), 2008-2021,德施曼机电（中国）有限公司 
+* 文件名: DRV_IIC.c 
+* 作者：邓业豪
+* 版本：V01
+* 时间：20210722
+* 内容简述：IIC  IO模拟驱动
+****************************************************************************/
+/* 标准头文件 */
+#include <string.h>
+
+/* 内部头文件 */
+#include "DRV_IIC.h"
+#include "DRV_GPIO.h"
+#include "Public.h"
+#include "LockConfig.h"
+
+/* 外部头文件 */
+
+//CHANNEL0 读写配置
+#define DRV_SDA0_FUN_ON()    	  DRV_GpioHighOut1(M_SDA0_GPIO_PIN)
+#define DRV_SDA0_FUN_OFF()        DRV_GpioHighOut0(M_SDA0_GPIO_PIN) 
+#define DRV_SCL0_FUN_ON()         DRV_GpioHighOut1(M_SCL0_GPIO_PIN)
+#define DRV_SCL0_FUN_OFF()        DRV_GpioHighOut0(M_SCL0_GPIO_PIN)
+//#define DRV_SDA0_FUN_ON()    	  DRV_GpioOut1(M_SDA0_GPIO_PIN)
+//#define DRV_SDA0_FUN_OFF()        DRV_GpioOut0(M_SDA0_GPIO_PIN) 
+//#define DRV_SCL0_FUN_ON()         DRV_GpioOut1(M_SCL0_GPIO_PIN)
+//#define DRV_SCL0_FUN_OFF()        DRV_GpioOut0(M_SCL0_GPIO_PIN)
+
+#define DRV_SDA0_IN_FL()          DRV_GpioInputPullnull(M_SDA0_GPIO_PIN)  
+#define DRV_SCL0_IN_FL()          DRV_GpioInputPullnull(M_SCL0_GPIO_PIN) 
+#define DRV_SDA0_READ()           DRV_GpioRead(M_SDA0_GPIO_PIN) 
+#define DRV_SCL0_READ()       	  DRV_GpioRead(M_SCL0_GPIO_PIN)  
+
+//CHANNEL1 读写配置
+#define DRV_SDA1_FUN_ON()         DRV_GpioHighOut1(M_SDA1_GPIO_PIN)    
+#define DRV_SDA1_FUN_OFF()        DRV_GpioHighOut0(M_SDA1_GPIO_PIN) 
+#define DRV_SCL1_FUN_ON()      	  DRV_GpioHighOut1(M_SCL1_GPIO_PIN)
+#define DRV_SCL1_FUN_OFF()        DRV_GpioHighOut0(M_SCL1_GPIO_PIN)
+//#define DRV_SDA1_FUN_ON()         DRV_GpioOut1(M_SDA1_GPIO_PIN)    
+//#define DRV_SDA1_FUN_OFF()        DRV_GpioOut0(M_SDA1_GPIO_PIN) 
+//#define DRV_SCL1_FUN_ON()      	  DRV_GpioOut1(M_SCL1_GPIO_PIN)
+//#define DRV_SCL1_FUN_OFF()        DRV_GpioOut0(M_SCL1_GPIO_PIN)
+
+#define DRV_SDA1_IN_FL()          DRV_GpioInputPullnull(M_SDA1_GPIO_PIN)  
+#define DRV_SCL1_IN_FL()          DRV_GpioInputPullnull(M_SCL1_GPIO_PIN)  
+#define DRV_SDA1_READ()           DRV_GpioRead(M_SDA1_GPIO_PIN)
+#define DRV_SCL1_READ()       	  DRV_GpioRead(M_SCL1_GPIO_PIN)  
+
+/***************************************************************************************
+**函数名:       I2C_Delay
+**功能描述:     I2C延时
+**输入参数:     
+**备注:         总线速率控制,Delay 2us
+****************************************************************************************/
+static void I2C_Delay(void)
+{
+	#if LOCK_PROJECT_CHIP ==LOCK_PROJECT_RTL8762 
+	#else
+	PUBLIC_Delayus(2);
+	#endif
+	return;
+}
+
+/***************************************************************************************
+**函数名:       SDA_OUT_0
+**功能描述:     SDA输出低电平
+**输入参数:     channel     IIC总线通道
+**备注:         
+****************************************************************************************/
+static void SDA_OUT_0(DRV_IIC_CHANNEL_E channel)
+{
+	if(I2C_CHANNEL0==channel)
+	{
+		DRV_SDA0_FUN_OFF();
+	}
+	else
+	{
+		DRV_SDA1_FUN_OFF();
+	}
+
+    return;
+}
+/***************************************************************************************
+**函数名:       SDA_OUT_1
+**功能描述:     SDA输出高电平
+**输入参数:     channel     IIC总线通道
+**备注:         使用IO模拟,IO浮空依赖外部上拉  
+****************************************************************************************/
+static void SDA_OUT_1(DRV_IIC_CHANNEL_E channel)
+{
+	#if LOCK_PROJECT_CHIP ==LOCK_PROJECT_RTL8762 
+	if(I2C_CHANNEL0==channel)
+	{
+		DRV_SDA0_FUN_ON();
+	}
+	else
+	{
+        DRV_SDA1_FUN_ON();
+	}
+	#else
+	if(I2C_CHANNEL0==channel)
+	{
+		DRV_SDA0_IN_FL();
+	}
+	else
+	{
+        DRV_SDA1_IN_FL();
+	}
+	#endif
+    return;
+}
+
+/***************************************************************************************
+**函数名:       SCL_OUT_0
+**功能描述:     SCL输出低电平
+**输入参数:     channel     IIC总线通道
+**备注:         
+****************************************************************************************/
+static void SCL_OUT_0(DRV_IIC_CHANNEL_E channel)
+{
+	if(I2C_CHANNEL0==channel)
+	{
+		DRV_SCL0_FUN_OFF();
+	}
+	else
+	{
+		DRV_SCL1_FUN_OFF();
+	}
+
+    return;
+}
+/***************************************************************************************
+**函数名:       SCL_OUT_1
+**功能描述:     SCL输出高电平
+**输入参数:     channel     IIC总线通道
+**备注:         使用IO模拟,IO浮空依赖外部上拉  
+****************************************************************************************/
+static void SCL_OUT_1(DRV_IIC_CHANNEL_E channel)
+{
+	#if LOCK_PROJECT_CHIP ==LOCK_PROJECT_RTL8762 
+	if(I2C_CHANNEL0==channel)
+	{
+		DRV_SCL0_FUN_ON();
+	}
+	else
+	{
+        DRV_SCL1_FUN_ON();
+	}
+	#else
+	if(I2C_CHANNEL0==channel)
+	{
+		DRV_SCL0_IN_FL();
+	}
+	else
+	{
+        DRV_SCL1_IN_FL();
+	}
+	#endif
+    return;
+}
+
+
+/***************************************************************************************
+**函数名:       SET_SDA_IN
+**功能描述:     SDA输入模式
+**输入参数:     channel     IIC总线通道
+**备注:         使用IO模拟,IO浮空依赖外部上拉  
+****************************************************************************************/
+static void SET_SDA_IN(DRV_IIC_CHANNEL_E channel)
+{
+	if(I2C_CHANNEL0==channel)
+	{
+		DRV_SDA0_IN_FL();
+	}
+	else
+	{
+        DRV_SDA1_IN_FL();
+	}
+
+    return;
+}
+
+
+/***************************************************************************************
+**函数名:       READ_SDA_IN
+**功能描述:     读取SCL电平
+**输入参数:     channel     IIC总线通道
+**输出参数:     电平
+**备注:         使用IO模拟,IO浮空依赖外部上拉  
+****************************************************************************************/
+static uint8_t READ_SDA_IN(DRV_IIC_CHANNEL_E channel)
+{
+	if(I2C_CHANNEL0==channel)
+	{
+		return DRV_SDA0_READ();
+	}
+    
+    return DRV_SDA1_READ();
+}
+
+
+
+/***************************************************************************************
+**函数名:       I2C_RStart_I2c
+**功能描述:     总线初始化
+**输入参数:     channel     IIC总线通道
+****************************************************************************************/
+static void I2C_RStart_I2c(DRV_IIC_CHANNEL_E channel)
+{
+    SDA_OUT_1(channel);
+    SCL_OUT_1(channel);
+    I2C_Delay();
+    SDA_OUT_0(channel);
+    I2C_Delay();
+    SCL_OUT_0(channel);
+    I2C_Delay();
+
+    return;
+}
+
+/***************************************************************************************
+**函数名:       I2C_Stop_I2c
+**功能描述:     总线停止
+**输入参数:     channel     IIC总线通道
+****************************************************************************************/
+static void I2C_Stop_I2c(DRV_IIC_CHANNEL_E channel)
+{
+    SCL_OUT_0(channel);
+    I2C_Delay();
+    SDA_OUT_0(channel);
+    I2C_Delay();
+    SCL_OUT_1(channel);
+    I2C_Delay();
+    SDA_OUT_1(channel);
+    I2C_Delay();
+
+    return;
+}
+
+/***************************************************************************************
+**函数名:       I2C_NoAck_I2c
+**功能描述:     NoAck
+**输入参数:     channel     IIC总线通道
+****************************************************************************************/
+static void I2C_NoAck_I2c(DRV_IIC_CHANNEL_E channel)
+{
+    SCL_OUT_0(channel);
+    I2C_Delay();
+    SDA_OUT_1(channel);
+    I2C_Delay();
+    SCL_OUT_1(channel);
+    I2C_Delay();
+    SCL_OUT_0(channel);
+    I2C_Delay();
+
+    return;
+}
+
+/***************************************************************************************
+**函数名:       I2C_SendByte
+**功能描述:     字节数据传送函数
+**输入参数:     channel     IIC总线通道
+****************************************************************************************/
+static void I2C_SendByte(DRV_IIC_CHANNEL_E channel,uint8_t c)
+{
+    uint8_t i = 8;
+
+    while (i--)
+    {
+        SCL_OUT_0(channel);
+        I2C_Delay();
+        if (c & 0x80)
+            SDA_OUT_1(channel);
+        else
+            SDA_OUT_0(channel);
+        c <<= 1;
+        I2C_Delay();
+        SCL_OUT_1(channel);
+        I2C_Delay();
+    }
+    SCL_OUT_0(channel);
+
+    return;
+}
+
+/***************************************************************************************
+**函数名:       I2C_ResetI2c
+**功能描述:     总线复位
+**输入参数:     channel     IIC总线通道
+****************************************************************************************/
+static void I2C_ResetI2c(DRV_IIC_CHANNEL_E channel)
+{
+	SET_SDA_IN(channel);
+    if (READ_SDA_IN(channel) == 0)
+    {
+        I2C_RStart_I2c(channel);
+        I2C_SendByte(channel,0xff);
+        I2C_NoAck_I2c(channel);
+        I2C_Stop_I2c(channel);
+    }
+
+    return;
+}
+
+/***************************************************************************************
+**函数名:       I2C_Start_I2c
+**功能描述:     总线Start
+**输入参数:     channel     IIC总线通道
+****************************************************************************************/
+static void I2C_Start_I2c(DRV_IIC_CHANNEL_E channel)
+{
+    I2C_ResetI2c(channel);
+    SDA_OUT_1(channel);
+    SCL_OUT_1(channel);
+    I2C_Delay();
+    SDA_OUT_0(channel);
+    I2C_Delay();
+    SCL_OUT_0(channel);
+    I2C_Delay();
+    return;
+}
+/***************************************************************************************
+**函数名:       I2C_RcvByte
+**功能描述:     用来接收从器件传来的数据,并判断总线错误(不发应答信号)
+                发完后请用应答函数。
+**输入参数:     channel     IIC总线通道
+****************************************************************************************/
+static uint8_t I2C_RcvByte(DRV_IIC_CHANNEL_E channel)
+{
+    uint8_t i = 8;
+    uint8_t retc = 0;
+
+    SET_SDA_IN(channel);
+    while (i--)
+    {
+        retc <<= 1;
+        SCL_OUT_0(channel);
+        I2C_Delay();
+        SCL_OUT_1(channel);
+        I2C_Delay();
+        if (READ_SDA_IN(channel))
+        {
+            retc |= 0x01;
+        }
+    }
+    SCL_OUT_0(channel);
+    
+    return retc;
+}
+
+/***************************************************************************************
+**函数名:       I2C_Ack_I2c
+**功能描述:     Ack
+**输入参数:     channel     IIC总线通道
+****************************************************************************************/
+static void I2C_Ack_I2c(DRV_IIC_CHANNEL_E channel)
+{
+    SCL_OUT_0(channel);
+    I2C_Delay();
+    SDA_OUT_0(channel);
+    I2C_Delay();
+    SCL_OUT_1(channel);
+    I2C_Delay();
+    SCL_OUT_0(channel);
+    I2C_Delay();
+
+    return;
+}
+
+/***************************************************************************************
+**函数名:       I2C_WaitAck_I2c
+**功能描述:     等待应答
+**输入参数:     channel     IIC总线通道
+****************************************************************************************/
+static uint8_t I2C_WaitAck_I2c(DRV_IIC_CHANNEL_E channel)
+{
+    SCL_OUT_0(channel);
+    I2C_Delay();
+    SDA_OUT_1(channel);
+    SET_SDA_IN(channel);
+    I2C_Delay();
+    SCL_OUT_1(channel);
+    I2C_Delay();
+    if (READ_SDA_IN(channel))
+    {
+        SCL_OUT_0(channel);
+        return I2C_FALSE;
+    }
+    
+    SCL_OUT_0(channel);
+    return I2C_TRUE;
+}
+
+
+/***************************************************************************************
+**函数名:       DRV_IICReadByte
+**功能描述:     读取IIC从器件指定地址和长度
+**输入参数:     channel     IIC总线通道
+                slave_addr  从器件地址
+                reg_addr    寄存器地址
+                read_data   读取指针
+				len         读取长度
+**输出参数:     DRV_IIC_ERROR_E  错误码
+**备注:         
+****************************************************************************************/
+DRV_IIC_ERROR_E DRV_IICReadByte(DRV_IIC_CHANNEL_E channel ,uint8_t slave_addr, uint8_t reg_addr, uint8_t *read_data, uint16_t len)
+{
+    (void)I2C_Start_I2c(channel);
+	
+    I2C_SendByte(channel,slave_addr);//器件写地址
+    if (!I2C_WaitAck_I2c(channel))
+    {
+        I2C_Stop_I2c(channel);
+        return I2C_SLAVE_ACK_ERROR; //地址无响应
+    }
+    I2C_SendByte(channel,reg_addr);//送数据地址
+    I2C_WaitAck_I2c(channel);
+    I2C_Start_I2c(channel);
+    I2C_SendByte(channel,slave_addr+1); //器件读地址
+    I2C_WaitAck_I2c(channel);
+    for (uint8_t i = 0; i < len; i++, read_data++)
+    {
+        *read_data = I2C_RcvByte(channel);
+        if (i < (len - 1))   //最后一字节不需要Ack
+        {
+            I2C_Ack_I2c(channel);
+        }
+    }
+    I2C_NoAck_I2c(channel);//读数据结束
+    I2C_Stop_I2c(channel); //STOP
+
+    return I2C_SUCCESS;
+}
+/***************************************************************************************
+**函数名:       DRV_IICWriteByte
+**功能描述:     写IIC从器件指定地址单字节
+**输入参数:     channel     IIC总线通道
+                slave_addr  从器件地址
+                reg_addr    寄存器地址
+                write_data  写入数据
+**输出参数:     DRV_IIC_ERROR_E        错误码
+**备注:         
+****************************************************************************************/
+DRV_IIC_ERROR_E DRV_IICWriteByte(DRV_IIC_CHANNEL_E channel ,uint8_t slave_addr,uint8_t reg_addr, const uint8_t write_data)
+{
+    (void)I2C_Start_I2c(channel);
+    I2C_SendByte(channel,slave_addr); //器件写地址
+    if (!I2C_WaitAck_I2c(channel))
+    {
+        I2C_Stop_I2c(channel);
+        return I2C_SLAVE_ACK_ERROR; //地址无响应
+    }
+    I2C_SendByte(channel,reg_addr);  //送数据地址
+    I2C_WaitAck_I2c(channel);
+    I2C_SendByte(channel,write_data); //写数据
+    I2C_WaitAck_I2c(channel);
+    I2C_Stop_I2c(channel);
+    return I2C_SUCCESS;
+}
+
+
+/***************************************************************************************
+**函数名:       DRV_IICWrite
+**功能描述:     写IIC从器件指定地址多字节
+**输入参数:     channel     IIC总线通道
+                slave_addr  从器件地址
+                reg_addr    寄存器地址
+                write_data  写入数据
+                len         写入长度
+**输出参数:     DRV_IIC_ERROR_E    错误码
+**备注:         
+****************************************************************************************/
+DRV_IIC_ERROR_E DRV_IICWrite(DRV_IIC_CHANNEL_E channel ,uint8_t slave_addr,uint8_t reg_addr, const uint8_t *write_data, uint16_t len)
+{
+    (void)I2C_Start_I2c(channel);
+    I2C_SendByte(channel,slave_addr);     //器件写地址
+    if (!I2C_WaitAck_I2c(channel))
+    {
+        I2C_Stop_I2c(channel);
+        return I2C_SLAVE_ACK_ERROR; //地址无响应
+    }
+    I2C_SendByte(channel,reg_addr);
+    I2C_WaitAck_I2c(channel);
+    while (len--)
+    {
+        I2C_SendByte(channel,*write_data);
+        write_data++;
+        I2C_WaitAck_I2c(channel);
+    }
+    I2C_Stop_I2c(channel);
+    return I2C_SUCCESS;
+}
+
+
+/***************************************************************************************
+**函数名:       DRV_IICWriteEeprom
+**功能描述:     写IIC从器件指定地址多字节
+**输入参数:     channel     IIC总线通道
+                slave_addr  从器件地址
+                reg_addr    寄存器地址(uint32_t)
+                write_data  写入数据
+                len         写入长度
+**输出参数:     DRV_IIC_ERROR_E    错误码
+**备注:         
+****************************************************************************************/
+DRV_IIC_ERROR_E DRV_IICWriteEeprom(DRV_IIC_CHANNEL_E channel ,uint8_t slave_addr,uint32_t reg_addr, const  uint8_t *write_data, uint16_t len)
+{
+    (void)I2C_Start_I2c(channel);
+    I2C_SendByte(channel,slave_addr);     //器件写地址
+    if (!I2C_WaitAck_I2c(channel))
+    {
+        I2C_Stop_I2c(channel);
+        return I2C_SLAVE_ACK_ERROR; //地址无响应
+    }
+    I2C_SendByte(channel,(reg_addr >> 8) & 0xff);
+    I2C_WaitAck_I2c(channel);
+	I2C_SendByte(channel,(reg_addr >> 0) & 0xff);
+    I2C_WaitAck_I2c(channel);
+    while (len--)
+    {
+        I2C_SendByte(channel,*write_data);
+        write_data++;
+        I2C_WaitAck_I2c(channel);
+    }
+    I2C_Stop_I2c(channel);
+    return I2C_SUCCESS;
+}
+
+
+/***************************************************************************************
+**函数名:       DRV_IICReadByteEeprom
+**功能描述:     读取IIC从器件指定地址和长度
+**输入参数:     channel     IIC总线通道
+                slave_addr  从器件地址
+                reg_addr    寄存器地址(uint32_t)
+                read_data   读取指针
+				len         读取长度
+**输出参数:     DRV_IIC_ERROR_E  错误码
+**备注:         
+****************************************************************************************/
+DRV_IIC_ERROR_E DRV_IICReadByteEeprom(DRV_IIC_CHANNEL_E channel ,uint8_t slave_addr, uint32_t reg_addr, uint8_t *read_data, uint16_t len)
+{
+    (void)I2C_Start_I2c(channel);
+    I2C_SendByte(channel,slave_addr);//器件写地址
+    if (!I2C_WaitAck_I2c(channel))
+    {
+        I2C_Stop_I2c(channel);
+        return I2C_SLAVE_ACK_ERROR; //地址无响应
+    }
+    I2C_SendByte(channel,(reg_addr >> 8) & 0xff);
+    I2C_WaitAck_I2c(channel);
+	I2C_SendByte(channel,(reg_addr >> 0) & 0xff);
+    I2C_WaitAck_I2c(channel);
+	
+    (void)I2C_Start_I2c(channel);
+    I2C_SendByte(channel,slave_addr+1); //器件读地址
+    I2C_WaitAck_I2c(channel);
+    for (uint32_t i = 0; i < len; i++, read_data++)
+    {
+        *read_data = I2C_RcvByte(channel);
+        if (i < (len - 1))   //最后一字节不需要Ack
+        {
+            I2C_Ack_I2c(channel);
+        }
+    }
+    I2C_NoAck_I2c(channel);//读数据结束
+    I2C_Stop_I2c(channel); //STOP
+
+    return I2C_SUCCESS;
+}
+
+/***************************************************************************************
+**函数名:       DRV_IICHWCheck
+**功能描述:     检查从器件是否正常
+**输入参数:     channel     IIC总线通道
+                slave_addr  从器件地址
+**输出参数:     DRV_IIC_ERROR_E    错误码
+**备注:         
+****************************************************************************************/
+DRV_IIC_ERROR_E DRV_IICHWCheck(DRV_IIC_CHANNEL_E channel ,uint8_t slave_addr)
+{
+    (void)I2C_Start_I2c(channel);
+    I2C_SendByte(channel,slave_addr);     //器件写地址
+    if (!I2C_WaitAck_I2c(channel))
+    {
+        I2C_Stop_I2c(channel);
+        return I2C_SLAVE_ACK_ERROR; //地址无响应
+    }
+    I2C_Stop_I2c(channel);
+	return I2C_SUCCESS;
+}
+
+/***************************************************************************************
+**函数名:       DRV_I2CWriteSoft
+**功能描述:     升级包数据推送
+**输入参数:     uint8_t *data ,uint32_t len
+**输出参数:    void
+**备注:         
+****************************************************************************************/
+void DRV_I2CWriteSoft(uint8_t *data ,uint32_t len)
+{
+	uint8_t temp[512]={0};
+	uint8_t crc=0;
+	memcpy(temp, data, len);
+	if(len<512)
+	{
+		memset(&temp[len],0,512-len);
+	}
+	for(uint16_t i=0; i<512;i++)
+	{
+		I2C_SendByte(I2C_CHANNEL1, temp[i]);
+		I2C_WaitAck_I2c(I2C_CHANNEL1);
+		crc+=temp[i];
+	}
+	
+	PUBLIC_Delayms(5);
+	I2C_SendByte(I2C_CHANNEL1, crc);
+	I2C_WaitAck_I2c(I2C_CHANNEL1);
+	PUBLIC_Delayms(5);
+
+    return;
+}
+
+/***************************************************************************************
+**函数名:       DRV_I2CStopUpdateI2C
+**功能描述:     总线1 停止
+**输入参数:     void
+**输出参数:    void
+**备注:        
+****************************************************************************************/
+void DRV_I2CStopUpdateI2C(void)
+{
+    I2C_Stop_I2c(I2C_CHANNEL1);
+    return;
+}
+
+/***************************************************************************************
+**函数名:       DRV_IICVoiceHandShake
+**功能描述:     更换语音芯片内容
+**输入参数:     void
+**输出参数:    void
+**备注:        
+****************************************************************************************/
+void DRV_IICVoiceHandShake(void)
+{
+	uint32_t S_DATA = 0x7EC0EF; // 同0x7E 0xA0 0xEF ，却别是C0是需要校验
+	DRV_SDA1_FUN_OFF();
+	PUBLIC_Delayms(2); 
+	DRV_SCL1_FUN_OFF();
+	PUBLIC_Delayms(3); 
+	for(uint8_t i = 0; i < 24; i++)
+	{
+	    if((((S_DATA<<i)&0xFFFFFF)>>23) == 1)
+		{
+			 DRV_SCL1_FUN_OFF();
+			 PUBLIC_Delayus(400);   //0.4ms
+			 DRV_SCL1_FUN_ON();
+			 PUBLIC_Delayus(1200);  //1.2ms
+		}
+		else
+		{
+			 DRV_SCL1_FUN_OFF();
+			 PUBLIC_Delayus(1200);  //1.2ms			
+			 DRV_SCL1_FUN_ON();
+			 PUBLIC_Delayus(400);   //0.4ms
+		}		
+	}
+	DRV_SDA1_FUN_ON(); 
+	DRV_SCL1_FUN_ON(); 
+	PUBLIC_Delayms(5);
+}
+
+/***************************************************************************************
+**函数名:       DRV_IICVoicePairing
+**功能描述:     语音芯片配对
+**输入参数:     void
+**输出参数:    bool
+**备注:        
+****************************************************************************************/
+uint8_t DRV_IICVoicePairing(void)
+{
+	uint8_t cn = 20;
+	do
+	{
+		I2C_Start_I2c(I2C_CHANNEL1);
+		I2C_SendByte(I2C_CHANNEL1, 0xF8);
+		if(I2C_WaitAck_I2c(I2C_CHANNEL1))
+        {
+	        PUBLIC_Delayms(15);
+			return 1;
+		}
+		else
+		{
+			// 失败
+		}
+	}while(cn--);
+	DRV_SCL1_FUN_ON(); 
+	DRV_SDA1_FUN_ON(); 
+	PUBLIC_Delayms(15);
+	return 0;
+}
+
+
+//.end of the file.

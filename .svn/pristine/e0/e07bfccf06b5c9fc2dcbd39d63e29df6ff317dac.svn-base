@@ -1,0 +1,381 @@
+/**************************************************************************** 
+* Copyright (C), 2008-2021,德施曼机电（中国）有限公司 
+* 文件名: DRV_UART.c 
+* 作者：gushengchi
+* 版本：V01
+* 时间：20220120
+* 内容简述：RT8762CKF 串口驱动文件
+****************************************************************************/
+/*-------------------------------------------------文件包含---------------------------------------------------------*/
+#include <stdlib.h>
+#include "rtl876x_nvic.h"
+#include "rtl876x_rcc.h"
+#include "rtl876x_uart.h"
+#include "app_msg.h"
+#include "LockConfig.h"
+#include "DRV_UART.h"
+#include "DRV_GPIO.h"
+
+/*-------------------------------------------------宏定义-----------------------------------------------------------*/
+#define UART0_COM   HW_UART_COM0
+#define UART1_COM   HW_UART_COM1
+/*-------------------------------------------------枚举定义---------------------------------------------------------*/
+
+
+/*-------------------------------------------------常量定义---------------------------------------------------------*/
+
+
+/*-------------------------------------------------全局变量定义-----------------------------------------------------*/         
+PushQueueCallBack_PTR       PtrPushQueue0HandlerCallBack = NULL;
+PushQueueCallBack_PTR       PtrPushQueue1HandlerCallBack = NULL;
+PushBytesQueueCallBack_PTR  PtrPushBytesQueueCallBack = NULL;
+/*-------------------------------------------------局部变量定义-----------------------------------------------------*/
+typedef struct 
+{
+    uint16_t cfg_ovsr_adj;               
+    uint16_t cfg_div;                   
+    uint16_t cfg_ovsr;  
+}BUAD_RATE_CFG_S;
+ 
+/*-------------------------------------------------函数声明---------------------------------------------------------*/
+static BUAD_RATE_CFG_S DRV_Uart_GetBaudRatePara( uint8_t buadType ); 
+
+/*-------------------------------------------------函数定义---------------------------------------------------------*/
+
+
+/*********************************************************************************************************************
+* Function Name :  UART0_Handler()
+* Description   :  uart0中断处理函数 
+* Para          :  无
+* Return        :  void
+*********************************************************************************************************************/
+void UART0_Handler()
+{
+    uint8_t rx_len = 0;
+	uint8_t rxbuf[16];
+    /* Read interrupt id */
+    uint32_t int_status = UART_GetIID(UART);
+
+    /* Disable interrupt */
+    UART_INTConfig(UART, UART_INT_RD_AVA | UART_INT_LINE_STS, DISABLE);
+
+    if (UART_GetFlagState(UART, UART_FLAG_RX_IDLE) == SET)
+    {
+        /* Clear flag */
+        UART_INTConfig(UART, UART_INT_IDLE, DISABLE);
+//        IO_UART_DLPS_Enter_Allowed = true;
+        UART_INTConfig(UART, UART_INT_IDLE, ENABLE);
+    }
+
+    switch (int_status & 0x0E)
+    {
+		/* Rx time out(0x0C). */
+		case UART_INT_ID_RX_TMEOUT:
+			rx_len = UART_GetRxFIFOLen(UART);
+			UART_ReceiveData(UART, rxbuf, rx_len);
+			if( PtrPushBytesQueueCallBack != NULL )
+			{
+				PtrPushBytesQueueCallBack( UART0_COM, rxbuf, rx_len );
+			}
+			break;
+
+		/* Receive line status interrupt(0x06). */
+		case UART_INT_ID_LINE_STATUS:
+			break;
+
+		/* Rx data valiable(0x04). */
+		case UART_INT_ID_RX_LEVEL_REACH:
+			rx_len = UART_GetRxFIFOLen(UART);
+			UART_ReceiveData(UART, rxbuf, rx_len);
+			if( PtrPushBytesQueueCallBack != NULL )
+			{
+				PtrPushBytesQueueCallBack( UART0_COM, rxbuf, rx_len );
+			}
+			break;
+
+		/* Tx fifo empty(0x02), not enable. */
+		case UART_INT_ID_TX_EMPTY:
+			/* Do nothing */
+			break;
+		default:
+			break;
+		}
+
+    /* enable interrupt again */
+    UART_INTConfig(UART, UART_INT_RD_AVA, ENABLE);
+}
+
+/*********************************************************************************************************************
+* Function Name :  UART1_Handler()
+* Description   :  uart1中断处理函数 
+* Para          :  无
+* Return        :  void
+*********************************************************************************************************************/
+void UART1_Handler()
+{
+    uint8_t rx_len = 0;
+
+	uint8_t rxbuf[16];
+    /* Read interrupt id */
+    uint32_t int_status = UART_GetIID(UART1);
+
+    /* Disable interrupt */
+    UART_INTConfig(UART1, UART_INT_RD_AVA | UART_INT_LINE_STS, DISABLE);
+
+    if (UART_GetFlagState(UART1, UART_FLAG_RX_IDLE) == SET)
+    {
+        /* Clear flag */
+        UART_INTConfig(UART1, UART_INT_IDLE, DISABLE);
+//        IO_UART_DLPS_Enter_Allowed = true;
+        UART_INTConfig(UART1, UART_INT_IDLE, ENABLE);
+    }
+
+    switch (int_status & 0x0E)
+    {
+		/* Rx time out(0x0C). */
+		case UART_INT_ID_RX_TMEOUT:
+			rx_len = UART_GetRxFIFOLen(UART1);
+			UART_ReceiveData(UART1, rxbuf, rx_len);
+			if( PtrPushBytesQueueCallBack != NULL )
+			{
+				PtrPushBytesQueueCallBack( UART1_COM, rxbuf, rx_len );
+			}
+			break;
+
+		/* Receive line status interrupt(0x06). */
+		case UART_INT_ID_LINE_STATUS:
+			break;
+
+		/* Rx data valiable(0x04). */
+		case UART_INT_ID_RX_LEVEL_REACH:
+			rx_len = UART_GetRxFIFOLen(UART1);
+			UART_ReceiveData(UART1, rxbuf, rx_len);
+			if( PtrPushBytesQueueCallBack != NULL )
+			{
+				PtrPushBytesQueueCallBack( UART1_COM, rxbuf, rx_len );
+			}
+			break;
+
+		/* Tx fifo empty(0x02), not enable. */
+		case UART_INT_ID_TX_EMPTY:
+			/* Do nothing */
+			break;
+		default:
+			break;
+		}
+
+    /* enable interrupt again */
+    UART_INTConfig(UART1, UART_INT_RD_AVA, ENABLE);
+}
+
+/*********************************************************************************************************************
+* Function Name :  DRV_Uart_ConfigInit()
+* Description   :  uart 初始化配置函数 
+* Para   Input  :  uartCom-串口资源种类   0：uart0  1:uart1   uartCfg-配置信息
+* Para   Output :  none
+* Return        :  void
+*********************************************************************************************************************/
+void DRV_Uart_ConfigInit( uint8_t uartCom, UartCfg_S* pUartCfg )
+{
+	UART_TypeDef* pUartNo;
+ 
+	if( uartCom == UART0_COM )
+	{
+		Pad_Config(M_UART_TX_GPIO_PIN, PAD_PINMUX_MODE, PAD_IS_PWRON, PAD_PULL_UP, PAD_OUT_DISABLE, PAD_OUT_HIGH);
+		Pad_Config(M_UART_RX_GPIO_PIN, PAD_PINMUX_MODE, PAD_IS_PWRON, PAD_PULL_UP, PAD_OUT_DISABLE, PAD_OUT_HIGH);
+
+		Pinmux_Config(M_UART_TX_GPIO_PIN, UART0_TX);
+		Pinmux_Config(M_UART_RX_GPIO_PIN, UART0_RX);
+		
+		pUartNo = UART;
+		RCC_PeriphClockCmd(APBPeriph_UART0, APBPeriph_UART0_CLOCK, ENABLE);
+	}
+	else if( uartCom == UART1_COM )
+	{
+		Pad_Config(M_WIFI_TX_GPIO_PIN, PAD_PINMUX_MODE, PAD_IS_PWRON, PAD_PULL_UP, PAD_OUT_DISABLE, PAD_OUT_HIGH);
+		Pad_Config(M_WIFI_RX_GPIO_PIN, PAD_PINMUX_MODE, PAD_IS_PWRON, PAD_PULL_UP, PAD_OUT_DISABLE, PAD_OUT_HIGH);
+
+		Pinmux_Config(M_WIFI_TX_GPIO_PIN, UART1_TX);
+		Pinmux_Config(M_WIFI_RX_GPIO_PIN, UART1_RX);
+		
+		pUartNo = UART1;
+		RCC_PeriphClockCmd(APBPeriph_UART1, APBPeriph_UART1_CLOCK, ENABLE);
+	}
+
+    /* uart init */
+    UART_InitTypeDef UART_InitStruct;
+    UART_StructInit(&UART_InitStruct);
+
+	BUAD_RATE_CFG_S baudCfg = DRV_Uart_GetBaudRatePara( pUartCfg->BaudRate );
+	UART_InitStruct.ovsr_adj = baudCfg.cfg_ovsr_adj;
+	UART_InitStruct.div = baudCfg.cfg_div;
+	UART_InitStruct.ovsr = baudCfg.cfg_ovsr;
+	
+	if( pUartCfg->ParityType == PARITY_NONE )
+		UART_InitStruct.parity  = UART_PARITY_NO_PARTY;
+	else if( pUartCfg->ParityType == PARITY_ODD )
+		UART_InitStruct.parity  = UART_PARITY_ODD;
+	else if( pUartCfg->ParityType == PARITY_EVEN )
+		UART_InitStruct.parity  = UART_PARITY_EVEN;
+	else 
+		UART_InitStruct.parity  = UART_PARITY_NO_PARTY;
+	
+	if( pUartCfg->StopBit == STOP_1_BIT )
+		UART_InitStruct.stopBits  = UART_STOP_BITS_1;
+	else if( pUartCfg->StopBit == STOP_2_BIT )
+		UART_InitStruct.stopBits  = UART_STOP_BITS_2;
+	else 
+		UART_InitStruct.stopBits  = UART_STOP_BITS_1;
+	
+ 	if( pUartCfg->DataBit == DATA_7_BIT )
+		UART_InitStruct.wordLen  = UART_WROD_LENGTH_7BIT;
+	else if( pUartCfg->DataBit == DATA_8_BIT )
+		UART_InitStruct.wordLen  = UART_WROD_LENGTH_8BIT;
+	else 
+		UART_InitStruct.wordLen  = UART_WROD_LENGTH_8BIT;
+ 
+    UART_InitStruct.rxTriggerLevel = 16;                      //1~29
+    UART_InitStruct.idle_time      = UART_RX_IDLE_2BYTE;      //idle interrupt wait time
+	
+    UART_Init(pUartNo, &UART_InitStruct);
+
+    //enable rx interrupt and line status interrupt
+    UART_INTConfig(pUartNo, UART_INT_RD_AVA, ENABLE);
+    UART_INTConfig(pUartNo, UART_INT_IDLE, ENABLE);
+
+    /*  Enable UART IRQ  */
+    NVIC_InitTypeDef NVIC_InitStruct;
+	if( uartCom == UART0_COM )
+        NVIC_InitStruct.NVIC_IRQChannel         = UART0_IRQn;
+	else if( uartCom == UART1_COM )
+		NVIC_InitStruct.NVIC_IRQChannel         = UART1_IRQn;
+    NVIC_InitStruct.NVIC_IRQChannelCmd      = (FunctionalState)ENABLE;
+    NVIC_InitStruct.NVIC_IRQChannelPriority = 3;
+    NVIC_Init(&NVIC_InitStruct);
+
+}
+
+/*********************************************************************************************************************
+* Function Name :  DRV_Uart_DeInit()
+* Description   :  uart 解除资源
+* Para   Input  :  uartCom-串口资源   0：uart0  1:uart1
+* Para   Output :  none
+* Return        :  void
+*********************************************************************************************************************/
+void DRV_Uart_DeInit( uint8_t uartCom )
+{
+	UART_TypeDef* pUartNo;
+	if( uartCom == UART0_COM )
+	{
+		pUartNo = UART;
+		DRV_GpioDisconnect(M_UART_TX_GPIO_PIN);
+		DRV_GpioDisconnect(M_UART_TX_GPIO_PIN);
+	}
+	else if( uartCom == UART1_COM )
+	{
+		pUartNo = UART1;
+		DRV_GpioDisconnect(M_WIFI_RX_GPIO_PIN);
+		DRV_GpioDisconnect(M_WIFI_TX_GPIO_PIN);
+	}
+	UART_DeInit(pUartNo);
+}
+
+/*********************************************************************************************************************
+* Function Name :  DRV_Uart_TxMessage()
+* Description   :  uart 发送数据
+* Para   Input  :  uartCom- 串口资源  0:uart0  1:uart1   p_data-待发送数据指针   length- 待发送数据长度
+* Para   Output :  none
+* Return        :  void
+*********************************************************************************************************************/
+void DRV_Uart_TxMessage( uint8_t uartCom, const uint8_t *p_data, uint16_t length )
+{
+	UART_TypeDef* pUartNo;
+	if( uartCom == UART0_COM )
+	{
+		pUartNo = UART;
+	}
+	else if( uartCom == UART1_COM )
+	{
+		pUartNo = UART1;
+	}
+	
+   //UART_SendData( pUartNo, p_data, length );
+	//一次只能送16个字节
+	uint8_t count;
+    while (length / UART_TX_FIFO_SIZE > 0)
+    {
+        while (UART_GetFlagState(pUartNo, UART_FLAG_THR_EMPTY) == 0);
+        for (count = UART_TX_FIFO_SIZE; count > 0; count--)
+        {
+            pUartNo->RB_THR = *p_data++;
+        }
+        length -= UART_TX_FIFO_SIZE;
+    }
+
+    while (UART_GetFlagState(pUartNo, UART_FLAG_THR_EMPTY) == 0);
+    while (length--)
+    {
+        pUartNo->RB_THR = *p_data++;
+    }
+}
+
+/*********************************************************************************************************************
+* Function Name :  DRV_Uart_GetBaudRatePara()
+* Description   :  获取波特率
+* Para   Input  :  buadType- 波特率
+* Para   Output :  none
+* Return        :  void
+*********************************************************************************************************************/
+BUAD_RATE_CFG_S DRV_Uart_GetBaudRatePara( uint8_t buadType )
+{
+	BUAD_RATE_CFG_S baudCfg={0};
+	if( buadType == UART_BAUD_RATE_9600 )
+	{
+		baudCfg.cfg_ovsr_adj = 0x24A;
+		baudCfg.cfg_div = 271;
+		baudCfg.cfg_ovsr = 10;
+	}
+	else if( buadType == UART_BAUD_RATE_19200 )
+	{
+		baudCfg.cfg_ovsr_adj = 0x5AD;
+		baudCfg.cfg_div = 165;
+		baudCfg.cfg_ovsr = 7;
+	}
+	else if( buadType == UART_BAUD_RATE_57600 )
+	{
+		baudCfg.cfg_ovsr_adj = 0x5AD;
+		baudCfg.cfg_div = 55;
+		baudCfg.cfg_ovsr = 7;
+	}
+	else if( buadType == UART_BAUD_RATE_115200 )
+	{
+		baudCfg.cfg_ovsr_adj = 0x252;
+		baudCfg.cfg_div = 20;
+		baudCfg.cfg_ovsr = 12;
+	}
+	else
+	{
+		baudCfg.cfg_ovsr_adj = 0x252;
+		baudCfg.cfg_div = 20;
+		baudCfg.cfg_ovsr = 12;
+	}
+	
+	return baudCfg;
+}
+
+/*********************************************************************************************************************
+* Function Name :  DRV_Uart_SleepInit()
+* Description   :  休眠前的处理 
+* Para          :  无
+* Return        :  void
+*********************************************************************************************************************/
+void DRV_Uart_SleepInit( void ) 
+{
+//	DRV_GpioOut0(M_WIFI_RX_GPIO_PIN);
+//	DRV_GpioOut0(M_WIFI_TX_GPIO_PIN);
+//	
+//	DRV_GpioOut0(M_UART_RX_GPIO_PIN);
+//	DRV_GpioOut0(M_UART_TX_GPIO_PIN);
+}
+/*-------------------------------------------------THE FILE END-----------------------------------------------------*/
+

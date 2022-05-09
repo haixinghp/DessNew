@@ -1,0 +1,290 @@
+/*********************************************************************************************************************
+ * @file:        HW_Redefine.h
+ * @author:      fanshuyu
+ * @version:     V01.00
+ * @date:        2021-08-30
+ * @Description: 对于各个型号硬件头文件内部的复选硬件选项进行功能宏的重定义
+ * @ChangeList:  01. 初版
+**********************************************************************************************************************/
+#ifndef _HW_REDEFINE_H_
+#define _HW_REDEFINE_H_
+
+// 锁体选择
+#ifdef WIZARD_LOCK_BODY_MOTOR
+#if (0 == WIZARD_LOCK_BODY_MOTOR)
+    #define LOCK_BODY_212_MOTOR
+#elif (1 == WIZARD_LOCK_BODY_MOTOR)
+    #define LOCK_BODY_216_MOTOR
+#elif (2 == WIZARD_LOCK_BODY_MOTOR)
+    #define LOCK_BODY_218_MOTOR
+#elif (3 == WIZARD_LOCK_BODY_MOTOR)
+    #define LOCK_BODY_AUTO_MOTOR
+#endif
+#endif
+
+
+// 门外人体感应
+#ifdef WIZARD_SENSE_FUNCTION_ON
+#if (1 == WIZARD_SENSE_FUNCTION_ON)
+    #define IR_FUNCTION_ON
+#elif (2 == WIZARD_SENSE_FUNCTION_ON)
+    #define RADAR_FUNCTION_ON
+#endif
+#endif
+
+
+// 人脸虹膜开门功能
+#ifdef WIZARD_FACE_FUNCTION_ON
+#if (1 == WIZARD_FACE_FUNCTION_ON)
+    #define IRIS_FUNCTION_ON
+#elif (2 == WIZARD_FACE_FUNCTION_ON)
+    #define FACE_FUNCTION_ON
+#elif (3 == WIZARD_FACE_FUNCTION_ON)
+    #define FACE_FUNCTION_ON
+    #define ST_CAM_FUNCTION_ON
+#elif (4 == WIZARD_FACE_FUNCTION_ON)
+    #define FACE_FUNCTION_ON
+    #define OB_CAM_FUNCTION_ON
+#endif
+#endif
+
+
+// 手指类开门功能
+#ifdef WIZARD_FINGER_FUNCTION_ON
+#if (1 == WIZARD_FINGER_FUNCTION_ON)
+    #define FINGER_FUNCTION_ON
+#elif (2 == WIZARD_FINGER_FUNCTION_ON)
+    #define FINGER_VEIN_FUNCTION_ON
+#endif
+#endif
+
+
+// ID2 加密芯片选择
+#ifdef WIZARD_ID2_SE_TYPE
+#if (2 == WIZARD_ID2_SE_TYPE)
+#define ID2_SE_TYPE ID2_ENCRYPT_NXP
+#elif (1 == WIZARD_ID2_SE_TYPE)
+#define ID2_SE_TYPE ID2_ENCRYPT_FDW
+#endif
+#endif
+
+// 单猫眼模组功能
+#ifdef WIZARD_XM_CAM_FUNCTION_ON
+#if (1 == WIZARD_XM_CAM_FUNCTION_ON)
+#define XM_CAM_FUNCTION_ON
+
+#if (1 == WIZARD_XM_CAM_SCREEN_FUNCTION_PLUS_ON)
+#define XM_CAM_SCREEN_FUNCTION_PLUS_ON
+#endif
+#if (1 == WIZARD_XM_CAM_SCREEN_FUNCTION_ON)
+#define XM_CAM_SCREEN_FUNCTION_ON
+#endif
+
+#endif
+#endif
+
+
+// Wi-Fi 模组功能
+#ifdef WIZARD_WIFI_FUNCTION_ON
+#if (1 == WIZARD_WIFI_FUNCTION_ON)
+#define WIFI_FUNCTION_ON
+#endif
+#endif
+
+
+// NB 模组功能
+#ifdef WIZARD_NB_FUNCTION
+#if (1 == WIZARD_NB_FUNCTION)
+#define NB_FUNCTION
+#endif
+#endif
+
+
+// IC卡开门
+#ifdef WIZARD_IC_CARD_FUNCTION_ON
+#if (1 == WIZARD_IC_CARD_FUNCTION_ON)
+#define IC_CARD_FUNCTION_ON
+#endif
+#endif
+
+
+// 智能钥匙解锁（蓝牙钥匙/蓝牙手环） 
+#ifdef WIZARD_SMART_KEY_FUNCTION_ON
+#if (1 == WIZARD_SMART_KEY_FUNCTION_ON)
+#define SMART_KEY_FUNCTION_ON
+#endif
+#endif
+
+// 华为钱包功能
+#ifdef WIZARD_HW_WALLET_FUNCTION_ON
+#if (1 == WIZARD_HW_WALLET_FUNCTION_ON)
+#define HW_WALLET_FUNCTION_ON
+#endif
+#endif
+
+
+// 主动防御（红外或雷达）
+#ifdef WIZARD_HUMAN_ACTIVE_DEF_ON
+#if (1 == WIZARD_HUMAN_ACTIVE_DEF_ON)
+#define HUMAN_ACTIVE_DEF_ON
+#endif
+#endif
+
+
+// 一键布防
+#ifdef WIZARD_KEY_DEFENSE_ON
+#if (1 == WIZARD_KEY_DEFENSE_ON)
+#define KEY_DEFENSE_ON
+#endif
+#endif
+
+
+// 触摸按键上锁键防误触功能 
+#ifdef WIZARD_LOCK_KEY_CONFIRM_ON
+#if (1 == WIZARD_LOCK_KEY_CONFIRM_ON)
+#define LOCK_KEY_CONFIRM_ON
+#endif
+#endif
+
+
+// 呼吸灯
+#ifdef WIZARD_BREATHE_LAMP
+#if (1 == WIZARD_BREATHE_LAMP)
+#define BREATHE_LAMP
+#endif
+#endif
+
+
+// 把手左霍尔信号检测功能
+#ifdef WIZARD_HANDLER_LEFT_ON
+#if (1 == WIZARD_HANDLER_LEFT_ON)
+#define HANDLER_LEFT_ON
+#endif
+#endif
+
+
+// 把手中霍尔信号检测功能
+#ifdef WIZARD_HANDLER_MIDDLE_ON
+#if (1 == WIZARD_HANDLER_MIDDLE_ON)
+#define HANDLER_MIDDLE_ON
+#endif
+#endif
+
+
+// 把手右霍尔信号检测功能
+#ifdef WIZARD_HANDLER_RIGHT_ON
+#if (1 == WIZARD_HANDLER_RIGHT_ON)
+#define HANDLER_RIGHT_ON
+#endif
+#endif
+
+
+// 门内上锁键上锁功能
+#ifdef WIZARD_CLOSE_BUTTON_ON
+#if (1 == WIZARD_CLOSE_BUTTON_ON)
+#define CLOSE_BUTTON_ON
+#endif
+#endif
+
+
+// 上方电池电压采样功能
+#ifdef WIZARD_UPPER_BAT_ADC_ON
+#if (1 == WIZARD_UPPER_BAT_ADC_ON)
+#define UPPER_BAT_ADC_ON
+#endif
+#endif
+
+
+// 下方电池电压采样功能
+#ifdef WIZARD_UNDER_BAT_ADC_ON
+#if (1 == WIZARD_UNDER_BAT_ADC_ON)
+#define UNDER_BAT_ADC_ON
+#endif
+#endif
+
+
+// 电机电流堵转电流采样功能
+#ifdef WIZARD_MOTOR_AMP_ADC_ON
+#if (1 == WIZARD_MOTOR_AMP_ADC_ON)
+#define MOTOR_AMP_ADC_ON
+#endif
+#endif
+
+
+// 电池供电切换功能（大电池电压低小电池供电）
+#ifdef WIZARD_BAT_CHARGE_SWITCH_ON
+#if (1 == WIZARD_BAT_CHARGE_SWITCH_ON)
+#define BAT_CHARGE_SWITCH_ON
+#endif
+#endif
+
+// 电池未插提醒功能
+#ifdef WIZARD_BAT_UNINSET_WARM_TIP_ON
+#if (1 == WIZARD_BAT_UNINSET_WARM_TIP_ON)
+#define BAT_UNINSET_WARM_TIP_ON
+#endif
+#endif
+
+
+//  智能屏功能 
+#ifdef WIZARD_SMART_SCREEN_ON
+#if (1 == WIZARD_SMART_SCREEN_ON)
+#define SMART_SCREEN_ON
+#endif
+#endif
+
+//  天气预报功能 
+#ifdef WIZARD_WEATHER_FORECAST_ON
+#if (1 == WIZARD_WEATHER_FORECAST_ON)
+#define WEATHER_FORECAST_ON
+#endif
+#endif
+
+//  锁门键白灯开关功能 
+#ifdef WIZARD_LOCK_KEY_WHITE_LED_ON
+#if (1 == WIZARD_LOCK_KEY_WHITE_LED_ON)
+#define LOCK_KEY_WHITE_LED_ON
+#endif
+#endif
+ 
+//  上下方电池语音提醒切换功能 (大电池在下方时打开)
+#ifdef WIZARD_BATTERY_MP3_TIPS_ON
+#if (1 == WIZARD_BATTERY_MP3_TIPS_ON)
+#define BATTERY_MP3_TIPS_ON
+#endif
+#endif
+
+// 获取WIFI信号强度功能 
+#ifdef WIZARD_GET_WIFI_SIGNAL_INTENSITY_ON
+#if (1 == WIZARD_GET_WIFI_SIGNAL_INTENSITY_ON)
+#define GET_WIFI_SIGNAL_INTENSITY_ON
+#endif
+#endif
+
+// 灯板驱动芯片
+#ifdef WIZARD_GET_KEYBOARD_LED_CHIP_ON
+	#if (1 == WIZARD_GET_KEYBOARD_LED_CHIP_ON)
+		#define KEYBOARD_CHIP_NCA9555_ON
+	#elif (2 == WIZARD_GET_KEYBOARD_LED_CHIP_ON)
+		#define KEYBOARD_CHIP_MBI5024_ON
+	#endif
+#else 
+	#define KEYBOARD_CHIP_NCA9555_ON
+#endif
+
+// 软件架构平台
+#ifdef WIZARD_GET_FRAME_PLATFORM_ON
+	#if (1 == WIZARD_GET_FRAME_PLATFORM_ON)
+		#define FRAME_PLATFORM_FULLY_AUTO_ON
+	#elif (2 == WIZARD_GET_FRAME_PLATFORM_ON)
+		#define FRAME_PLATFORM_HALF_AUTO_ON
+	#endif
+#else 
+	#define FRAME_PLATFORM_FULLY_AUTO_ON
+#endif
+
+
+
+
+
+#endif

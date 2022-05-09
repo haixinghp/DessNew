@@ -1,0 +1,237 @@
+/********************************************************************************************************************
+ * @file:        HAL_EXPORT.c
+ * @author:      gushengchi
+ * @version:     V01.00
+ * @date:        2021-07-27
+ * @Description: 端口扩展接口功能文件   
+ * @ChangeList:  01. 初版
+*********************************************************************************************************************/
+  
+/*-------------------------------------------------文件包含---------------------------------------------------------*/
+#include <stdbool.h>
+
+#include "HAL_EXPORT.h"
+#include "Public.h"
+#include "DRV_GPIO.h"  
+#include "..\DRV\DRV_EXPORT\DRV_74HC4052.h"
+/*-------------------------------------------------宏定义-----------------------------------------------------------*/ 
+#define  SLAVE_ADDR_LED          CFG_LED_EXPORT_ADDRESS
+#define  SLAVE_ADDR_IO           CFG_IO_EXPORT_ADDRESS
+
+#define  SLAVE_LED_CHANNEL      ((DRV_IIC_CHANNEL_E)CFG_IO_IIC_CHANNEL)  //IIC驱动的通道 
+#define  SLAVE_IO_CHANNEL       ((DRV_IIC_CHANNEL_E)CFG_LED_IIC_CHANNEL) //IIC驱动的通道 
+ 
+#define  EXPORT_INT_IN_READ()	 DRV_GpioRead(EXPORT_INT_GPIO_PIN)	 
+/*-------------------------------------------------枚举定义---------------------------------------------------------*/
+	
+
+/*-------------------------------------------------常量定义---------------------------------------------------------*/
+
+
+/*-------------------------------------------------全局变量定义-----------------------------------------------------*/         
+
+
+/*-------------------------------------------------局部变量定义-----------------------------------------------------*/
+
+
+/*-------------------------------------------------函数声明---------------------------------------------------------*/
+ 
+
+/*-------------------------------------------------函数定义---------------------------------------------------------*/
+/*********************************************************************************************************************
+* Function Name :  HAL_EXPORT_FileInit()
+* Description   :  功能文件初始化
+* Para          :  无
+* Return        :  void
+*********************************************************************************************************************/
+void HAL_EXPORT_FileInit( void ) 
+{
+   DRV_GpioInputPullnull( EXPORT_INT_GPIO_PIN );
+	
+   DRV_NCA9555_FileInit(); 
+
+   for(uint8_t i=0; i<32; i++)
+   {
+	  (void)HAL_EXPORT_PinInit( (PIN_NO_E)i, DIR_IN, POLO_RETTAIN ); 	
+   }
+ 
+   DRV_74HC0452_UartSelect( HW_74HC4052_UART_OFF ); 
+
+}
+
+/*********************************************************************************************************************
+* Function Name :  HAL_EXPORT_WakeupInit()
+* Description   :  唤醒后配置
+* Para          :  无
+* Return        :  void
+*********************************************************************************************************************/
+void HAL_EXPORT_WakeupInit( void ) 
+{
+	DRV_NCA9555_WakeupInit(); 
+}
+
+/*********************************************************************************************************************
+* Function Name :  HAL_EXPORT_SleepInit()
+* Description   :  休眠后配置
+* Para          :  无
+* Return        :  void
+*********************************************************************************************************************/
+void HAL_EXPORT_SleepInit( void ) 
+{
+	DRV_74HC0452_UartSelect( HW_74HC4052_UART_OFF );
+	
+	for( uint16_t j=0; j<10; j++ )
+	{
+		if( 0 == HAL_EXPORT_PinGet( EM_KEY_IRQ ) )
+		{
+			my_printf("touch is pushing!\n");
+		}	
+		PUBLIC_Delayms(1);
+		 my_printf("HAL_EXPORT_PinGet is push!\n");
+		if( 1 == EXPORT_INT_IN_READ() )
+		{
+			my_printf("HAL_EXPORT_PinGet is free!\n");
+			break;
+		}	
+	}
+	DRV_GpioInputPullnull( EXPORT_INT_GPIO_PIN );
+	DRV_NCA9555_SleepInit(); 
+}
+
+/*********************************************************************************************************************
+* Function Name :  HAL_EXPORT_PinInit()
+* Description   :  单个引脚方向配置
+* Para          :  pinNo= 引脚编号  dirMode= 输入输出方向  poloMode= 输入极性
+* Return        :  I2C_FALSE = 失败  I2C_TRUE = 成功
+*********************************************************************************************************************/
+uint8_t HAL_EXPORT_PinInit( PIN_NO_E pinNo, PIN_DIR_E dirMode, PIN_POLO_E poloMode ) 
+{
+   DRV_IIC_CHANNEL_E   channel;
+   uint8_t   devAddr;
+   uint16_t  pinNum;
+   CHIP_NO_E chipNo;
+   uint8_t   ret = 0xff;
+	
+   if( pinNo >= PIN_OFFSET*2 )
+   {
+	  return ret; 
+   }
+	
+   if( pinNo >= PIN_OFFSET )
+   {
+	  chipNo  = NO_TWO;
+	  pinNum  = pinNo - PIN_OFFSET;
+	  channel = SLAVE_LED_CHANNEL; 
+	  devAddr = SLAVE_ADDR_LED; 
+   }
+   else 
+   {
+	  chipNo  = NO_ONE;
+	  pinNum  = pinNo;
+	  channel = SLAVE_IO_CHANNEL; 
+	  devAddr = SLAVE_ADDR_IO;
+   }
+	
+   ret = DRV_NCA9555_PinDirInit( chipNo, channel, devAddr, pinNum, dirMode ); 
+   
+   if( ret == I2C_TRUE )
+   {
+	  ret = DRV_NCA9555_PinPoloInit( chipNo, channel, devAddr, pinNum, poloMode );    
+   }
+   
+   return ret;
+}
+ 
+ 
+/*********************************************************************************************************************
+* Function Name :  HAL_EXPORT_PinSet()
+* Description   :  单个引脚控制
+* Para          :  pinNo= 引脚编号  pinSet= 输出类型
+* Return        :  I2C_FALSE = 失败  I2C_TRUE = 成功
+*********************************************************************************************************************/
+uint8_t HAL_EXPORT_PinSet( PIN_NO_E pinNo, PIN_SET_E pinSet ) 
+{
+   DRV_IIC_CHANNEL_E   channel;
+   uint8_t   devAddr;
+   uint16_t  pinNum;
+   CHIP_NO_E chipNo;
+   uint8_t   ret = 0xff;
+   if( pinNo >= PIN_OFFSET*2 )
+   {
+	  return ret; 
+   }
+	
+   if( pinNo >= PIN_OFFSET )
+   {
+	  chipNo  = NO_TWO;
+	  pinNum  = pinNo - PIN_OFFSET;
+	  channel = SLAVE_LED_CHANNEL; 
+	  devAddr = SLAVE_ADDR_LED; 
+   }
+   else 
+   {
+	  chipNo  = NO_ONE;
+	  pinNum  = pinNo;
+	  channel = SLAVE_IO_CHANNEL; 
+	  devAddr = SLAVE_ADDR_IO;
+   }
+	
+   ret = DRV_NCA9555_PinSet( chipNo, channel, devAddr, pinNum, pinSet ); 
+
+   return ret;
+}
+
+/*********************************************************************************************************************
+* Function Name :  HAL_EXPORT_PinSet()
+* Description   :  获取引脚状态
+* Para          :  channel= IIC通道  deviceAddr= 设备地址  pinNo= 引脚编号 
+* Return        :  IN_LOW = 低电平  IN_HIGH = 高电平
+*********************************************************************************************************************/
+uint8_t HAL_EXPORT_PinGet( PIN_NO_E pinNo ) 
+{
+   DRV_IIC_CHANNEL_E   channel;
+   uint8_t   devAddr;
+   uint16_t  pinNum;
+	
+   if( pinNo >= PIN_OFFSET*2 )
+   {
+	  return 0xff; 
+   }
+	
+   if( pinNo >= PIN_OFFSET )
+   {
+	  pinNum  = pinNo - PIN_OFFSET;
+	  channel = SLAVE_LED_CHANNEL; 
+	  devAddr = SLAVE_ADDR_LED; 
+   }
+   else 
+   {
+	  pinNum  = pinNo;
+	  channel = SLAVE_IO_CHANNEL; 
+	  devAddr = SLAVE_ADDR_IO;
+   }
+	
+   PIN_GET_E ret = DRV_NCA9555_PinGet( channel, devAddr, pinNum ); 
+   
+   if( IN_LOW == ret )
+   {
+	   return 0;
+   }   
+   else if( IN_HIGH == ret ) 
+   {
+	   return 1;  
+   }
+	 
+   return 0xff;   
+}
+
+
+ 
+
+
+
+
+
+/*-------------------------------------------------THE FILE END-----------------------------------------------------*/
+
+

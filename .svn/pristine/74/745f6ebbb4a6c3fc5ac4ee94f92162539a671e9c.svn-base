@@ -1,0 +1,1035 @@
+/********************************************************************************************************************
+ * @file:        HAL_Voice.h
+ * @author:      gushengchi
+ * @version:     V01.00
+ * @date:        2021-08-03
+ * @Description: 佑华语音芯片接口功能文件
+ * @ChangeList:  01. 初版
+*********************************************************************************************************************/
+  
+/*-------------------------------------------------文件包含---------------------------------------------------------*/
+#include "HAL_Voice.h"
+#include "System.h" 
+#include "Public.h"
+#include "LockConfig.h"
+#include "..\DRV\DRV_VOICE\DRV_AM5BA340.h"
+#include "..\HAL\HAL_EXPORT\HAL_EXPORT.h"
+#include "DRV_GPIO.h"
+/*-------------------------------------------------宏定义-----------------------------------------------------------*/
+#define BELL_POW_GPIO_PIN           M_SPK_POW_GPIO_PIN 
+#if LOCK_PROJECT_CHIP ==LOCK_PROJECT_RTL8762 //RTL8762的IO编号公用，这里使用SW模式
+#define BELL_POW_OFF()           	(HW_ACTIVE_LEVEL_LOW == M_POW_BELL_ACTIVE_LEVEL)?(DRV_GpioSWOut1( BELL_POW_GPIO_PIN )):(DRV_GpioSWOut0( BELL_POW_GPIO_PIN ))
+#define BELL_POW_ON()       		(HW_ACTIVE_LEVEL_LOW == M_POW_BELL_ACTIVE_LEVEL)?(DRV_GpioSWOut0( BELL_POW_GPIO_PIN )):(DRV_GpioSWOut1( BELL_POW_GPIO_PIN ))
+#else
+#define BELL_POW_OFF()           	(HW_ACTIVE_LEVEL_LOW == M_POW_BELL_ACTIVE_LEVEL)?(DRV_GpioOut1( BELL_POW_GPIO_PIN )):(DRV_GpioOut0( BELL_POW_GPIO_PIN ))
+#define BELL_POW_ON()       		(HW_ACTIVE_LEVEL_LOW == M_POW_BELL_ACTIVE_LEVEL)?(DRV_GpioOut0( BELL_POW_GPIO_PIN )):(DRV_GpioOut1( BELL_POW_GPIO_PIN ))
+#endif
+
+#define BELL_WORK_TIME_MS           15  
+#define BELL_STOP_TIME_MS           5  
+
+#define QUEUE_OK           1
+#define QUEUE_PAUSE        0
+#define QUEUE_EMPTY        -1
+#define QUEUE_FULL         -1 
+
+#define VOL_FRAM_SIZE      20 
+#define VOL_QUEUE_SIZE     6  
+
+#define VOL_INTERVAL_TIME  5     //音频数据传输最小间隔时间
+#define VOL_POWER_ON_TIME  10    //芯片上电时间
+/*-------------------------------------------------枚举定义---------------------------------------------------------*/
+
+
+/*-------------------------------------------------常量定义---------------------------------------------------------*/
+ 
+
+/*-------------------------------------------------全局变量定义-----------------------------------------------------*/         
+
+
+/*-------------------------------------------------局部变量定义-----------------------------------------------------*/
+static uint8_t  VoiceWorkMode =0;   //语音开关  0:close 1:open
+static uint8_t  BellWorkTimMs =0;  
+static uint16_t VolPowerOnTimMs =0;    
+static uint8_t  BellWorkState =0; 
+static bool     WarmVoiceMode =0;   //报警模式  0:off 1:on
+static uint8_t VolCmdEmail[ VOL_FRAM_SIZE ] = {0};
+ 
+typedef struct 
+{
+	uint32_t  PlayHoldTimMs;   //音频播报保持时间
+	uint8_t   BusyState;       //是否忙碌
+	uint16_t  IntervalTimMs;   //2条音频最小间隔时间
+}VolMeg_T; 
+
+static VolMeg_T  s_VolMeg = {0};
+
+typedef struct 
+{
+	uint8_t  Size; 
+	uint8_t  GetIdx;
+	uint8_t  PutIdx; 
+	uint8_t  *Pbuf;	
+
+}VolQueue_T;  
+
+static VolQueue_T VolBox = 
+{
+	VOL_QUEUE_SIZE, 0, 0, VolCmdEmail
+};
+
+
+/*-------------------------------------------------函数声明---------------------------------------------------------*/
+ 
+
+/*-------------------------------------------------函数定义---------------------------------------------------------*/
+
+/*********************************************************************************************************************
+* Function Name :  HAL_Voice_PushQueue
+* Description   :  push data into queue
+* Para Input    :  para-待放入的数据指针	
+* Para Output   :  none
+* Return        :  QUEUE_FULL-full   QUEUE_OK-ok
+*********************************************************************************************************************/
+static int8_t HAL_Voice_PushQueue( uint8_t para ) 
+{
+   uint8_t Idx;
+   VolQueue_T *pQueue = &VolBox;
+	
+   if( pQueue->GetIdx == 0 )  
+       Idx = pQueue->Size - 1;
+   else                                      
+       Idx = pQueue->GetIdx - 1;
+
+   if( pQueue->PutIdx == Idx )  
+   {       
+       return ( QUEUE_FULL );
+   }
+	 
+   pQueue->Pbuf[ pQueue->PutIdx ] = para;
+   pQueue->PutIdx =( pQueue->PutIdx + 1 ) % pQueue->Size;
+
+   return ( QUEUE_OK );
+}
+
+/*********************************************************************************************************************
+* Function Name :  HAL_Voice_PopQueue
+* Description   :  get data from queue
+* Para Input    :  none
+* Para Output   :  pdata-取出后的数据
+* Return        :  QUEUE_EMPTY-empty   QUEUE_OK-ok
+*********************************************************************************************************************/
+static int8_t HAL_Voice_PopQueue( uint8_t *pdata ) 
+{
+   VolQueue_T *pQueue = &VolBox;
+	
+   if( pQueue->GetIdx != pQueue->PutIdx )       
+   { 
+	   *pdata = pQueue->Pbuf[ pQueue->GetIdx ];	 
+       pQueue->GetIdx = ( pQueue->GetIdx + 1 ) % pQueue->Size;    
+       return ( QUEUE_OK );
+   }
+   else
+   {
+       return ( QUEUE_EMPTY );
+   }
+}
+
+/*********************************************************************************************************************
+* Function Name :  HAL_Voice_GetQueueState
+* Description   :  获取队列状态 
+* Para          :  none
+* Return        :  0-空  1-有数据
+*********************************************************************************************************************/
+static bool HAL_Voice_GetQueueState( void ) 
+{
+	VolQueue_T *pQueue = &VolBox;
+    if( pQueue->GetIdx != pQueue->PutIdx )    
+	{
+       return 1;
+	}
+    return 0;		
+} 
+
+/*********************************************************************************************************************
+* Function Name :  HAL_Voice_GetBusyState
+* Description   :  获取语音模块的忙碌状态
+* Para          :  none
+* Return        :  0-空闲  1-忙碌
+*********************************************************************************************************************/
+bool HAL_Voice_GetBusyState( void ) 
+{
+    return s_VolMeg.BusyState;		
+}
+ 
+
+/*********************************************************************************************************************
+* Function Name :  HAL_Voice_WorkModeCtrl()
+* Description   :  语音工作模式控制
+* Input Para    :  mode  false- 普通工作模式   true- 报警模式 
+* Para          :  none
+* Return        :  none
+*********************************************************************************************************************/
+void HAL_Voice_WorkModeCtrl( bool mode )
+{
+	WarmVoiceMode = mode;
+}
+
+/*********************************************************************************************************************
+* Function Name :  HAL_Voice_WorkModeGet()
+* Description   :  语音工作模式的状态
+* Input Para    :  mode  false- 普通工作模式   true- 报警模式 
+* Para          :  none
+* Return        :  none
+*********************************************************************************************************************/
+bool HAL_Voice_WorkModeGet( void )
+{
+	return WarmVoiceMode;
+}
+
+/*********************************************************************************************************************
+* Function Name :  HAL_Voice_FileInit()
+* Description   :  相关初始化
+* Para          :  none
+* Return        :  none
+*********************************************************************************************************************/
+void HAL_Voice_FileInit( void )
+{
+	HAL_Voice_WorkModeCtrl( false );
+	WarmVoiceMode = 0;
+    VolPowerOnTimMs = 0;
+    DRV_AM5BA340_FileInit();
+   (void)HAL_EXPORT_PinInit( EM_AUDIO_POW, DIR_OUT, POLO_RETTAIN );   
+	HAL_Voice_PowerCtrl( true );
+//	PUBLIC_Delayms(150);
+//	HAL_Voice_VolumeSet( (VOL_GRADE_E)SystemSeting.SysVoice );
+	HAL_Voice_BellCtrl( false );
+	return;
+}
+
+/*********************************************************************************************************************
+* Function Name :  HAL_Voice_WakeupInit()
+* Description   :  唤醒后配置
+* Para          :  none
+* Return        :  none
+*********************************************************************************************************************/
+void HAL_Voice_WakeupInit( void )
+{
+	VolPowerOnTimMs = 0;
+    DRV_AM5BA340_FileInit();
+	HAL_Voice_PowerCtrl( true );
+//	PUBLIC_Delayms(150);
+//	HAL_Voice_VolumeSet( (VOL_GRADE_E)SystemSeting.SysVoice );
+	HAL_Voice_BellCtrl( false );
+	return;
+}
+
+/*********************************************************************************************************************
+* Function Name :  HAL_Voice_SleepInit()
+* Description   :  唤醒后配置
+* Para          :  none
+* Return        :  none
+*********************************************************************************************************************/
+void HAL_Voice_SleepInit( void )
+{
+	HAL_Voice_WorkModeCtrl( false );
+	HAL_Voice_BellCtrl( false );
+	HAL_Voice_PowerCtrl( false );
+	DRV_AM5BA340_SleepInit(); 
+	return;
+}
+
+/*********************************************************************************************************************
+* Function Name :  HAL_Voice_Time10Ms()
+* Description   :  相关定时器
+* Para          :  none
+* Return        :  none
+*********************************************************************************************************************/
+void HAL_Voice_Time10Ms( void )
+{
+	if( s_VolMeg.IntervalTimMs > 0 )
+		s_VolMeg.IntervalTimMs--;
+	
+	if( s_VolMeg.PlayHoldTimMs > 0 )
+		s_VolMeg.PlayHoldTimMs--;
+	
+	if( VolPowerOnTimMs < 0xfffe )
+		VolPowerOnTimMs++;
+	return;
+}
+
+/*********************************************************************************************************************
+* Function Name :  HAL_Voice_BellCtrl()
+* Description   :  门铃电源控制 
+* Para          :  cmd-控制命令  true=ON   false= OFF
+* Return        :  none
+*********************************************************************************************************************/
+void HAL_Voice_BellCtrl( bool cmd )
+{
+   if( cmd == true )	
+   {
+	  if( BellWorkState == 0 )
+	  {
+		  BELL_POW_ON();
+		  BellWorkState = 1;
+		  BellWorkTimMs = BELL_WORK_TIME_MS;  
+	  }
+   }
+   else if( cmd == false )
+   {
+	  BELL_POW_OFF();
+	  BellWorkState = 0;
+	  BellWorkTimMs = BELL_STOP_TIME_MS;
+   }
+   return;
+}
+
+/*********************************************************************************************************************
+* Function Name :  HAL_Voice_GetBellBusySts()
+* Description   :  获取门铃工作状态 
+* Para          :  none
+* Return        :  false= 空闲   true= 忙碌
+*********************************************************************************************************************/
+bool HAL_Voice_GetBellBusySts( void )
+{
+   if( BellWorkTimMs )	
+   {
+        return true;
+   }
+   return false;
+}
+
+/*********************************************************************************************************************
+* Function Name :  HAL_Voice_BellThread()
+* Description   :  门铃工作任务   100ms调度任务 
+* Para          :  none
+* Return        :  none
+*********************************************************************************************************************/
+void HAL_Voice_BellThread( void )
+{
+	if( BellWorkTimMs > 0 )
+		BellWorkTimMs--; 
+ 
+	if( BellWorkState == 0 )
+		return;
+	if( BellWorkTimMs == 0 )
+	{
+		HAL_Voice_BellCtrl( false );
+	}  
+   return;
+}	
+
+/*********************************************************************************************************************
+* Function Name :  HAL_Voice_PowerCtrl()
+* Description   :  语音模块电源控制 
+* Para          :  cmd-控制命令  true=ON   false= OFF
+* Return        :  none
+*********************************************************************************************************************/
+void HAL_Voice_PowerCtrl( bool cmd )
+{
+   if( cmd == true )	
+   {
+      (void)HAL_EXPORT_PinSet( EM_AUDIO_POW, OUT_LOW ); 
+   }
+   else if( cmd == false )
+   {
+	  (void)HAL_EXPORT_PinSet( EM_AUDIO_POW, OUT_HIGH );  
+   }
+   return;
+}
+
+/*********************************************************************************************************************
+* Function Name :  HAL_Voice_VolumeSet()
+* Description   :  音量设置
+* Para          :  volType- 音量等级
+* Return        :  none
+*********************************************************************************************************************/
+void HAL_Voice_VolumeSet( VOL_GRADE_E volType ) 
+{
+	switch( volType )
+	{
+		case EM_VOL_GRADE_OFF:
+			 DRV_AM5BA340_VolumeSet( EM_VOLUME_OFF ); 
+             s_VolMeg.IntervalTimMs = VOL_INTERVAL_TIME;		
+		     VoiceWorkMode = 0;
+		break;
+		
+		case EM_VOL_GRADE_LOW:
+			 DRV_AM5BA340_VolumeSet( EM_VOLUME_LOW ); 	
+			 s_VolMeg.IntervalTimMs = VOL_INTERVAL_TIME;
+		     VoiceWorkMode = 1;
+		break;
+		
+		case EM_VOL_GRADE_MED:
+			 DRV_AM5BA340_VolumeSet( EM_VOLUME_MEDIUM ); 
+			 s_VolMeg.IntervalTimMs = VOL_INTERVAL_TIME;
+             VoiceWorkMode = 1;		
+		break;
+ 	
+		case EM_VOL_GRADE_HIGH:
+			 DRV_AM5BA340_VolumeSet( EM_VOLUME_HIGH );
+		     s_VolMeg.IntervalTimMs = VOL_INTERVAL_TIME;
+		     VoiceWorkMode = 1;
+		break;
+		
+		default:   
+			 DRV_AM5BA340_VolumeSet( EM_VOLUME_HIGH );
+		     s_VolMeg.IntervalTimMs = VOL_INTERVAL_TIME;
+		     VoiceWorkMode = 1;
+		break;
+	}
+   return;
+}
+
+/*********************************************************************************************************************
+* Function Name :  HAL_Voice_PlayVoiceNum()
+* Description   :  播放语音 
+* Para          :  voiceNo- 待播放的语音编号  （封装给应用层使用） 
+* Return        :  none
+*********************************************************************************************************************/
+static void HAL_Voice_PlayVoiceNum( VoiceType_E voiceNo )
+{
+	switch( voiceNo )
+	{
+		case EM_ADMIN_MANAGE_MENU_MP3:    
+	         DRV_AM5BA340_PlayVoice( 0 );    /*------管理员菜单 1级------*/
+		break; 
+		
+		case EM_FACE_SET_MENU_MP3:    
+	         DRV_AM5BA340_PlayVoice( 2 );    /*------人脸信息菜单 2级---*/
+		break; 
+		
+		case EM_FINGER_SET_MENU_MP3:    
+	         DRV_AM5BA340_PlayVoice( 5 );    /*------指纹设置菜单 2级---*/	
+		break; 
+		
+		case EM_PWD_SET_MENU_MP3:    
+	         DRV_AM5BA340_PlayVoice( 8 );    /*------密码设置菜单 2级---*/	
+		break;	
+		
+		case EM_CARD_SET_MENU_MP3:    
+	         DRV_AM5BA340_PlayVoice( 11 );   /*------智卡设置菜单 2级---*/
+		break;
+		
+		case EM_IRIS_SET_MENU_MP3:    
+	         DRV_AM5BA340_PlayVoice( 14 );   /*------虹膜设置菜单 2级---*/	
+		break;
+		
+		case EM_VEIN_SET_MENU_MP3:    
+	         DRV_AM5BA340_PlayVoice( 17 );   /*------静脉设置菜单 2级---*/	
+		break;
+		
+		case EM_SYS_SET_MENU_MP3:    
+	         DRV_AM5BA340_PlayVoice( 20 );   /*------系统设置菜单 2级---*/	
+		break;
+		
+		case EM_VOL_SET_MENU_MP3:    
+	         DRV_AM5BA340_PlayVoice( 21 );   /*------音量设置菜单 3级---*/	
+		break;
+		
+		case EM_DIR_SET_MENU_MP3:    
+	         DRV_AM5BA340_PlayVoice( 23 );   /*------开门方向设置菜单 3级---*/	
+		break;
+		
+		case EM_TORQUE_SET_MENU_MP3:    
+	         DRV_AM5BA340_PlayVoice( 25 );   /*------电机扭力设置菜单 3级---*/	
+		break;
+		
+		case EM_ATUO_LOCK_MENU_MP3:    
+	         DRV_AM5BA340_PlayVoice( 27 );   /*------自动上锁设置菜单 3级---*/	
+		break;	
+		
+		case EM_NEAR_REACT_MENU_MP3:    
+	         DRV_AM5BA340_PlayVoice( 29 );   /*------接近感应设置菜单 3级---*/	
+		break;		
+		
+		case EM_NETWORKING_MENU_MP3:    
+	         DRV_AM5BA340_PlayVoice( 31 );   /*------设备组网设置菜单 3级---*/	
+		break;	
+		
+		case EM_DEPLOY_SET_MENU_MP3:    
+	         DRV_AM5BA340_PlayVoice( 33 );   /*------布防设置菜单 3级-------*/	
+		break;	
+		
+		case EM_STAY_SET_MENU_MP3:    
+	         DRV_AM5BA340_PlayVoice( 35 );   /*------逗留设置菜单 3级-------*/	
+		break;	
+		
+		case EM_VERIFY_SET_MENU_MP3:    
+	         DRV_AM5BA340_PlayVoice( 37 );   /*------双重认证设置菜单 3级---*/	
+		break;	
+		
+		case EM_BACKUP_SET_MENU_MP3:    
+	         DRV_AM5BA340_PlayVoice( 39 );   /*------恢复出厂设置菜单 1级---*/	
+		break;	
+
+		case EM_DEL_TYPE_OPT_MP3:    
+	         DRV_AM5BA340_PlayVoice( 60 );  //删除类型选择提示(编号删除请按1,比对删除请按2) 
+		break;	
+
+		case EM_IN_USER_NUM_MP3:    
+	         DRV_AM5BA340_PlayVoice( 61 );  //输入用户编号并确认提示(请输入3位数字编号,按确认键确认) 
+		break;	
+
+		case EM_GO_BACK_MP3:    
+	         DRV_AM5BA340_PlayVoice( 62 );  //返回( 返回请按返回键 ) 
+		break;	
+
+		case EM_GO_ENTER_MP3:    
+	         DRV_AM5BA340_PlayVoice( 63 );  //返回( 返回请按返回键 ) 
+		break;	
+
+		case EM_BACK_OR_ENTER_MP3:    
+	         DRV_AM5BA340_PlayVoice( 64 );  //执行确认菜单( 返回请按返回键，按确认键结束 ) 	
+		break;	
+		
+		case EM_DEL_SUCCESS_MP3:    
+	         DRV_AM5BA340_PlayVoice( 65 );  //删除成功
+		break;		
+		
+		case EM_DEL_FAIL_MP3:    
+	         DRV_AM5BA340_PlayVoice( 66 );  //删除失败
+		break;	
+		
+		case EM_SET_SUCCESS_MP3:    
+	         DRV_AM5BA340_PlayVoice( 67 );  //设定成功
+		break;		
+		
+		case EM_SET_FAIL_MP3:    
+	         DRV_AM5BA340_PlayVoice( 68 );  //设定失败
+		break;		
+		
+		case EM_CHECK_SUCCESS_MP3:    
+	         DRV_AM5BA340_PlayVoice( 69 );  //验证成功
+		break;		
+		
+		case EM_CHECK_FAIL_MP3:    
+	         DRV_AM5BA340_PlayVoice( 70 );  //验证失败
+		break;	
+		
+		case EM_REGISTER_SUCCESS_MP3:    
+	         DRV_AM5BA340_PlayVoice( 71 );  //登记成功
+		break;		
+		
+		case EM_REGISTER_FAIL_MP3:    
+	         DRV_AM5BA340_PlayVoice( 72 );  //登记失败
+		break;	
+		
+		case EM_PUT_FINGER_MP3:    
+	         DRV_AM5BA340_PlayVoice( 73 );  //请输入指纹
+		break;		
+		
+		case EM_MOVE_FINGER_MP3:    
+	         DRV_AM5BA340_PlayVoice( 74 );  //请拿开手指
+		break;	
+		
+		case EM_NUM_0_MP3:    
+	         DRV_AM5BA340_PlayVoice( 75 );  //0
+		break;
+		
+		case EM_NUM_1_MP3:    
+	         DRV_AM5BA340_PlayVoice( 76 );  //1
+		break;
+		
+		case EM_NUM_2_MP3:    
+	         DRV_AM5BA340_PlayVoice( 77 );  //2
+		break;
+		
+		case EM_NUM_3_MP3:    
+	         DRV_AM5BA340_PlayVoice( 78 );  //3
+		break;	
+		
+		case EM_NUM_4_MP3:    
+	         DRV_AM5BA340_PlayVoice( 79 );  //4
+		break;
+		
+		case EM_NUM_5_MP3:    
+	         DRV_AM5BA340_PlayVoice( 80 );  //5
+		break;
+		
+		case EM_NUM_6_MP3:    
+	         DRV_AM5BA340_PlayVoice( 81 );  //6
+		break;
+		
+		case EM_NUM_7_MP3:    
+	         DRV_AM5BA340_PlayVoice( 82 );  //7
+		break;		
+		
+		case EM_NUM_8_MP3:    
+	         DRV_AM5BA340_PlayVoice( 83 );  //8
+		break;
+		
+		case EM_NUM_9_MP3:    
+	         DRV_AM5BA340_PlayVoice( 84 );  //9
+		break;	
+		
+		case EM_NUM_A_MP3:    
+	         DRV_AM5BA340_PlayVoice( 85 );  //A
+		break;	
+		
+		case EM_NUM_10_MP3:    
+	         DRV_AM5BA340_PlayVoice( 86 );  //十
+		break;	
+		
+		case EM_YEAR_MP3:    
+	         DRV_AM5BA340_PlayVoice( 87 );  //年
+		break;	
+		
+		case EM_MONTH_MP3:    
+	         DRV_AM5BA340_PlayVoice( 88 );  //月
+		break;
+		
+		case EM_DAY_MP3:    
+	         DRV_AM5BA340_PlayVoice( 89 );  //日
+		break;
+ 
+		case EM_OPEN_DOOR_OK_MP3:    
+	         DRV_AM5BA340_PlayVoice( 90 );  //开门成功
+		break;
+		
+		case EM_LOCKED_DOOR_MP3:    
+	         DRV_AM5BA340_PlayVoice( 91 );  //已上锁
+		break;
+		
+		case EM_APP_MODE_ON_MP3:    
+	         DRV_AM5BA340_PlayVoice( 92 );  //APP功能已打开
+		break;
+		
+		case EM_BACKING_FACTORY_MP3:    
+	         DRV_AM5BA340_PlayVoice( 93 );  //恢复出厂设置中请稍后
+		break;
+		
+		case EM_HI_TELL_ADMIN_MP3:    
+	         DRV_AM5BA340_PlayVoice( 94 );  //您好，我已通知主人
+		break;	
+		
+		case EM_TYR_ERR_LOCKED_MP3:    
+	         DRV_AM5BA340_PlayVoice( 95 );  //非法操作系统已锁定，请等待3分钟再操作
+		break;		
+
+		case EM_BUTTON_TIPS_MP3:    
+	         DRV_AM5BA340_PlayVoice( 96 );   //按键声“水滴声”
+		break;  
+	
+		case EM_BELL_PLAY_MP3:    
+	         DRV_AM5BA340_PlayVoice( 97 );   //门铃音（叮咚叮咚）
+		break;  
+ 
+		case EM_DEPLOYING_MP3:    
+	         DRV_AM5BA340_PlayVoice( 98 );   //已布防
+		break;  
+		
+		case EM_DEPLOYED_MP3:    
+	         DRV_AM5BA340_PlayVoice( 99 );   //已撤防
+		break;  
+		
+		case EM_BAT_DONOT_WORK_MP3:    
+	         DRV_AM5BA340_PlayVoice( 100 );   //电压低,无法工作 
+		break;  
+		
+		case EM_BAT_CHARGE_MP3:    
+	         DRV_AM5BA340_PlayVoice( 101 );   //电压低，请更换电池 
+		break;  	
+		
+		case EM_BAT_CHARGING_MP3:    
+	         DRV_AM5BA340_PlayVoice( 102 );   //充电中，请稍后 
+		break;  
+		
+		case EM_FIRST_USE_FACE_TIPS_MP3:    
+	         DRV_AM5BA340_PlayVoice( 103 );   //首次使用请录入管理员人脸
+		break;  
+		
+		case EM_INPUT_PWD_MP3:    
+	         DRV_AM5BA340_PlayVoice( 104 );   //请输入密码
+		break; 
+		
+		case EM_PUT_FINGER_OR_PWD_MP3:    
+	         DRV_AM5BA340_PlayVoice( 105 );   //请输入指纹或密码
+		break; 	
+		
+		case EM_ADMIN_CANNOT_DEL_MP3:    
+	         DRV_AM5BA340_PlayVoice( 106 );   //管理员不能删
+		break; 	
+
+		case EM_NUM_EXISTS_MP3:    
+	         DRV_AM5BA340_PlayVoice( 107 );   //编号已存在
+		break; 	
+		
+		case EM_REGIST_CNT_FULL_MP3:    
+	         DRV_AM5BA340_PlayVoice( 108 );   //登记数量已满
+		break; 	
+
+		case EM_UNRIGIST_TIPS_MP3:    
+	         DRV_AM5BA340_PlayVoice( 109 );   //未注册提醒(体验模式请录入信息后才能使用)
+		break; 	
+		
+		case EM_WELCOME_TIPS_MP3:    
+	         DRV_AM5BA340_PlayVoice( 110 );   //欢迎使用
+		break; 	
+		
+		case EM_BACKUP_BAT_ON_MP3:    
+	         DRV_AM5BA340_PlayVoice( 111 );   //已启用备用电池
+		break; 	
+		
+		case EM_PAIR_SUCCESS_MP3:    
+	         DRV_AM5BA340_PlayVoice( 112 );   //配对成功
+		break; 	
+		
+		case EM_PAIR_FAIL_MP3:    
+	         DRV_AM5BA340_PlayVoice( 113 );   //配对失败
+		break; 	
+		
+		case EM_CHECK_CARD_SUCCESS_MP3:    
+	         DRV_AM5BA340_PlayVoice( 114 );   //刷卡成功
+		break; 	
+		
+		case EM_CHECK_CARD_FAIL_MP3:    
+	         DRV_AM5BA340_PlayVoice( 115 );   //刷卡失败
+		break; 
+
+		case EM_DEL_CARD_MP3:    
+	         DRV_AM5BA340_PlayVoice( 116 );   //删除卡
+		break;
+
+		case EM_ADD_CARD_MP3:    
+	         DRV_AM5BA340_PlayVoice( 117 );   //增加卡
+		break;
+
+		case EM_PUT_CARD_MP3:    
+	         DRV_AM5BA340_PlayVoice( 118 );   //请刷卡
+		break;
+
+		case EM_PUT_CARD_TWICE_MP3:    
+	         DRV_AM5BA340_PlayVoice( 119 );   //请再刷卡
+		break;
+
+		case EM_CARD_REGISTED_MP3:    
+	         DRV_AM5BA340_PlayVoice( 120 );   //卡已注册
+		break;
+
+		case EM_CARD_CNT_FULL_MP3:    
+	         DRV_AM5BA340_PlayVoice( 121 );   //卡已满
+		break;
+		
+		case EM_PUT_CARD_NEARLY_MP3:    
+	         DRV_AM5BA340_PlayVoice( 122 );   //请将手机靠近刷卡区域
+		break;
+		
+		case EM_CHECK_FACE_MP3:    
+	         DRV_AM5BA340_PlayVoice( 123 );   //请验证人脸
+		break;	
+		
+		case EM_CAPTURE_FACE_FRONT_MP3:    
+	         DRV_AM5BA340_PlayVoice( 124 );   //请录入正脸
+		break;	
+		
+		case EM_MOVE_HEAD_UP_MP3:    
+	         DRV_AM5BA340_PlayVoice( 125 );   //请微微抬头
+		break;	
+		
+		case EM_MOVE_HEAD_DOWN_MP3:    
+	         DRV_AM5BA340_PlayVoice( 126 );   //请微微低头
+		break;	
+ 
+		case EM_TURN_FACE_RIGHT_MP3:    
+	         DRV_AM5BA340_PlayVoice( 127 );   //请把脸偏向右手边
+		break;
+		
+		case EM_TURN_FACE_LEFT_MP3:    
+	         DRV_AM5BA340_PlayVoice( 128 );   //请把脸偏向左手边
+		break;
+
+		case EM_CHECK_FAIL_AND_ADJUST_MP3:    
+	         DRV_AM5BA340_PlayVoice( 129 );   //未识别成功，请调整位置重试
+		break;
+		
+		case EM_CHECK_FACE_NONE_MP3:    
+	         DRV_AM5BA340_PlayVoice( 130 );   //未检测到人脸
+		break;
+		
+		case EM_FACE_TOO_NEARLY_MP3:    
+	         DRV_AM5BA340_PlayVoice( 131 );   //人脸距离太近
+		break;
+		
+		case EM_FACE_TOO_FAR_MP3:    
+	         DRV_AM5BA340_PlayVoice( 132 );   //人脸距离太远
+		break;
+		
+		case EM_FACE_SHELTED_MP3:    
+	         DRV_AM5BA340_PlayVoice( 133 );   //脸部有遮挡
+		break;
+	 
+		case EM_CALLING_WAIT_MP3:    
+	         DRV_AM5BA340_PlayVoice( 134 );   //呼叫中，请等待
+		break;
+		
+		case EM_HANG_UP_BY_BACK_MP3:    
+	         DRV_AM5BA340_PlayVoice( 135 );   //挂断请按返回键
+		break;
+		
+		case EM_CALL_FAIL_MP3:    
+	         DRV_AM5BA340_PlayVoice( 136 );   //呼叫失败
+		break;	
+		
+		case EM_ADMIN_FINGER_FULL_MP3:    
+	         DRV_AM5BA340_PlayVoice( 137 );   //管理员指纹已满
+		break;	
+		
+		case EM_FINGER_EEROR_MP3:    
+	         DRV_AM5BA340_PlayVoice( 138 );   //指纹错误
+		break;	
+		
+		case EM_PWD_FAIL_AND_INPUT_MP3:    
+	         DRV_AM5BA340_PlayVoice( 139 );   //修改密码失败，请确认输入的密码
+		break;	
+		
+		case EM_PWD_TOO_SIMPLE_MP3:    
+	         DRV_AM5BA340_PlayVoice( 140 );   //密码过于简单
+		break;	
+		
+		case EM_PWD_NONE_AND_SET_FAIL_MP3:    
+	         DRV_AM5BA340_PlayVoice( 141 );   //无密码，设置失败
+		break;	
+		
+		case EM_UPPER_BAT_LOW_AND_REPLACE_MP3:    
+	         DRV_AM5BA340_PlayVoice( 142 );   //上方电池电压低，请充电
+		break;	
+		
+		case EM_UNDER_BAT_LOW_AND_REPLACE_MP3:    
+	         DRV_AM5BA340_PlayVoice( 143 );   //下方电池电压低，请充电
+		break;	
+		
+		case EM_INSERT_UNDER_BAT_TIPS_MP3:    
+	         DRV_AM5BA340_PlayVoice( 144 );   //请插入下方电池
+		break;	
+		
+		case EM_INSERT_UPPER_BAT_TIPS_MP3:    
+	         DRV_AM5BA340_PlayVoice( 145 );   //请插入上方电池
+		break;	
+		
+		case EM_WARM_ALARM_MP3:    
+	         DRV_AM5BA340_PlayVoice( 146 );   //“110警笛音”
+		break;	
+		
+		case EM_BOTH_BAT_LOW_TIPS_MP3:    
+	         DRV_AM5BA340_PlayVoice( 147 );   //上方电池电压低，请充电 + 下方电池电压低，请充电
+		break;	
+		
+		case EM_INPUT_NEW_PWD_TIPS_MP3:    
+	         DRV_AM5BA340_PlayVoice( 148 );   //请输入6位新开门密码，按#确认
+		break;	
+		
+		case EM_INPUT_PWD_AGIN_TIPS_MP3:    
+	         DRV_AM5BA340_PlayVoice( 149 );   //请再输入一次
+		break;	
+		
+		case EM_BACK_FACTORY_COMFIRM_MP3:    
+	         DRV_AM5BA340_PlayVoice( 150 );   //恢复出厂设置确认提醒（恢复出厂设置，按#确认，取消请按*）
+		break;	
+		
+		case EM_INPUT_2NUM_AND_COMFIRM_MP3:    
+	         DRV_AM5BA340_PlayVoice( 151 );   //请输入两位数字，按#键确认 返回请按* 
+		break;	
+		
+		case EM_AUTO_LOCK_TIME_MP3:    
+	         DRV_AM5BA340_PlayVoice( 152 );   //自动上锁，当前时间为
+		break;	
+ 
+		case EM_HOUR_MP3:    
+	         DRV_AM5BA340_PlayVoice( 153 );   //时
+		break;	
+		
+		case EM_MINUTER_MP3:    
+	         DRV_AM5BA340_PlayVoice( 154 );   //分
+		break;	
+		
+		case EM_SECOND_MP3:    
+	         DRV_AM5BA340_PlayVoice( 155 );   //秒
+		break;	
+ 
+		case EM_COMFIRM_OR_BACK_TIPS_MP3:    
+	         DRV_AM5BA340_PlayVoice( 156 );   //确认请按#号键,如需更改请按*号键
+		break;	
+ 
+		case EM_FORMAT_WRONG_TIPS_MP3:    
+	         DRV_AM5BA340_PlayVoice( 157 );   //格式不正确，请重新输入 
+		break;	
+  
+		case EM_FIRST_USE_FINGER_TIPS_MP3:    
+	         DRV_AM5BA340_PlayVoice( 158 );   //首次使用请录入管理员指纹 
+		break;	
+		
+		case EM_CHECK_ADMIN_FACE_TIPS_MP3:    
+	         DRV_AM5BA340_PlayVoice( 159 );   //请验证管理员人脸 
+		break;	
+		
+		case EM_CHECK_ADMIN_FINGER_TIPS_MP3:    
+	         DRV_AM5BA340_PlayVoice( 160 );   //请验证管理员指纹 
+		break;
+
+        case EM_CONTACT_AT_BOTH_ENDS_MP3:    
+             DRV_AM5BA340_PlayVoice( 161 );   //请用手指接触两端触点
+        break;	
+        
+        case EM_RELEASE_FINGER_MP3:    
+             DRV_AM5BA340_PlayVoice( 162 );   //松开手指
+        break;
+
+        case EM_FIRST_USE_VEIN_TIPS_MP3:    
+             DRV_AM5BA340_PlayVoice( 163 );   //首次使用请录入管理员手指
+        break;
+		
+        case EM_CHECK_VEIN_MP3:    
+             DRV_AM5BA340_PlayVoice( 164 );   //请验证手指
+        break;
+		
+        case EM_CHECK_ADMIN_VEIN_TIPS_MP3:    
+             DRV_AM5BA340_PlayVoice( 165 );   //请验证管理员手指
+        break;
+ 
+        case EM_SLIDE_VEIN_TIPS_MP3:    
+             DRV_AM5BA340_PlayVoice( 166 );   //左右缓慢滑动整根手指
+        break;
+
+        case EM_FIRST_USE_IRIS_TIPS_MP3:    
+             DRV_AM5BA340_PlayVoice( 167 );   //首次使用请录入管理员虹膜
+        break;
+		
+        case EM_CHECK_IRIS_MP3:    
+             DRV_AM5BA340_PlayVoice( 168 );   //请验证虹膜
+        break;
+		
+        case EM_CHECK_ADMIN_IRIS_TIPS_MP3:    
+             DRV_AM5BA340_PlayVoice( 169 );   //请验证管理员虹膜
+        break;
+		
+        case EM_INPUT_IRIS_MP3:    
+             DRV_AM5BA340_PlayVoice( 170 );   //请输入虹膜
+        break;
+
+        case EM_FALSE_LOCK_TIPS_MP3:    
+             DRV_AM5BA340_PlayVoice( 171 );   //门未锁好
+        break;
+
+        case EM_PLACE_FINGER_MP3:    
+             DRV_AM5BA340_PlayVoice( 172 );   //请放手指
+        break;
+
+        case EM_UPPER_BAT_UNWORK_MP3:    
+             DRV_AM5BA340_PlayVoice( 173 );   //上方电池电压低，无法工作
+        break;
+		
+        case EM_UNDER_BAT_UNWORK_MP3:    
+             DRV_AM5BA340_PlayVoice( 174 );   //下方电池电压低，无法工作
+        break;
+		
+        case EM_UPPER_UNDER_BAT_UNWORK_MP3:    
+             DRV_AM5BA340_PlayVoice( 175 );   //下方电池电压低，无法工作, 下方电池电压低无法工作
+        break;
+ 
+        case EM_WARMING_TIPS_MP3:    
+             DRV_AM5BA340_PlayVoice( 176 );   //嘀嘀嘀 报警音
+        break;
+		
+		case EM_CALLING_WAIT_HANG_UP_BY_BACK_MP3:    
+	         DRV_AM5BA340_PlayVoice( 177 );  //呼叫中，请等待, 挂断请按返回键  
+		break;
+		
+		case EM_NETWORKING_WAIT_MP3:    
+	         DRV_AM5BA340_PlayVoice( 178 );  //组网中，请稍后
+		break;
+
+		case EM_CHECK_ERR_ALARM_MP3:    
+	         DRV_AM5BA340_PlayVoice( 179 );  //“110警笛音”+验证失败    
+		break;
+		
+		case EM_ERR_PROTECT_ALARM_MP3:    
+	         DRV_AM5BA340_PlayVoice( 180 );  //“110警笛音”+非法操作系统已锁定，请等待3分钟再操作    
+		break;
+		
+		
+		case EM_VOICE_BREAK_CMD:    
+	         DRV_AM5BA340_PlayVoice( 0xFE );  //终止语音当前播报指令
+		break;	
+		
+		default:break;
+	}
+   return;
+}
+ 
+/*********************************************************************************************************************
+* Function Name :  HAL_Voice_PlayingVoice()
+* Description   :  音量设置
+* Para Input    :  voiceNo- 待播放的语音编号  holdTimeMs- 播放的持续时间 若无需等待播放完毕可以为0
+* Para Output   :  none
+* Return        :  none
+*********************************************************************************************************************/
+void HAL_Voice_PlayingVoice( VoiceType_E volType, uint16_t holdTimeMs ) 
+{
+	if( 0 == VoiceWorkMode )  //静音模式
+		return;
+	
+	if( 1 == WarmVoiceMode )  //静音模式
+		return;
+ 
+	HAL_Voice_PushQueue( volType );  //放入新数据
+	s_VolMeg.PlayHoldTimMs = holdTimeMs;
+	HAL_Voice_PlayVoiceThread(); 
+	return;
+}
+
+/*********************************************************************************************************************
+* Function Name :  HAL_Voice_PlayVoiceThread()
+* Description   :  语音播报任务
+* Para          :  none
+* Return        :  none
+*********************************************************************************************************************/
+void HAL_Voice_PlayVoiceThread( void ) 
+{
+	s_VolMeg.BusyState = 0;      //空闲中
+
+	if( s_VolMeg.PlayHoldTimMs ) //上一条未播报完成
+	{
+		s_VolMeg.BusyState = 1;       //忙碌中
+	}
+
+	if( VolPowerOnTimMs <= VOL_POWER_ON_TIME )  //上电等稳定
+	{
+		s_VolMeg.BusyState = 1;      //忙碌中
+		return;
+	}
+	else if( s_VolMeg.IntervalTimMs )//音频数据传输最小间隔时间未到
+	{
+		s_VolMeg.BusyState = 1;      //忙碌中
+		return;
+	}
+	else if( 0 == HAL_Voice_GetQueueState() )  //队列为空
+	{
+		return;
+	}
+
+	uint8_t lockPara = EM_VOICE_BREAK_CMD;
+	while( 1 == HAL_Voice_GetQueueState() )  //队列不为空
+	{
+		uint8_t tp1;
+		if( QUEUE_OK == HAL_Voice_PopQueue( &tp1 ) )
+		{
+			lockPara = tp1;
+		}
+	}
+	HAL_Voice_PlayVoiceNum( (VoiceType_E)lockPara );
+	s_VolMeg.IntervalTimMs = VOL_INTERVAL_TIME;
+	s_VolMeg.BusyState = 1;      //忙碌中	
+	return;
+ 
+}
+
+
+
+
+/*-------------------------------------------------THE FILE END-----------------------------------------------------*/
+
+
+
+
+

@@ -1,0 +1,11 @@
+
+
+
+#include <stdint.h>
+
+
+void Id2_SeDelayms(uint32_t cnt);
+void Id2_SeDelayus(uint32_t cnt);
+void Id2Tim_InitTimeOut_ms(uint32_t timeout_ms);
+uint8_t Id2Tim_CheckTimeOut_ms(void);
+void Id2Tim_SeTimer_s(void);

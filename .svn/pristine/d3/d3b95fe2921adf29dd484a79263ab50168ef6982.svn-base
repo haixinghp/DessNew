@@ -1,0 +1,468 @@
+/**************************************************************************** 
+* Copyright (C), 2008-2021,德施曼机电（中国）有限公司 
+* 文件名: DRV_GPIO.c 
+* 作者：邓业豪
+* 版本：V01
+* 时间：2022 01 20
+* 内容简述：realtek   8762 IO芯片层驱动
+****************************************************************************/
+/* 标准头文件 */
+#include "stddef.h"
+
+/* 内部头文件 */
+#include "DRV_GPIO.h"
+#include "Public.h"
+#include "rtl876x_nvic.h"
+/* 外部头文件 */
+
+
+#define   GPIO_NUMBER     39
+DRV_GPIOPtr PinCallBackPtr ;
+DRV_GPIOPtr GpioCallBackPtr ;
+static uint8_t DRV_PinOutState[GPIO_NUMBER];
+
+typedef enum
+{
+	DRV_GPIO_DEFAULT ,
+	DRV_GPIO_OUT  ,      
+	DRV_GPIO_PULL_NONE_INPUT ,     
+	DRV_GPIO_PULL_UP_INPUT ,   
+	DRV_GPIO_PULL_DOWN_INPUT ,
+    DRV_GPIO_WAKEUP	
+} DRV_GPIO_STATE;
+
+
+
+/***************************************************************************************
+**函数名:       DRV_GpioOutPP
+**功能描述:     GPIO推挽输出模式
+**输入参数:     pinNumber     IO
+**备注:         约8ma驱动电流
+****************************************************************************************/
+void DRV_GpioOutPP(uint32_t pinNumber )
+{
+	if(DRV_PinOutState[pinNumber]==DRV_GPIO_OUT) //记录输出状态,节省时间
+	{
+		return;
+	}
+	if(pinNumber >= GPIO_NUMBER)
+	{
+		return;
+	}
+
+	Pad_Config(pinNumber, PAD_PINMUX_MODE, PAD_IS_PWRON, PAD_PULL_NONE,  PAD_OUT_DISABLE,PAD_OUT_LOW);
+	Pinmux_Config(pinNumber, DWGPIO);	
+	
+	GPIO_InitTypeDef GPIO_InitStruct;
+    GPIO_StructInit(&GPIO_InitStruct);
+    GPIO_InitStruct.GPIO_Pin    = GPIO_GetPin(pinNumber) ;
+    GPIO_InitStruct.GPIO_Mode   = GPIO_Mode_OUT;
+    GPIO_InitStruct.GPIO_ITCmd  = DISABLE;
+    GPIO_Init(&GPIO_InitStruct);
+	
+	DRV_PinOutState[pinNumber]=DRV_GPIO_OUT; //记录输出状态
+    return;
+}
+
+/***************************************************************************************
+**函数名:       DRV_GpioHighOut1
+**功能描述:     GPIO推挽输出高驱模式输出1
+**输入参数:     pinNumber     IO
+**备注:         约8ma驱动电流
+****************************************************************************************/
+void DRV_GpioHighOut1(uint32_t pinNumber )
+{
+	DRV_GpioOut1(pinNumber);
+    return;
+}
+
+/***************************************************************************************
+**函数名:       DRV_GpioHighOut0
+**功能描述:     GPIO推挽输出高驱模式输出0
+**输入参数:     pinNumber     IO
+**备注:         约8ma驱动电流
+****************************************************************************************/
+void DRV_GpioHighOut0(uint32_t pinNumber )
+{
+	DRV_GpioOut0(pinNumber);
+    return;
+}
+
+
+/***************************************************************************************
+**函数名:       DRV_GpioOut1
+**功能描述:     GPIO推挽输出高
+**输入参数:     pinNumber     IO
+**备注:         约8ma驱动电流
+****************************************************************************************/
+void DRV_GpioOut1(uint32_t pinNumber)
+{
+	DRV_GpioOutPP(pinNumber);
+	GPIO_WriteBit(GPIO_GetPin(pinNumber), (BitAction)(1));	
+    return;
+}
+
+
+/***************************************************************************************
+**函数名:       DRV_GpioOut0
+**功能描述:     GPIO推挽输出低
+**输入参数:     pinNumber     IO
+**备注:         约8ma驱动电流
+****************************************************************************************/
+void DRV_GpioOut0(uint32_t pinNumber)
+{
+	DRV_GpioOutPP(pinNumber);
+	GPIO_WriteBit(GPIO_GetPin(pinNumber), (BitAction)(0));	
+    return;
+}
+
+
+/***************************************************************************************
+**函数名:       DRV_GpioInputPullup
+**功能描述:     GPIO上拉输入模式  
+**输入参数:     pinNumber     IO
+**备注:         约100K上拉(看手册，不同IO不一样)
+****************************************************************************************/
+void DRV_GpioInputPullup(uint32_t pinNumber)
+{
+	if(DRV_PinOutState[pinNumber]!=DRV_GPIO_PULL_UP_INPUT) //记录状态,节省时间
+	{
+		DRV_PinOutState[pinNumber]=DRV_GPIO_PULL_UP_INPUT;
+		Pad_Config(pinNumber, PAD_PINMUX_MODE, PAD_IS_PWRON, PAD_PULL_UP,  PAD_OUT_DISABLE,PAD_OUT_LOW);
+		Pinmux_Config(pinNumber, DWGPIO);
+	}	
+	
+	GPIO_InitTypeDef GPIO_InitStruct;
+    GPIO_StructInit(&GPIO_InitStruct);
+    GPIO_InitStruct.GPIO_Pin    =  GPIO_GetPin(pinNumber) ;
+    GPIO_InitStruct.GPIO_Mode   = GPIO_Mode_IN;
+    GPIO_InitStruct.GPIO_ITCmd  = DISABLE;
+    GPIO_Init(&GPIO_InitStruct);
+	
+    return;
+}
+
+/***************************************************************************************
+**函数名:       DRV_GpioInputPulldown
+**功能描述:     GPIO下拉输入模式
+**输入参数:     pinNumber     IO
+**备注:         约13K下拉
+****************************************************************************************/
+void DRV_GpioInputPulldown(uint32_t pinNumber)
+{
+	if(DRV_PinOutState[pinNumber]!=DRV_GPIO_PULL_DOWN_INPUT) //记录状态,节省时间
+	{
+		DRV_PinOutState[pinNumber]=DRV_GPIO_PULL_DOWN_INPUT;
+		Pad_Config(pinNumber, PAD_PINMUX_MODE, PAD_IS_PWRON, PAD_PULL_DOWN,  PAD_OUT_DISABLE,PAD_OUT_LOW);
+		Pinmux_Config(pinNumber, DWGPIO);	
+	}
+	
+	GPIO_InitTypeDef GPIO_InitStruct;
+    GPIO_StructInit(&GPIO_InitStruct);
+    GPIO_InitStruct.GPIO_Pin    =  GPIO_GetPin(pinNumber) ;
+    GPIO_InitStruct.GPIO_Mode   = GPIO_Mode_IN;
+    GPIO_InitStruct.GPIO_ITCmd  = DISABLE;
+    GPIO_Init(&GPIO_InitStruct);
+
+    return;
+}
+
+
+/***************************************************************************************
+**函数名:       DRV_GpioInputPullnull
+**功能描述:     GPIO浮空输入模式
+**输入参数:     pinNumber     IO
+**备注:         无拉电阻
+****************************************************************************************/
+void DRV_GpioInputPullnull(uint32_t pinNumber)
+{
+	//重新配置需要6.7微秒，速度太慢
+//	Pad_Config(pinNumber, PAD_PINMUX_MODE, PAD_IS_PWRON, PAD_PULL_NONE,  PAD_OUT_DISABLE,PAD_OUT_LOW);
+//	Pinmux_Config(pinNumber, DWGPIO);	
+	//只配上拉需要5.1微妙
+//	Pad_PullEnableValue(pinNumber,ENABLE);
+//	Pad_PullUpOrDownValue(pinNumber,true);
+	if(DRV_PinOutState[pinNumber]!=DRV_GPIO_PULL_NONE_INPUT) //记录状态,节省时间
+	{
+		DRV_PinOutState[pinNumber]=DRV_GPIO_PULL_NONE_INPUT;
+		Pad_Config(pinNumber, PAD_PINMUX_MODE, PAD_IS_PWRON, PAD_PULL_NONE,  PAD_OUT_DISABLE,PAD_OUT_LOW);
+		Pinmux_Config(pinNumber, DWGPIO);	
+	}
+	
+	GPIO_InitTypeDef GPIO_InitStruct;
+    GPIO_StructInit(&GPIO_InitStruct);
+    GPIO_InitStruct.GPIO_Pin    =  GPIO_GetPin(pinNumber) ;
+    GPIO_InitStruct.GPIO_Mode   = GPIO_Mode_IN;
+    GPIO_InitStruct.GPIO_ITCmd  = DISABLE;
+    GPIO_Init(&GPIO_InitStruct);
+
+    return;
+}
+
+/***************************************************************************************
+**函数名:       DRV_GpioRead
+**功能描述:     GPIO读取电平
+**输入参数:     pinNumber     IO
+**备注:         
+****************************************************************************************/
+uint8_t DRV_GpioRead(uint32_t pinNumber)
+{
+	return GPIO_ReadInputDataBit(GPIO_GetPin(pinNumber));
+}
+
+/***************************************************************************************
+**函数名:       DRV_GpioDisconnect
+**功能描述:     GPIO断开连接关系
+**输入参数:     pinNumber     IO
+**备注:         无功耗
+****************************************************************************************/
+void DRV_GpioDisconnect(uint32_t pinNumber)
+{
+	//复用成IO模式,外设断电，全部设为浮空输入，跟随外部电平
+	Pad_Config(pinNumber, PAD_SW_MODE, PAD_NOT_PWRON, PAD_PULL_NONE, PAD_OUT_DISABLE,PAD_OUT_LOW);
+	DRV_PinOutState[pinNumber]=DRV_GPIO_DEFAULT; //记录输入状态
+    return;
+}
+
+
+/*******************************************************
+* 函数名： DRV_GpioDefault
+* 功 能：  所有Gpio断开连接
+* 输 入：
+* 输 出：
+* 返 回：
+********************************************************/ 
+void DRV_GpioDefault(void)
+{
+	//上电开时钟
+	RCC_PeriphClockCmd(APBPeriph_GPIO, APBPeriph_GPIO_CLOCK, ENABLE);
+    return;
+}
+
+
+/*******************************************************
+* 函数名： DRV_GpioSleep
+* 功 能：  休眠设置
+* 输 入：  触发方式、拉电平、中断函数指针
+* 输 出：
+* 返 回：
+********************************************************/ 
+void DRV_GpioSleep(void)
+{
+    for (uint8_t i = 0; i < GPIO_NUMBER; i++)
+    {
+		if((31==i)|| (8==i)|| (9==i)|| (3==i)) // 芯片没有31脚,以及LOG口SWD口不用
+		{
+			continue;
+		}
+		if(DRV_PinOutState[i]!=DRV_GPIO_WAKEUP) //非唤醒脚
+		{
+			Pad_Config(i, PAD_SW_MODE, PAD_NOT_PWRON, PAD_PULL_NONE, PAD_OUT_DISABLE,PAD_OUT_LOW);
+			DRV_PinOutState[i]=DRV_GPIO_DEFAULT; //记录状态
+		}
+		else
+		{
+		}
+    }
+}
+
+void GPIO_Handler(uint32_t pinNumber)
+{
+    GPIO_INTConfig(GPIO_GetPin(pinNumber), DISABLE); //关中断
+    GPIO_MaskINTConfig(GPIO_GetPin(pinNumber), ENABLE); //屏蔽中断
+	if(GpioCallBackPtr !=NULL )
+	{
+		my_printf("GPIO_Handler  %d  =  %d！！！！！！！！！！！！！！！！！ \n",pinNumber,DRV_GpioRead(pinNumber));
+		GpioCallBackPtr(pinNumber);
+	}	
+    GPIO_ClearINTPendingBit(GPIO_GetPin(pinNumber));      //清中断
+    GPIO_MaskINTConfig(GPIO_GetPin(pinNumber), DISABLE);  //重新打开中断
+    GPIO_INTConfig(GPIO_GetPin(pinNumber), ENABLE);
+}
+
+/*******************************************************
+* 函数名： GPIO7_Handler
+* 功 能：  主舌中断
+********************************************************/ 
+void GPIO7_Handler(void)
+{
+	GPIO_Handler(M_LOCK_BOLT_GPIO_PIN);
+}
+
+/*******************************************************
+* 函数名： GPIO5_Handler
+* 功 能：  斜舌中断
+********************************************************/ 
+void GPIO5_Handler(void)
+{
+	GPIO_Handler(M_LOCK_LATCH_GPIO_PIN);
+}
+
+/*******************************************************
+* 函数名： DRV_EdegInterruptEnable
+* 功 能：  休眠及唤醒脚设置
+* 输 入：  触发方式、拉电平、中断函数指针
+* 输 出：
+* 返 回：  锁体专用，系统唤醒时用,边沿触发
+********************************************************/ 
+void DRV_EdegInterruptEnable(DRV_GPIOPtr handler)
+{	
+    GPIO_InitTypeDef GPIO_InitStruct;
+    GPIO_StructInit(&GPIO_InitStruct);
+    GPIO_InitStruct.GPIO_Pin        = GPIO_GetPin(M_LOCK_BOLT_GPIO_PIN);
+    GPIO_InitStruct.GPIO_Mode       = GPIO_Mode_IN;
+    GPIO_InitStruct.GPIO_ITCmd      = ENABLE;
+    GPIO_InitStruct.GPIO_ITTrigger  = GPIO_INT_Trigger_EDGE;        //边沿触发
+    GPIO_InitStruct.GPIO_ITPolarity = GPIO_INT_POLARITY_ACTIVE_LOW; // 0低（下降沿） 1高（上升沿）
+    GPIO_InitStruct.GPIO_ITDebounce = GPIO_INT_DEBOUNCE_ENABLE;
+    GPIO_InitStruct.GPIO_DebounceTime = 10;/* unit:ms , can be 1~64 ms */
+    GPIO_Init(&GPIO_InitStruct);
+	
+    NVIC_InitTypeDef NVIC_InitStruct;
+    NVIC_InitStruct.NVIC_IRQChannel = GPIO7_IRQn;
+    NVIC_InitStruct.NVIC_IRQChannelPriority = 3;
+    NVIC_InitStruct.NVIC_IRQChannelCmd = ENABLE;
+    NVIC_Init(&NVIC_InitStruct);
+
+    GPIO_MaskINTConfig(GPIO_GetPin(M_LOCK_BOLT_GPIO_PIN), DISABLE);
+    GPIO_INTConfig(GPIO_GetPin(M_LOCK_BOLT_GPIO_PIN), ENABLE);
+	
+	//斜舌
+	GPIO_InitStruct.GPIO_Pin        = GPIO_GetPin(M_LOCK_LATCH_GPIO_PIN);
+    GPIO_InitStruct.GPIO_Mode       = GPIO_Mode_IN;
+    GPIO_InitStruct.GPIO_ITCmd      = ENABLE;
+    GPIO_InitStruct.GPIO_ITTrigger  = GPIO_INT_BOTH_EDGE;        //双边沿触发
+    GPIO_InitStruct.GPIO_ITPolarity = GPIO_INT_POLARITY_ACTIVE_LOW; // 0低（下降沿） 1高（上升沿）
+    GPIO_InitStruct.GPIO_ITDebounce = GPIO_INT_DEBOUNCE_ENABLE;
+    GPIO_InitStruct.GPIO_DebounceTime = 10;/* unit:ms , can be 1~64 ms */
+    GPIO_Init(&GPIO_InitStruct);
+	GPIO_InitStruct.GPIO_Pin        = GPIO_GetPin(M_LOCK_LATCH_GPIO_PIN);
+	GPIO_InitStruct.GPIO_ITTrigger  = GPIO_INT_BOTH_EDGE;        //斜舌双边沿触发
+	GPIO_Init(&GPIO_InitStruct);
+	
+	NVIC_InitStruct.NVIC_IRQChannel = GPIO5_IRQn;
+	NVIC_Init(&NVIC_InitStruct);
+	
+    GPIO_MaskINTConfig(GPIO_GetPin(M_LOCK_LATCH_GPIO_PIN), DISABLE);
+    GPIO_INTConfig(GPIO_GetPin(M_LOCK_LATCH_GPIO_PIN), ENABLE);	
+	
+	GpioCallBackPtr=handler;
+	//my_printf("DRV_EdegInterruptEnable\n");
+}
+
+/*******************************************************
+* 函数名： DRV_EdegInterruptDisable
+* 功 能：  休眠及唤醒脚设置
+* 输 入：  IO引脚
+* 输 出：
+* 返 回：
+********************************************************/ 
+void DRV_EdegInterruptDisable(uint32_t pinNumber )
+{
+    GPIO_INTConfig(GPIO_GetPin(pinNumber), DISABLE); //关中断
+    GPIO_MaskINTConfig(GPIO_GetPin(pinNumber), ENABLE); //屏蔽中断
+	//my_printf("DRV_EdegInterruptDisable \n");	
+}
+
+/*******************************************************
+* 函数名： System_Handler
+* 功 能：  IO中断函数
+* 输 入：  
+* 输 出：
+* 返 回：
+********************************************************/
+void System_Handler(void)
+{
+    for (uint8_t i = 0; i < GPIO_NUMBER; i++)
+    {
+		if((31==i)|| (8==i)|| (9==i)|| (3==i)) // 芯片没有31脚,以及LOG口SWD口不用
+		{
+			continue;
+		}
+		if (System_WakeUpInterruptValue(i) == SET)
+		{
+			my_printf("System_Handler     ！！！！！！！！！！！！！！！！！ \n");
+			Pad_ClearWakeupINTPendingBit(i);
+			DRV_GpioInterruptDisable( i ); //电平触发用完需要关，否则会一直产生，休眠时再统一打开
+			if(PinCallBackPtr !=NULL )
+			{
+				PinCallBackPtr(i);
+			}	
+	
+		}
+    }
+}
+
+/*******************************************************
+* 函数名： DRV_GpioInterruptEnable
+* 功 能：  休眠及唤醒脚设置，实际是PAD功能，不是GPIO
+* 输 入：  触发方式、拉电平、中断函数指针
+* 输 出：
+* 返 回：
+********************************************************/ 
+void DRV_GpioInterruptEnable(uint32_t pinNumber ,DRV_GPIO_POL_E Polarity ,DRV_GPIOPtr handler)
+{	
+    //8762 不支持翻转
+	PinCallBackPtr =handler;//中断函数指针
+	Pad_ControlSelectValue(pinNumber, PAD_SW_MODE);		
+	//Polarity 高 0    低1 无翻转
+	//System_WakeUpDebounceTime(10);//硬件消抖
+	System_WakeUpPinEnable(pinNumber, Polarity, 0);	
+	DRV_PinOutState[pinNumber]=DRV_GPIO_WAKEUP;
+}
+
+
+/*******************************************************
+* 函数名： DRV_GpioInterruptDisable
+* 功 能：  休眠及唤醒脚设置
+* 输 入：  触发方式、拉电平、中断函数指针
+* 输 出：
+* 返 回：
+********************************************************/ 
+void DRV_GpioInterruptDisable(uint32_t pinNumber )
+{
+	//系统唤醒关中断引脚，同时断开GPIO外设模式,这样才能读电平
+	System_WakeUpPinDisable(pinNumber);
+	Pad_ControlSelectValue(pinNumber, PAD_PINMUX_MODE);
+}
+
+
+
+
+/*******************************************************
+* 函数名： DRV_GpioSWOut1
+* 功 能：  用sw模式输出高电平,输出速率只有 32K
+* 输 入：  uint32_t pinNumber IO口
+* 输 出：
+* 返 回：
+********************************************************/ 
+void DRV_GpioSWOut1(uint32_t pinNumber )
+{
+	Pad_Config(pinNumber, PAD_SW_MODE, PAD_IS_PWRON, PAD_PULL_UP,  PAD_OUT_ENABLE,PAD_OUT_HIGH);
+}
+/*******************************************************
+* 函数名： DRV_GpioSWOut0
+* 功 能：  用sw模式输出低电平,输出速率只有 32K
+* 输 入：  uint32_t pinNumber IO口
+* 输 出：
+* 返 回：
+********************************************************/ 
+void DRV_GpioSWOut0(uint32_t pinNumber )
+{
+	Pad_Config(pinNumber, PAD_SW_MODE, PAD_IS_PWRON, PAD_PULL_UP,  PAD_OUT_ENABLE,PAD_OUT_LOW);
+}
+
+/*******************************************************
+* 函数名： DRV_GpioSWOut0
+* 功 能：  用sw模式输出低电平,输出速率只有 32K
+* 输 入：  uint32_t pinNumber IO口
+* 输 出：
+* 返 回：
+********************************************************/ 
+void DRV_GpioSWMode(uint32_t pinNumber )
+{
+	Pad_ControlSelectValue(pinNumber, PAD_SW_MODE);
+	DRV_PinOutState[pinNumber]=DRV_GPIO_WAKEUP; //中断脚如果休眠不开中断，不能断电，设成SW模式
+}
+
+//.end of the file.

@@ -1,0 +1,10 @@
+.\_build\api_init.o: ..\..\..\..\..\emb\ID2\api_init.c
+.\_build\api_init.o: ..\..\..\..\..\emb\ID2\ali_crypto.h
+.\_build\api_init.o: ..\..\..\..\..\emb\ID2\ali_crypto_types.h
+.\_build\api_init.o: C:\Keil_v5\ARM\ARMCC\Bin\..\include\stdint.h
+.\_build\api_init.o: C:\Keil_v5\ARM\ARMCC\Bin\..\include\stddef.h
+.\_build\api_init.o: C:\Keil_v5\ARM\ARMCC\Bin\..\include\stdbool.h
+.\_build\api_init.o: ..\..\..\..\..\emb\ID2\ls_osa.h
+.\_build\api_init.o: C:\Keil_v5\ARM\ARMCC\Bin\..\include\string.h
+.\_build\api_init.o: ..\..\..\..\..\emb\ID2\ls_hal_crypt.h
+.\_build\api_init.o: ..\..\..\..\..\emb\ID2\ls_hal_hash.h

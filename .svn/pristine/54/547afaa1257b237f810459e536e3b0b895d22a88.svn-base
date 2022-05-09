@@ -1,0 +1,330 @@
+/*********************************************************************************************************************
+ * @file:        HW_Q5S.h
+ * @author:      fanshuyu
+ * @version:     V01.00
+ * @date:        2021-08-30
+ * @Description: 硬件PIN 口定义，所有HW目录下的头文件，统一使用
+                        <_HW_DEFINE_H_> 宏，防止重复包含定义
+ * @ChangeList:  01. 初版
+**********************************************************************************************************************/
+#ifndef _HW_DEFINE_H_
+#define _HW_DEFINE_H_
+// <<< Use Configuration Wizard in Context Menu >>>\n
+#ifdef __cplusplus
+extern "C"
+{
+#endif
+
+#include "HW_Common.h"
+
+#include "nrf_drv_saadc.h" 
+#include "LockConfig.h"
+/*--------------功能配置(RELEASE)-------------*/
+// <h> 功能复选，选择当前锁需要支持的功能
+// <o>锁体选择
+//  <i>Default: 212
+//  <0=> 212 锁体
+//  <1=> 216 锁体
+//  <2=> 218 锁体
+//  <3=> 自动适应 锁体
+#define WIZARD_LOCK_BODY_MOTOR 3
+
+// <o>门外人体感应选择
+//  <i>Default: 0
+//  <0=> 缺省
+//  <1=> 红外功能
+//  <2=> 雷达功能
+#define WIZARD_SENSE_FUNCTION_ON 0
+
+// <o>人脸虹膜开门功能选择
+//  <i>Default: 0
+//  <0=> 缺省
+//  <1=> 虹膜开门
+//  <2=> 单人脸开门
+//  <3=> 商汤二代开门
+//  <4=> 奥比二代开门
+#define WIZARD_FACE_FUNCTION_ON 0 
+
+// <o>手指类开门功能选择
+//  <i>Default: 0
+//  <0=> 缺省
+//  <1=> 指纹开门
+//  <2=> 指静脉开门
+#define WIZARD_FINGER_FUNCTION_ON 1
+
+// <o>ID2 加密芯片选择
+//  <i>Default: 1
+//  <1=> 复旦微
+//  <2=> 恩智浦
+#define WIZARD_ID2_SE_TYPE 1
+
+// <q> 单猫眼模组功能
+#define WIZARD_XM_CAM_FUNCTION_ON 1
+// <q>Wi-Fi 模组功能
+#define WIZARD_WIFI_FUNCTION_ON 1
+// <q>NB 模组功能
+#define WIZARD_NB_FUNCTION 0
+// <q> IC卡 功能
+#define WIZARD_IC_CARD_FUNCTION_ON 0
+// <q> 智能钥匙解锁（蓝牙钥匙/蓝牙手环） 
+#define WIZARD_SMART_KEY_FUNCTION_ON 1
+// <q> 华为钱包功能
+#define WIZARD_HW_WALLET_FUNCTION_ON 0
+// <q> 主动防御（红外或雷达）
+#define WIZARD_HUMAN_ACTIVE_DEF_ON 0
+// <q> 一键布防
+#define WIZARD_KEY_DEFENSE_ON 0
+// <q> 触摸按键上锁键防误触功能 
+#define WIZARD_LOCK_KEY_CONFIRM_ON 1
+// <q> 呼吸灯
+#define WIZARD_BREATHE_LAMP 0
+// <q> 把手左霍尔信号检测功能
+#define WIZARD_HANDLER_LEFT_ON 0
+// <q> 把手中霍尔信号检测功能
+#define WIZARD_HANDLER_MIDDLE_ON 0
+// <q> 把手右霍尔信号检测功能
+#define WIZARD_HANDLER_RIGHT_ON 0
+// <q> 门内上锁键上锁功能
+#define WIZARD_CLOSE_BUTTON_ON 1
+// <q> 上方电池电压采样功能
+#define WIZARD_UPPER_BAT_ADC_ON 1
+// <q> 下方电池电压采样功能
+#define WIZARD_UNDER_BAT_ADC_ON 1
+// <q> 电机电流堵转电流采样功能
+#define WIZARD_MOTOR_AMP_ADC_ON 1
+// <q> 电池供电切换功能（大电池电压低小电池供电）
+#define WIZARD_BAT_CHARGE_SWITCH_ON 1
+// <q> 电池未插提醒功能 
+#define WIZARD_BAT_UNINSET_WARM_TIP_ON 1
+// </h> 
+
+#define SMARTKEY_XRO_ENC_ON             //老版本蓝牙钥匙兼容
+
+/*--- 硬件头文件定义宏的重定义---*/
+#include "HW_Redefine.h"
+
+/* 指纹模组数量定义 */
+#define M_FINGER_MAX_TOTAL_NUM 100
+#define M_FINGER_MAX_ADMIN_NUM 60
+#define M_FINGER_MAX_COMMON_NUM (M_FINGER_MAX_TOTAL_NUM - M_FINGER_MAX_ADMIN_NUM)
+
+
+/* MCU 端口*/
+#define M_POW_WIFI_ACTIVE_LEVEL             HW_ACTIVE_LEVEL_LOW // WIFI POW PIN，上电电平
+#define M_POW_BELL_ACTIVE_LEVEL             HW_ACTIVE_LEVEL_LOW // BELL POW PIN，上电电平
+#define M_SPK_POW_GPIO_PIN                  GPIO_PIN_NO_04      // MCU_BELL_POW
+#define M_VOICE_DATA_GPIO_PIN               GPIO_PIN_NO_17
+#define M_SDA0_GPIO_PIN                     GPIO_PIN_NO_11
+#define M_SCL0_GPIO_PIN                     GPIO_PIN_NO_12
+#define M_SDA1_GPIO_PIN                     GPIO_PIN_NO_19
+#define M_SCL1_GPIO_PIN                     GPIO_PIN_NO_20
+#define M_UART_TX_GPIO_PIN                  GPIO_PIN_NO_16
+#define M_UART_RX_GPIO_PIN                  GPIO_PIN_NO_15
+#define M_WIFI_POW_GPIO_PIN                 GPIO_PIN_NO_21      //WIFI的POW脚
+#define M_WIFI_CT_GPIO_PIN                  GPIO_PIN_NO_02      //WIFI的CT脚
+#define M_WIFI_RT_GPIO_PIN                  GPIO_PIN_NO_03      //WIFI的RT脚
+#define M_WIFI_TX_GPIO_PIN                  GPIO_PIN_NO_01      //WIFI的TX脚
+#define M_WIFI_RX_GPIO_PIN                  GPIO_PIN_NO_00      //WIFI的RX脚
+#define M_EEPROM_LOCK_GPIO_PIN              GPIO_PIN_NO_24      //EEPROM写保护引脚
+#define M_EXPORT_INT_GPIO_PIN               GPIO_PIN_NO_14      //扩展芯片中断引脚
+#define M_SE_POW_GPIO_PIN                   GPIO_PIN_NO_18
+#define M_SE_SDA_GPIO_PIN                   M_SDA1_GPIO_PIN
+#define M_SE_SCL_GPIO_PIN                   M_SCL1_GPIO_PIN
+
+#define M_MOTOR_POW_GPIO_PIN            	GPIO_PIN_NO_07   	//电机电源控制脚
+#define M_MOTOR_M1_GPIO_PIN             	GPIO_PIN_NO_26      //电机控制脚1
+#define M_MOTOR_M2_GPIO_PIN             	GPIO_PIN_NO_27		//电机控制脚2
+#define M_MOTOR_ADC_GPIO_PIN            	GPIO_PIN_NO_28      //电机电流采集
+
+#if defined LOCK_BODY_218_MOTOR || defined LOCK_BODY_AUTO_MOTOR
+	#define M_LOCK_LATCH_GPIO_PIN           GPIO_PIN_NO_10      //锁体斜舌信号
+	#define M_LOCK_BOLT_GPIO_PIN            GPIO_PIN_NO_08      //锁体主舌信号
+	#define M_LOCK_TRIGGER_GPIO_PIN         GPIO_PIN_NO_09      //锁体三角舌信号
+#elif defined LOCK_BODY_216_MOTOR
+	#define M_SCISSOR_LOCK_GPIO_PIN         GPIO_PIN_NO_01      //剪刀舌锁定
+	#define M_BOLT_RST_GPIO_PIN  	        GPIO_PIN_NO_28      //主舌复位信号
+	#define M_BOLT_CLOSE_GPIO_PIN           GPIO_PIN_NO_10    	//主舌关门
+	#define M_BOLT_OPEN_GPIO_PIN            GPIO_PIN_NO_09   	//主舌开门
+	#define M_FAM_TRIGGER_GPIO_PIN          GPIO_PIN_NO_00   	//三角舌压入信号,中断信号 
+#endif
+
+#define M_BAT_ADC_EN_GPIO_PIN               GPIO_PIN_NO_25      //电池电压采样使能引脚
+#define M_UP_BAT_ADC_GPIO_PIN               GPIO_PIN_NO_29      //上方电池电压采集
+#define M_UD_BAT_ADC_GPIO_PIN               GPIO_PIN_NO_30      //下方电池电压采集
+#define M_BAT_CHARGE_SWITCH_GPIO_PIN        GPIO_PIN_NO_31		//电池供电切换引脚
+#define M_KEY_OPEN_GPIO_PIN             	GPIO_PIN_NO_22      //门内开门按键
+#define M_KEY_CLOSE_GPIO_PIN            	GPIO_PIN_NO_23      //门内锁门按键
+#define M_HANDLE_LEFT_GPIO_PIN          	M_MCU_PIN_RERSVER   //门内把手左方向检测
+#define M_HANDLE_MIDDLE_GPIO_PIN          	M_MCU_PIN_RERSVER   //门内把手中方向检测
+#define M_HANDLE_RIGHT_GPIO_PIN         	M_MCU_PIN_RERSVER   //门内把手右方向检测
+
+
+/* 接近感应配置 无需配置*/
+#define SENSE_HIGH_GRADE           			0   //远距离
+#define SENSE_LOW_GRADE      				1   //近距离
+#define SENSE_OFF_GRADE     			    2   //关闭 
+
+/* ADC通道配置 需要配置*/
+#define  CFG_MOTO_AMP_ADC_CHANNEL           NRF_SAADC_INPUT_AIN4   //电机电流ADC通道
+#define  CFG_UPPER_BAT_ADC_CHANNEL          NRF_SAADC_INPUT_AIN5   //上方电池电压ADC通道
+#define  CFG_UNDER_BAT_ADC_CHANNEL          NRF_SAADC_INPUT_AIN6   //下方电池电压ADC通道
+
+#define  CFG_VOL_LOW_GRADE_1                6900     //精度1mV  电压低1级  告警
+#define  CFG_VOL_LOW_GRADE_2                6500     //精度1mV  电压低2级  无法工作电压
+#define  CFG_VOL_INSERT_NONE                3000     //精度1mV  未插电池情况
+
+#define  CFG_HIGH_TORQUE_AMP                3700     //高扭力对应电流 精度1mA
+#define  CFG_LOW_TORQUE_AMP                 2700     //低扭力对应电流 精度1mA 
+
+
+/* EEPROM -  E2存储芯片IIC地址*/
+#define CFG_EEPROM_ADDRESS                  0xA6                  //芯片IIC通信地址
+#define CFG_EEPROM_IIC_CHANNEL              CFG_I2C_CHANNEL0      //芯片IIC通信通道
+ 
+/* EXPORT 1 -  外设控制板 I11和I13 空置*/
+#define CFG_IO_EXPORT_ADDRESS               0x4E                  //芯片IIC通信地址
+#define CFG_IO_IIC_CHANNEL                  CFG_I2C_CHANNEL0      //芯片IIC通信通道
+
+#define PIN_START     0
+#define PIN_RERSVER              32             //预留
+#define PIN_CONFIG_74HC_E       (PIN_START+0) 
+#define PIN_CONFIG_74HC_A0      (PIN_START+1)
+#define PIN_CONFIG_74HC_A1      (PIN_START+7)
+#define PIN_CONFIG_POW_FING     (PIN_START+2)
+#define PIN_CONFIG_POW_FACE     (PIN_START+3)
+#define PIN_CONFIG_POW_AUDIO    (PIN_START+4)
+#define PIN_CONFIG_IRQ_FING     (PIN_START+12)
+#define PIN_CONFIG_IRQ_KEY      (PIN_START+14)
+#define PIN_CONFIG_POW_WIFI      PIN_RERSVER
+#define PIN_CONFIG_IRQ_IR       (PIN_START+15)
+#define PIN_CONFIG_IRQ_CAMERA   (PIN_START+6)
+#define PIN_CONFIG_IRQ_CAMBELL  (PIN_START+10)
+#define PIN_CONFIG_ALARM        (PIN_START+13)
+#define PIN_CONFIG_RTC_INT      (PIN_START+8)
+#define PIN_CONFIG_TOUCH_RST    (PIN_START+5)
+#define PIN_CONFIG_RESERVED1    (PIN_START+9)
+#define PIN_CONFIG_RESERVED2    (PIN_START+11)
+
+#define PIN_CONFIG_LCM_POW      (PIN_RERSVER)
+#define PIN_CONFIG_RF_LPCD      (PIN_RERSVER)
+#define PIN_CONFIG_POW_OBCAM    (PIN_RERSVER)
+#define PIN_CONFIG_CAM_CHANGE   (PIN_RERSVER)
+#define PIN_CONFIG_POW_STCAM    (PIN_RERSVER)
+#define PIN_CONFIG_POW_STWIFI   (PIN_RERSVER)
+
+
+/* EXPORT 2 -  LED 灯板 */
+#define CFG_LED_EXPORT_ADDRESS              0x42                  //芯片IIC通信地址
+#define CFG_LED_IIC_CHANNEL                 CFG_I2C_CHANNEL0      //芯片IIC通信通道
+
+#define PIN_OFFSET     16
+#define PIN_RESERVED_OFFSET     (PIN_OFFSET+16)
+#define PIN_CONFIG_LED_01       (PIN_OFFSET+10) 
+#define PIN_CONFIG_LED_02       (PIN_OFFSET+0)
+#define PIN_CONFIG_LED_03       (PIN_OFFSET+2)
+#define PIN_CONFIG_LED_04       (PIN_OFFSET+9)
+#define PIN_CONFIG_LED_05       (PIN_OFFSET+1)
+#define PIN_CONFIG_LED_06       (PIN_OFFSET+3)
+#define PIN_CONFIG_LED_07       (PIN_OFFSET+8)
+#define PIN_CONFIG_LED_08       (PIN_OFFSET+7)
+
+#define PIN_CONFIG_LED_09       (PIN_OFFSET+4)
+#define PIN_CONFIG_LED_00       (PIN_OFFSET+6)
+#define PIN_CONFIG_LED_BACK     (PIN_OFFSET+15)
+#define PIN_CONFIG_LED_SURE     (PIN_OFFSET+5)
+#define PIN_CONFIG_LED_RGB_R    (PIN_OFFSET+12)
+#define PIN_CONFIG_LED_RGB_G    (PIN_OFFSET+11)
+#define PIN_CONFIG_LED_RGB_B    (PIN_OFFSET+13)
+#define PIN_CONFIG_PIN_I16      (PIN_OFFSET+14) 
+
+
+/* TOUCH 灯板 */
+#define CFG_TOUCH_DEVICE_ADDR               0xB2                  //芯片IIC通信地址
+#define CFG_TOUCH_IIC_CHANNEL               CFG_I2C_CHANNEL0      //芯片IIC通信通道
+
+
+/*通道对应的方向设置*/
+#define HW_TOUCH_SIN_01_DIR          HW_TOUCH_PIN_DIR_IN
+#define HW_TOUCH_SIN_02_DIR          HW_TOUCH_PIN_DIR_IN
+#define HW_TOUCH_SIN_03_DIR          HW_TOUCH_PIN_DIR_IN
+#define HW_TOUCH_SIN_04_DIR          HW_TOUCH_PIN_DIR_IN
+#define HW_TOUCH_SIN_05_DIR          HW_TOUCH_PIN_DIR_IN
+#define HW_TOUCH_SIN_06_DIR          HW_TOUCH_PIN_DIR_IN
+#define HW_TOUCH_SIN_07_DIR          HW_TOUCH_PIN_DIR_IN
+#define HW_TOUCH_SIN_08_DIR          HW_TOUCH_PIN_DIR_IN
+#define HW_TOUCH_SIN_09_DIR          HW_TOUCH_PIN_DIR_IN
+#define HW_TOUCH_SIN_10_DIR          HW_TOUCH_PIN_DIR_IN
+#define HW_TOUCH_SIN_11_DIR          HW_TOUCH_PIN_DIR_IN
+#define HW_TOUCH_SIN_12_DIR          HW_TOUCH_PIN_DIR_IN
+#define HW_TOUCH_SIN_13_DIR          HW_TOUCH_PIN_DIR_IN
+#define HW_TOUCH_SIN_14_DIR          HW_TOUCH_PIN_DIR_IN
+#define HW_TOUCH_SIN_15_DIR          HW_TOUCH_PIN_DIR_OUT
+#define HW_TOUCH_SIN_16_DIR          HW_TOUCH_PIN_DIR_OUT
+ 
+/*通道对应的灵敏度设置*/ 
+#define HW_TOUCH_SIN_01_SENSITIVITY  0x0B
+#define HW_TOUCH_SIN_02_SENSITIVITY  0x0A
+#define HW_TOUCH_SIN_03_SENSITIVITY  0x0B
+#define HW_TOUCH_SIN_04_SENSITIVITY  0x0B
+#define HW_TOUCH_SIN_05_SENSITIVITY  0x0B
+#define HW_TOUCH_SIN_06_SENSITIVITY  0x0B
+#define HW_TOUCH_SIN_07_SENSITIVITY  0x0B
+#define HW_TOUCH_SIN_08_SENSITIVITY  0x0B
+#define HW_TOUCH_SIN_09_SENSITIVITY  0x0B
+#define HW_TOUCH_SIN_10_SENSITIVITY  0x0B
+#define HW_TOUCH_SIN_11_SENSITIVITY  0x0B
+#define HW_TOUCH_SIN_12_SENSITIVITY  0x0B
+#define HW_TOUCH_SIN_13_SENSITIVITY  0x0B
+#define HW_TOUCH_SIN_14_SENSITIVITY  0x0A
+#define HW_TOUCH_SIN_15_SENSITIVITY  0x0B
+#define HW_TOUCH_SIN_16_SENSITIVITY  0x0B
+ 
+/*通道N对应的键值*/
+#define HW_TOUCH_PIN_01     HW_TOUCH_KEY_BACK
+#define HW_TOUCH_PIN_02     HW_TOUCH_KEY_NO_0
+#define HW_TOUCH_PIN_03     HW_TOUCH_KEY_NO_7
+#define HW_TOUCH_PIN_04     HW_TOUCH_KEY_NO_4
+#define HW_TOUCH_PIN_05     HW_TOUCH_KEY_NO_1
+#define HW_TOUCH_PIN_06     HW_TOUCH_KEY_ENTER
+#define HW_TOUCH_PIN_07     HW_TOUCH_KEY_NO_8
+#define HW_TOUCH_PIN_08     HW_TOUCH_KEY_NO_9
+#define HW_TOUCH_PIN_09     HW_TOUCH_KEY_NO_6
+#define HW_TOUCH_PIN_10     HW_TOUCH_KEY_NO_3
+#define HW_TOUCH_PIN_11     HW_TOUCH_KEY_NO_5
+#define HW_TOUCH_PIN_12     HW_TOUCH_KEY_NO_2
+#define HW_TOUCH_PIN_13     HW_TOUCH_KEY_LOCK
+#define HW_TOUCH_PIN_14     HW_TOUCH_KEY_BELL
+#define HW_TOUCH_PIN_15     14u
+#define HW_TOUCH_PIN_16     15u
+
+
+/* 呼吸灯 PWM引脚对应RGBW，需要配置 */
+#define HW_LED_LOCK_R       HW_TOUCH_PWM_02
+#define HW_LED_LOCK_G       HW_TOUCH_PWM_01 
+#define HW_LED_LOCK_B       HW_TOUCH_PWM_03 
+#define HW_LED_LOCK_W       HW_TOUCH_PWM_04
+
+
+/* 74HC4052 模拟开关串口定义 */
+#define HW_74HC4052_UART_FINGER     HW_74HC4052_UART_Y0
+#define HW_74HC4052_UART_IR         HW_74HC4052_UART_Y1
+#define HW_74HC4052_UART_CAMERA     HW_74HC4052_UART_Y2
+#define HW_74HC4052_UART_FACE       HW_74HC4052_UART_Y3
+#define HW_74HC4052_UART_LCD        HW_74HC4052_UART_RES
+
+/* UART资源的定义 */
+#define  FACE_UART_COM         HW_UART_COM0  
+#define  FINGER_UART_COM       HW_UART_COM0  
+#define  CAMERA_UART_COM       HW_UART_COM0  
+#define  WIFI_UART_COM         HW_UART_COM0  
+#define  IR_UART_COM           HW_UART_COM0 
+#define  LCD_UART_COM          HW_UART_COM0 
+
+
+#ifdef __cplusplus
+}
+#endif
+// <<< end of configuration section >>>
+#endif
+
+

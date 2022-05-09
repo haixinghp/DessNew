@@ -1,0 +1,151 @@
+/********************************************************************************************************************
+ * @file:        DRV_HE24C512.c
+ * @author:      gushengchi
+ * @version:     V01.00
+ * @date:        2021-07-23
+ * @Description: 芯片HE24C512的驱动功能函数源文件，IIC通信， 64Kbytes存储容量  写入需要解开写保护，读取无需解保护
+ * @ChangeList:  01. 初版
+*********************************************************************************************************************/
+  
+/*-------------------------------------------------文件包含---------------------------------------------------------*/
+#include "DRV_HE24C512.h" 
+#include "Public.h"
+#include "LockConfig.h"
+#include "DRV_GPIO.h"
+/*-------------------------------------------------宏定义-----------------------------------------------------------*/ 
+#define HE24C512_PROTECT_GPIO_PIN       M_EEPROM_LOCK_GPIO_PIN 
+#if LOCK_PROJECT_CHIP ==LOCK_PROJECT_RTL8762 //RTL8762的IO编号公用，这里使用SW模式
+#define HE24C512_ROM_PROTECT_OFF()      DRV_GpioSWOut0( HE24C512_PROTECT_GPIO_PIN )  //允许读写   	 
+#define HE24C512_ROM_PROTECT_ON()       DRV_GpioSWOut1( HE24C512_PROTECT_GPIO_PIN )  //禁止读写   		
+#else
+#define HE24C512_ROM_PROTECT_OFF()      DRV_GpioOut0( HE24C512_PROTECT_GPIO_PIN )  //允许读写   	 
+#define HE24C512_ROM_PROTECT_ON()       DRV_GpioOut1( HE24C512_PROTECT_GPIO_PIN )  //禁止读写   
+#endif
+#define HE24C512_ADDR                   CFG_EEPROM_ADDRESS          //设备IIC地址
+#define EEPROM_PAGE_SIZE                128u                        //单页存储字节个数 
+#define EEPROM_CHANNEL                  ((DRV_IIC_CHANNEL_E)CFG_EEPROM_IIC_CHANNEL)  //IIC驱动的通道 
+
+/*-------------------------------------------------枚举定义---------------------------------------------------------*/
+
+
+/*-------------------------------------------------常量定义---------------------------------------------------------*/
+
+
+/*-------------------------------------------------全局变量定义-----------------------------------------------------*/         
+
+
+/*-------------------------------------------------局部变量定义-----------------------------------------------------*/
+  
+
+/*-------------------------------------------------函数声明---------------------------------------------------------*/
+ 
+
+/*-------------------------------------------------函数定义---------------------------------------------------------*/
+
+
+/*********************************************************************************************************************
+* Function Name :  DRV_HE24C512_IICSendBytes()
+* Description   :  写入数据 可跨页
+* Para          :  startAddr = 写入数据的起始地址  pdata=待写入数据的指针 len=数据长度
+* Return        :  I2C_FALSE = 失败  I2C_TRUE = 成功
+*********************************************************************************************************************/
+static DRV_IIC_ERROR_E DRV_HE24C512_IICSendBytes( uint32_t startAddr, const uint8_t *pdata, uint16_t len ) 
+{
+   DRV_IIC_ERROR_E  ret;
+   HE24C512_ROM_PROTECT_OFF();
+   ret = DRV_IICWriteEeprom( EEPROM_CHANNEL ,HE24C512_ADDR, startAddr, pdata, len);
+   HE24C512_ROM_PROTECT_ON();
+   return ret;	
+}
+
+/*********************************************************************************************************************
+* Function Name :  DRV_HE24C512_WriteBytes
+* Description   :  写入数据 可跨页
+* Para          :  startAddr = 写入数据的起始地址  pdata=待写入数据的指针 len=数据长度
+* Return        :  I2C_FALSE = 失败  I2C_TRUE = 成功
+*********************************************************************************************************************/
+static DRV_IIC_ERROR_E DRV_HE24C512_IICGetBytes( uint32_t startAddr, uint8_t *pdata, uint16_t len ) 
+{
+   DRV_IIC_ERROR_E  ret;
+   ret = DRV_IICReadByteEeprom( EEPROM_CHANNEL, HE24C512_ADDR, startAddr, pdata, len );
+   return ret;		
+}
+
+
+/*********************************************************************************************************************
+* Function Name :  DRV_HE24C512_WriteBytes
+* Description   :  写入数据 可跨页
+* Para          :  startAddr = 写入数据的起始地址  pdata=待写入数据的指针 len=数据长度
+* Return        :  I2C_FALSE = 失败  I2C_TRUE = 成功
+*********************************************************************************************************************/
+uint8_t DRV_HE24C512_WriteBytes( uint32_t startAddr, const uint8_t *pdata, uint16_t len ) 
+{
+    uint16_t idx=0;
+    uint8_t  startLen =0;
+    uint8_t  stopLen =0;
+    uint16_t middle_page =0;
+    uint16_t offsetAddr=0;
+
+    if( len == 0 )
+		return I2C_FALSE;
+
+    offsetAddr = startAddr % EEPROM_PAGE_SIZE;      //所在分页的地址
+  
+    if( offsetAddr + len <= EEPROM_PAGE_SIZE )      //未越页
+    {
+        if( I2C_SUCCESS != DRV_HE24C512_IICSendBytes( startAddr, pdata, len) )
+			return I2C_FALSE;
+	    PUBLIC_Delayms(6);   //分页延时处理
+    }  
+    else   //跨页写
+    {
+        startLen = EEPROM_PAGE_SIZE - offsetAddr;           //第一页写入的字节数
+        middle_page = (len - startLen) / EEPROM_PAGE_SIZE;  //还剩多少页 
+        stopLen = (len - startLen) % EEPROM_PAGE_SIZE;
+      
+        /*--------------写开始页---------------*/
+        if( I2C_SUCCESS != DRV_HE24C512_IICSendBytes( startAddr, pdata, startLen) )
+		   return I2C_FALSE;
+		PUBLIC_Delayms(6);   //分页延时处理
+		
+		startAddr += startLen;
+		idx += startLen;
+       /*--------------写中间页---------------*/
+       for(uint16_t i=0; i<middle_page; i++)
+       { 
+          if( I2C_SUCCESS != DRV_HE24C512_IICSendBytes( startAddr, &pdata[idx], EEPROM_PAGE_SIZE) )
+			 return I2C_FALSE;  
+		  PUBLIC_Delayms(6);   //分页延时处理
+		  
+          startAddr += EEPROM_PAGE_SIZE;					
+          idx += EEPROM_PAGE_SIZE; 
+       }
+       /*--------------写停止页---------------*/
+       if( stopLen != 0 )
+       {
+          if( I2C_SUCCESS != DRV_HE24C512_IICSendBytes( startAddr, &pdata[idx], stopLen) )
+			 return I2C_FALSE; 
+		  PUBLIC_Delayms(6);   //分页延时处理
+       }
+    }
+
+    return( I2C_TRUE );
+}
+
+/*********************************************************************************************************************
+* Function Name :  DRV_HE24C512_ReadBytes()
+* Description   :  从EEPROM中读取数据，无分页限制  
+* Para          :  startAddr = 读数据的起始地址  pdata=待读数据的指针 len=数据长度
+* Return        :  I2C_FALSE = 失败  I2C_TRUE = 成功
+*********************************************************************************************************************/
+uint8_t DRV_HE24C512_ReadBytes( uint32_t startAddr, uint8_t *pdata, uint16_t len ) 
+{
+	if( I2C_SUCCESS != DRV_HE24C512_IICGetBytes( startAddr, pdata, len ) ) 
+	{
+		return  I2C_FALSE;
+	}
+	return  I2C_TRUE;
+}
+ 
+ /*-------------------------------------------------THE FILE END-----------------------------------------------------*/
+

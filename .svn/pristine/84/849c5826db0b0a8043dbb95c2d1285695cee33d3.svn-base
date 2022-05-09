@@ -1,0 +1,778 @@
+/*********************************************************************************************************************
+ * @file:        Screen.c
+ * @author:      fanshuyu
+ * @version:     V01.00
+ * @date:        2021-09-02
+ * @Description: 智能屏交互协议
+ * @ChangeList:  01. 初版
+*/
+/* 标准头文件 */
+
+
+/* 内部头文件 */
+#include "Screen.h"
+
+
+/* 外部头文件 */
+#include "Public.h"
+#include "LockConfig.h"
+#include "Rijndael.h"
+#include "System.h" 
+#include "SystemTim.h"
+
+#include "../DRV/DRV_EXPORT/DRV_74HC4052.h"
+
+#include "../HAL/HAL_EXPORT/HAL_EXPORT.h"
+#include "../HAL/HAL_Voice/HAL_Voice.h"
+#include "../HAL/HAL_UART/HAL_UART.h"
+
+
+#if defined SMART_SCREEN_ON 
+
+/*********************** 外部声明变量和函数************************/
+/**************    为了减少耦合，后续逐步去除外部声音**********/
+
+
+/*************************  0 内部使用宏定义*************************/
+
+#define DRV_SCREEN_UTRT_SWITCH_ON       DRV_74HC0452_UartSelect(HW_74HC4052_UART_LCD)
+#define DRV_SCREEN_UTRT_SWITCH_OFF      DRV_74HC0452_UartSelect(HW_74HC4052_UART_OFF)
+
+/* 测试宏: 交互是否加密  0: 加密  1 : 不加密 */
+#define TEST_SCREEN_NO_ENCRY 0
+
+/* 测试宏: 打印接口封装  0: 不打印  1 : 打印 */
+#define TEST_SCREEN_DEBUG_PRINTF 1
+
+
+/*****************************  1 静态变量*****************************/
+static uint8_t s_u8PowerUp;                     // 上电标记，0: 未上电 非0: 上电记录实际模组上电信息，比如0x55、0x66、0x68
+static uint32_t g_u32ScreenTick;
+static uint32_t s_u32ScreenVersion;             // 屏幕表情版本号
+
+/* 将Map记录的运转值转换成实际消息记录 */
+static ScreenUartType_T s_stScreenUartType = {0};
+
+/* Uart 收发 */
+static ScreenUartInfo_T s_stUartRx = {0};
+
+/* Uart 收发缓存 */
+static volatile uint8_t s_acTxBuf[SCREEN_UART_BUFFER_SIZE];     // 发送缓存
+static volatile ScreenRxInfo_S s_stRxInfo;                      // 接收缓存及信息
+
+/* 记录当前Map 运转值 */
+static bool bTxRxFlag = false; // 发送接收标记
+static ScreenFlowParamMap_T s_stScreenFlow = {EM_SCREEN_FLOW_NONE, 0, 0, 0};
+static const ScreenFlowParamMap_T s_astScreenFlowMap[EM_SCREEN_FLOW_ALL] = 
+{
+    {EM_SCREEN_FLOW0_POWERUP,           SCREEN_POWER_UP,            0,          5},
+    {EM_SCREEN_FLOW1_POWERDOWN,         SCREEN_POWER_DOWN,          1,          3},
+    {EM_SCREEN_FLOW2_SHOW_MOTION,       SCREEN_SHOW_MOTION,         5,          3},
+    {EM_SCREEN_FLOW3_SHOW_COVER,        SCREEN_SHOW_COVER,          6,          3},
+    {EM_SCREEN_FLOW4_SWITCH_VER,        SCREEN_SWITCH_VER,          4,          3},
+    {EM_SCREEN_FLOW5_GET_VER,           SCREEN_GET_VER,             0,          3}, 
+    {EM_SCREEN_FLOW6_SWITCH_BASE,       SCREEN_SWITCH_BASE,         5,          3},
+    {EM_SCREEN_FLOW7_UPDATE,            SCREEN_UPDATE,              15,         3}, 
+    {EM_SCREEN_FLOW8_UPDATE_DATA,       SCREEN_UPDATE_DATA,         255,        10},
+    {EM_SCREEN_FLOW9_FACTORY_RESET,     SCREEN_FACTORY_RESET,       1,         2500},
+};
+
+/***************************** 2  静态函数*****************************/
+
+/****************************************************************************** 
+* 函数名：screen_my_printf
+* 功 能：内部调试打印信息
+* 输 入：void 
+* 输 出：void
+* 返 回：void
+*/ 
+void screen_my_printf(uint8_t u8PrintFlag, uint8_t* pu8Data, uint16_t u16Datalen)
+{
+#if TEST_SCREEN_DEBUG_PRINTF
+    switch(u8PrintFlag)
+    {
+        case 0:
+            my_printf("SCREEN UartTx :");
+            break;
+        case 1:
+            my_printf("SCREEN UartRx :");
+            break;
+        default:
+            return;
+    }
+    
+    for (uint16_t i = 0; i < u16Datalen; i++)
+    {
+        my_printf(" 0x%02x", pu8Data[i]);
+    }
+    
+    my_printf("\n");
+#endif
+    return;
+}
+
+
+/****************************************************************************** 
+* 函数名：screen_uart_tx
+* 功 能：串口数据识别、推送
+* 输 入：void
+* 输 出：void
+* 返 回：void
+*/
+static void screen_uart_status_reset(void)
+{
+    if((0 == s_stScreenFlow.u8Time && EM_SCREEN_FLOW_NONE != s_stScreenFlow.emFlow)
+        || (SCREEN_ACK_NONE != s_stScreenUartType.u8ACK && EM_SCREEN_FLOW_NONE != s_stScreenFlow.emFlow))
+    {
+        memset((void*)&s_stScreenUartType, 0, sizeof(s_stScreenUartType));
+        memset((void*)&s_stUartRx, 0, sizeof(s_stUartRx));
+        memset((void*)&s_stScreenFlow, 0, sizeof(s_stScreenFlow));
+        
+        //s_stScreenUartType.u8ACK = SCREEN_ACK_NONE;
+        s_stScreenFlow.emFlow = EM_SCREEN_FLOW_NONE;
+    }
+
+    return;
+}
+
+
+/****************************************************************************** 
+* 函数名：screen_uart_rx_handler
+* 功 能：screen 串口接收中断
+* 输 入：void 
+* 输 出：void
+* 返 回：uint8_t
+*/ 
+static uint8_t screen_uart_rx_handler(void)
+{
+    uint8_t com_buf = 0;
+	
+	if( E_LCD_UART != HAL_Uart_GetCurDeviceType( LCD_UART_COM ))
+	{
+		return 0;
+	}
+    /* 当回调类型为APP_UART_DATA_READY 且接收串口数据正常时才继续业务接收 */
+    if(UART_SUCCESS == HAL_Uart_PopByteFromQueue( LCD_UART_COM, &com_buf ))
+    {
+        /*
+                    根据缓存计数来确认需要的缓存进行相应的读取 
+                    回调内会判定头4个字节，即加密头的前4字节
+                */
+        switch(s_stUartRx.u16Cnt)
+        {
+            /* 加密头第1 字节 */
+            case 0:
+                /* 无缓存队列时，确认芯片已推送上电信号，并且找加密头的0xAA */
+                if(s_u8PowerUp > 0 && com_buf == (uint8_t)(SCREEN_ENCRY_HEAD >> 8))
+                {
+                    s_stUartRx.acBuf[s_stUartRx.u16Cnt++] = com_buf;
+                }
+                else if(0 == s_u8PowerUp && SCREEN_READY_SIGNAL_NOAES == com_buf)
+                {
+                    /* 确保中间参数完全重置 */
+                    memset((void*)&s_stUartRx, 0, sizeof(s_stUartRx));
+
+                    /* 供电标记为1，确认收到上电信号 */
+                    s_u8PowerUp = com_buf;
+                }
+                else
+                {
+                    memset((void*)&s_stUartRx, 0, sizeof(s_stUartRx));
+                }
+                break;
+                
+            /* 加密头第2 字节 */
+            case 1:
+                /*当缓存队列为1时，判定第一个缓存是否为0xAA，且最新的一个字节头是否为0x66 */
+                if(com_buf == (uint8_t)(SCREEN_ENCRY_HEAD))
+                {
+                    s_stUartRx.acBuf[s_stUartRx.u16Cnt++] = com_buf;
+                }
+                else
+                {
+                    memset((void*)&s_stUartRx, 0, sizeof(s_stUartRx));
+                }
+                break;
+                
+            /* 加密头第3 字节 */
+            case 2:
+                if((com_buf == SCREEN_ENCRY_YES) || (com_buf == SCREEN_ENCRY_NO))
+                {
+                    s_stUartRx.acBuf[s_stUartRx.u16Cnt++] = com_buf;
+                }
+                else
+                {
+                    memset((void*)&s_stUartRx, 0, sizeof(s_stUartRx));
+                }
+                break;
+                
+            /* 加密头第4 字节 */
+            case 3:
+                /*
+                                    第4个字节为加密数据长度 ，加密数据长度为16N(N>0)
+                                    受缓存大小影响，N有上限，即N max = (SIZE-4)/16
+                                    0 == finger_buf_com % FINGER_AES_ENCRY_FIXEDLEN) 16的倍数判定暂时去掉，模组返回非倍数
+                                */
+                if((com_buf > 0) && (com_buf <= (SCREEN_UART_BUFFER_SIZE-SCREEN_ENCRY_FIXED_LEN)))
+                {
+                    s_stUartRx.acBuf[s_stUartRx.u16Cnt++] = com_buf;
+                }
+                else
+                {
+                    memset((void*)&s_stUartRx, 0, sizeof(s_stUartRx));
+                }
+                break;
+                
+            /* 协议数据段 */
+            default:
+                /* 加密数据接收 */
+                s_stUartRx.acBuf[s_stUartRx.u16Cnt++] =  com_buf;
+                break;
+
+        }
+		
+		if ((s_stUartRx.u16Cnt >= SCREEN_ENCRY_FIXED_LEN + SCREEN_PRO_MIN_LEN) && (s_stUartRx.u16Cnt == (s_stUartRx.acBuf[SCREEN_ENCRY_LEN_INDEX] + 4)))
+		{
+		   return 1;
+		}
+		
+    }
+
+    return 0;
+}
+
+
+/****************************************************************************** 
+* 函数名：screen_uart_rx
+* 功 能：应答包串口数据处理及校验
+* 输 入：void
+* 输 出：void
+* 返 回：void
+*/
+static void screen_uart_rx(void)
+{
+	if( 0 != screen_uart_rx_handler() )
+	{
+        /* 
+                判定满足格式 : 缓存长度 =  加密头的长度+ 协议数据长度位记录长度
+            */
+        if ((s_stUartRx.u16Cnt >= SCREEN_ENCRY_FIXED_LEN + SCREEN_PRO_MIN_LEN) && (s_stUartRx.u16Cnt == (s_stUartRx.acBuf[SCREEN_ENCRY_LEN_INDEX] + 4)))
+        {
+            uint16_t u16TotalLen = s_stUartRx.u16Cnt;
+            (void)screen_my_printf(1, (uint8_t*)s_stUartRx.acBuf, (uint32_t)u16TotalLen);
+
+            /* 校验加密头 */
+            if(SCREEN_ENCRY_HEAD != ((uint16_t)(s_stUartRx.acBuf[SCREEN_ENCRY_HEAD_INDEX] << 8) + (uint16_t)(s_stUartRx.acBuf[SCREEN_ENCRY_HEAD_INDEX+1]))
+                || (SCREEN_ENCRY_YES != s_stUartRx.acBuf[SCREEN_ENCRY_HEAD_INDEX+2] && SCREEN_ENCRY_NO != s_stUartRx.acBuf[SCREEN_ENCRY_HEAD_INDEX+2])
+                || (u16TotalLen != ((uint16_t)(s_stUartRx.acBuf[SCREEN_ENCRY_HEAD_INDEX+3]) + SCREEN_ENCRY_FIXED_LEN)))
+            {
+                my_printf("SCREEN UartRx Return, #1 AckCode - ERR \n");
+                s_stScreenUartType.u8ACK = SCREEN_ACK_CHECK_ERR;
+                return;
+            }
+
+            /* 校验数据 */
+            if(SCREEN_PRO_HEAD != ((uint16_t)(s_stUartRx.acBuf[SCREEN_ENCRY_FIXED_LEN+SCREEN_PRO_HEAD_INDEX] << 8) + (uint16_t)(s_stUartRx.acBuf[SCREEN_ENCRY_FIXED_LEN+SCREEN_PRO_HEAD_INDEX+1]))
+                || (SCREEN_PRO_ADDR != ((uint32_t)(s_stUartRx.acBuf[SCREEN_ENCRY_FIXED_LEN+SCREEN_PRO_ADDR_INDEX] << 24)
+                                        + (uint32_t)(s_stUartRx.acBuf[SCREEN_ENCRY_FIXED_LEN+SCREEN_PRO_ADDR_INDEX+1] << 16)
+                                        + (uint32_t)(s_stUartRx.acBuf[SCREEN_ENCRY_FIXED_LEN+SCREEN_PRO_ADDR_INDEX+2] << 8)
+                                        + (uint32_t)(s_stUartRx.acBuf[SCREEN_ENCRY_FIXED_LEN+SCREEN_PRO_ADDR_INDEX+3])))
+                || (SCREEN_RX_TAG != s_stUartRx.acBuf[SCREEN_ENCRY_FIXED_LEN+SCREEN_PRO_TAG_INDEX])
+               )
+            {
+                my_printf("SCREEN UartRx Return, #2 AckCode - ERR \n");
+                s_stScreenUartType.u8ACK = SCREEN_ACK_CHECK_ERR;
+                return;
+            }
+            
+            uint16_t size = (uint16_t)(s_stUartRx.acBuf[SCREEN_ENCRY_FIXED_LEN+SCREEN_PRO_PKG_LEN_INDEX]);
+            size <<= 8;
+            size |= s_stUartRx.acBuf[SCREEN_ENCRY_FIXED_LEN+SCREEN_PRO_PKG_LEN_INDEX+1];
+            if(u16TotalLen != (size + SCREEN_PRO_ORDER_INDEX + SCREEN_ENCRY_FIXED_LEN) || size < 3)
+            {
+                my_printf("SCREEN UartRx Return, #3 AckCode - ERR \n");
+                s_stScreenUartType.u8ACK = SCREEN_ACK_CHECK_ERR;
+                return;
+            }
+
+            uint16_t u16Check = s_stUartRx.acBuf[SCREEN_ENCRY_FIXED_LEN+SCREEN_PRO_PKG_LEN_INDEX]+s_stUartRx.acBuf[SCREEN_ENCRY_FIXED_LEN+SCREEN_PRO_PKG_LEN_INDEX+1];
+            for(uint16_t i = 0; i < size - 2; i++)
+            {
+                u16Check = s_stUartRx.acBuf[SCREEN_ENCRY_FIXED_LEN+SCREEN_PRO_ORDER_INDEX+i];
+            }
+            
+            if (((uint8_t)(u16Check >> 8) == s_stUartRx.acBuf[u16TotalLen - 2]) &&
+                    ((uint8_t)(u16Check) == s_stUartRx.acBuf[u16TotalLen - 1]))
+            {
+                my_printf("SCREEN UartRx Return, #4 AckCode - ERR \n");
+                s_stScreenUartType.u8ACK = SCREEN_ACK_CHECK_ERR;
+                return;
+            }
+            
+            /* 校验正确，成功 */
+            s_stScreenUartType.u8ACK = s_stUartRx.acBuf[SCREEN_PRO_ORDER_INDEX];
+
+            /* SCREEN_SWITCH_VER 获取版本号, 数据长度至少是1字节的确认码+ 4字节的数据长度和2字节的校验和 */
+            if(SCREEN_SWITCH_VER == s_stScreenFlow.u8Pid && size == 7)
+            {
+                s_u32ScreenVersion = (uint32_t)(s_stUartRx.acBuf[SCREEN_PRO_PARAM_INDEX] << 24);
+                s_u32ScreenVersion += (uint32_t)(s_stUartRx.acBuf[SCREEN_PRO_PARAM_INDEX+1] << 16);
+                s_u32ScreenVersion += (uint32_t)(s_stUartRx.acBuf[SCREEN_PRO_PARAM_INDEX+2] << 8);
+                s_u32ScreenVersion += (uint32_t)(s_stUartRx.acBuf[SCREEN_PRO_PARAM_INDEX+3]);
+            }
+            my_printf("SCREEN UartRx Check Suc, AckCode - 0x%x \n", s_stScreenUartType.u8ACK);
+            
+            bTxRxFlag = false;
+        }
+	}
+    
+    /*状态复位*/
+    (void)screen_uart_status_reset();
+    
+    return;
+}
+
+/****************************************************************************** 
+* 函数名：screen_uart_tx
+* 功 能：串口数据识别、推送
+* 输 入：void
+* 输 出：void
+* 返 回：void
+*/
+static void screen_uart_tx(void)
+{
+    /* 未上电，或流程已退出，进行状态复位 */
+    if(0 == s_u8PowerUp 
+        //|| (0 == s_u32ScreenVersion && EM_SCREEN_FLOW0_POWERUP != s_stScreenFlow.emFlow)
+        || (s_stScreenUartType.u8Pid >= EM_SCREEN_FLOW_ALL && s_stScreenFlow.emFlow == EM_SCREEN_FLOW_NONE)
+        || (s_stScreenFlow.emFlow == EM_SCREEN_FLOW_NONE )
+        || (s_stScreenUartType.u16Size > 1024))
+    {
+        (void)screen_uart_status_reset();
+        return;
+    }
+
+    if(bTxRxFlag) { return;}
+    
+    uint16_t u16CheckSum = 0;
+    uint16_t u16RSTXLen = 0;
+
+    /* 每次使用TX、RX 前确保Buf是重置完成的 */
+    uint8_t acBuf[1024] = {0}; // 串口数据接收缓存信息
+    memset((void*)&s_stUartRx, 0, sizeof(s_stUartRx));
+    
+    // 1. 加密协议头, 输出设备无加密需求，暂时写死
+    acBuf[u16RSTXLen++] = (uint8_t)(SCREEN_ENCRY_HEAD >> 8);
+    acBuf[u16RSTXLen++] = (uint8_t)(SCREEN_ENCRY_HEAD);
+    acBuf[u16RSTXLen++] = (uint8_t)(0x00);
+    acBuf[u16RSTXLen++] = (uint8_t)(SCREEN_PRO_MIN_LEN + s_stScreenUartType.u16Size);
+
+    /* 2.消息头 */
+    acBuf[u16RSTXLen++] = (uint8_t)(SCREEN_PRO_HEAD >> 8);
+    acBuf[u16RSTXLen++] = (uint8_t)(SCREEN_PRO_HEAD);
+
+    /* 3. 地址 */
+    acBuf[u16RSTXLen++] = (uint8_t)(SCREEN_PRO_ADDR >> 24);
+    acBuf[u16RSTXLen++] = (uint8_t)(SCREEN_PRO_ADDR >> 16);
+    acBuf[u16RSTXLen++] = (uint8_t)(SCREEN_PRO_ADDR >> 8);
+    acBuf[u16RSTXLen++] = (uint8_t)(SCREEN_PRO_ADDR);
+
+    /* 标识 */
+    acBuf[u16RSTXLen++] = SCREEN_TX_TAG;
+
+    /* 包长 ，包括1字节的指令码+ 2字节的校验和+ N字节的输入参数*/
+    u16CheckSum += acBuf[u16RSTXLen++] = (uint8_t)((s_stScreenUartType.u16Size + 3) >> 8);
+    u16CheckSum += acBuf[u16RSTXLen++] = s_stScreenUartType.u16Size + 3;
+
+    /* 指令*/
+    u16CheckSum += acBuf[u16RSTXLen++] = s_stScreenUartType.u8Pid;
+
+    
+    /* 输入参数 */
+    for (uint8_t i = 0; i < s_stScreenUartType.u16Size; i++)
+    {
+        if(s_stScreenUartType.u16Size <= SCREEN_UART_DATA_SIZE)
+        {
+            u16CheckSum += acBuf[u16RSTXLen++] = s_stScreenUartType.u8Par[i];
+        }
+        else
+        {
+            u16CheckSum += acBuf[u16RSTXLen++] = s_stScreenUartType.pu8Par[i];
+        }
+    }
+    
+    /* 校验位 */
+    acBuf[u16RSTXLen++] = (uint8_t)(u16CheckSum >> 8);
+    acBuf[u16RSTXLen++] = (uint8_t)(u16CheckSum);
+
+    (void)screen_my_printf(0, (uint8_t*)acBuf, u16RSTXLen);
+
+    /* 启动TX */
+    HAL_Uart_TxMessage(LCD_UART_COM,(uint8_t*)acBuf, u16RSTXLen);
+    bTxRxFlag = true;
+    
+    return;
+}
+
+
+/***************************** 3 对外函数*****************************/
+
+/****************************************************************************** 
+* 函数名：SCREEN_PowerUp
+* 功 能：屏幕初始化，锁首次上电，确认模组动画版本，完成版本设置
+* 输 入：void
+* 输 出：void
+* 返 回：void
+*/
+void SCREEN_Init(void)
+{
+    (void)screen_uart_status_reset();
+
+    static bool bNeedInit = true;
+    if(bNeedInit)
+    {        
+        /*  模组供电IO配置为OUT模式*/
+        (void)HAL_EXPORT_PinInit(EM_POW_LCM, DIR_OUT, POLO_RETTAIN);
+        bNeedInit = false;
+    }
+
+    /* 模组上电 -  指纹模组供电低有效 */
+    (void)HAL_EXPORT_PinSet(EM_POW_LCM, OUT_LOW);
+    g_u32ScreenTick = SystemTick;
+
+    #if 0
+    /*   10 * 100ms  大约等待1S左右，需要等指纹模组上电完成*/
+    uint8_t cnt = 50;
+    while(cnt)
+    {
+	    screen_uart_rx();
+        (void)PUBLIC_Delayms(100);
+        if (s_u8PowerUp > 0) break;
+        cnt--;
+    }
+    my_printf("SCREEN_Init  cnt = %d s_u8PowerUp = 0x%x \n", cnt, s_u8PowerUp);
+    #else
+    s_u8PowerUp = 0x55;
+    #endif
+
+    return;
+}
+
+
+/****************************************************************************** 
+* 函数名：SCREEN_WorkCountDown
+* 功 能：提供给外部定时器(每秒调用一次)，用于模块休眠
+                      不调用，模块不再自动休眠，但可以手动休眠
+* 输 入：void 
+* 输 出：void
+* 返 回：uint8_t 返回计数值
+*/ 
+uint8_t SCREEN_WorkCountDown(void)
+{
+    return (s_stScreenFlow.u8Time> 0) ? (s_stScreenFlow.u8Time--) : 0;
+}
+
+/****************************************************************************** 
+* 函数名：SCREEN_GetPowerStatus
+* 功 能：返回电源上电情况
+* 输 入：void
+* 输 出：void
+* 返 回：bool
+*/ 
+bool SCREEN_GetPowerStatus(void)
+{
+    return s_u8PowerUp > 0 ? true : false;
+}
+
+
+/****************************************************************************** 
+* 函数名：SCREEN_PowerUp
+* 功 能：屏幕唤醒，给与屏幕上电，不做模组版本确认及设置
+* 输 入：void
+* 输 出：void
+* 返 回：void
+*/
+void SCREEN_PowerUp(void)
+{
+    my_printf("#SCREEN# PowerUp!\n");
+    SCREEN_Init();
+    return;
+}
+
+/****************************************************************************** 
+* 函数名：SCREEN_PowerDown
+* 功 能：屏幕下电  
+* 输 入：void
+* 输 出：void
+* 返 回：void
+*/
+void SCREEN_PowerDown(void)
+{
+    my_printf("#SCREEN# PowerDown !\n");
+    /* 电源控制PIN 给屏幕下电 */
+    (void)HAL_EXPORT_PinSet(EM_POW_LCM, OUT_HIGH);
+    s_u8PowerUp = 0;
+    
+    /* 关闭串口 */
+	if( E_LCD_UART == HAL_Uart_GetCurDeviceType( LCD_UART_COM ))
+	{
+		HAL_Uart_DeInit( E_LCD_UART );
+		DRV_SCREEN_UTRT_SWITCH_OFF;
+	}
+    
+    return;
+}
+
+/****************************************************************************** 
+* 函数名：SCREEN_GetAckCode
+* 功 能：屏幕下电  
+* 输 入：void
+* 输 出：void
+* 返 回：uint8_t
+*/
+uint8_t SCREEN_GetAckCode(void)
+{
+    return s_stScreenUartType.u8ACK;
+}
+
+/****************************************************************************** 
+* 函数名：SCREEN_OperateReady
+* 功 能：切换串口准备
+* 输 入：void
+* 输 出：void
+* 返 回：void
+*/
+void SCREEN_OperateReady(void)
+{
+    /* 串口切换到SCREEN/LCD/LCM，等待接收指纹模组的上电反馈0x55 */
+    DRV_SCREEN_UTRT_SWITCH_ON;
+    //串口初始化
+	UartCfg_S uartCfg={0};
+	uartCfg.BaudRate = UART_BAUD_RATE_57600;
+	uartCfg.DataBit = DATA_8_BIT;
+	uartCfg.StopBit = STOP_1_BIT;
+	uartCfg.ParityType = PARITY_NONE;
+	uartCfg.RxInerruptEn = INT_ENABLE;
+	uartCfg.TxInerruptEn = INT_DISENABLE;
+	HAL_Uart_ConfigInit( E_LCD_UART, uartCfg );
+    /* 确保上电后1000ms再使用，让屏确定是可以使用的 */
+    if(SystemTick - g_u32ScreenTick <= 30)
+    {
+        PUBLIC_Delayms(10*(30 + g_u32ScreenTick - SystemTick));
+    }
+    
+    return;
+}
+
+/****************************************************************************** 
+* 函数名：SCREEN_SwitchVersion
+* 功 能：切换表情版本
+* 输 入：uint32_t _u32Ex
+* 输 出：void
+* 返 回：void
+*/
+void SCREEN_SwitchVersion(uint32_t _u32Ex)
+{
+    /* 给MAP 记录变量赋值 */
+    memcpy((uint8_t*)&s_stScreenFlow, (uint8_t*)&s_astScreenFlowMap[EM_SCREEN_FLOW4_SWITCH_VER], sizeof(s_stScreenFlow));
+
+    /* 参数准备 */
+    s_stScreenUartType.u8ACK = SCREEN_ACK_NONE;
+    s_stScreenUartType.u8Pid = s_stScreenFlow.u8Pid;
+    s_stScreenUartType.u16Size = s_stScreenFlow.u8Size;
+
+    s_stScreenUartType.u8Par[0] = (uint8_t)(_u32Ex >> 24);
+    s_stScreenUartType.u8Par[1] = (uint8_t)(_u32Ex >> 16);
+    s_stScreenUartType.u8Par[2] = (uint8_t)(_u32Ex >> 8);
+    s_stScreenUartType.u8Par[3] = (uint8_t)(_u32Ex);
+    
+    return;
+}
+
+/****************************************************************************** 
+* 函数名：SCREEN_GetVersion
+* 功 能：获取表情版本
+* 输 入：uint32_t _u32Ex
+* 输 出：void
+* 返 回：void
+*/
+void SCREEN_GetVersion(void)
+{
+    /* 给MAP 记录变量赋值 */
+    memcpy((uint8_t*)&s_stScreenFlow, (uint8_t*)&s_astScreenFlowMap[EM_SCREEN_FLOW5_GET_VER], sizeof(s_stScreenFlow));
+    
+    /* 参数准备 */
+    s_stScreenUartType.u8ACK = SCREEN_ACK_NONE;
+    s_stScreenUartType.u8Pid = s_stScreenFlow.u8Pid;
+    s_stScreenUartType.u16Size = s_stScreenFlow.u8Size;
+
+    return;
+}
+
+/****************************************************************************** 
+* 函数名：SCREEN_ShowMotionPic
+* 功 能：屏幕协议展示动态图片
+* 输 入：uint8_t _u8WrapCnt, uint32 _u32Ex
+* 输 出：void
+* 返 回：void
+*/
+void SCREEN_ShowMotionPic(uint8_t _u8WrapCnt, uint32_t _u32Ex)
+{
+    /* 给MAP 记录变量赋值 */
+    memcpy((uint8_t*)&s_stScreenFlow, (uint8_t*)&s_astScreenFlowMap[EM_SCREEN_FLOW2_SHOW_MOTION], sizeof(s_stScreenFlow));
+
+    /* 参数准备 */
+    s_stScreenUartType.u8ACK = SCREEN_ACK_NONE;
+    s_stScreenUartType.u8Pid = s_stScreenFlow.u8Pid;
+    s_stScreenUartType.u16Size = s_stScreenFlow.u8Size;
+
+    s_stScreenUartType.u8Par[0] = _u8WrapCnt;
+    s_stScreenUartType.u8Par[1] = (uint8_t)(_u32Ex >> 24);
+    s_stScreenUartType.u8Par[2] = (uint8_t)(_u32Ex >> 16);
+    s_stScreenUartType.u8Par[3] = (uint8_t)(_u32Ex >> 8);
+    s_stScreenUartType.u8Par[4] = (uint8_t)(_u32Ex);
+
+    return;
+}
+
+/****************************************************************************** 
+* 函数名：SCREEN_ShowCoverPic
+* 功 能：屏幕协议展示图层图片
+* 输 入：void
+* 输 出：void
+* 返 回：void
+*/
+void SCREEN_ShowCoverPic(uint8_t _u8WrapCnt, uint8_t _u8Scene, uint32_t _u32Ex)
+{
+    /* 给MAP 记录变量赋值 */
+    memcpy((uint8_t*)&s_stScreenFlow, (uint8_t*)&s_astScreenFlowMap[EM_SCREEN_FLOW3_SHOW_COVER], sizeof(s_stScreenFlow));
+    
+    /* 参数准备 */
+    s_stScreenUartType.u8ACK = SCREEN_ACK_NONE;
+    s_stScreenUartType.u8Pid = s_stScreenFlow.u8Pid;
+    s_stScreenUartType.u16Size = s_stScreenFlow.u8Size;
+
+    s_stScreenUartType.u8Par[0] = _u8WrapCnt;
+    s_stScreenUartType.u8Par[1] = _u8Scene;
+    s_stScreenUartType.u8Par[2] = (uint8_t)(_u32Ex >> 24);
+    s_stScreenUartType.u8Par[3] = (uint8_t)(_u32Ex >> 16);
+    s_stScreenUartType.u8Par[4] = (uint8_t)(_u32Ex >> 8);
+    s_stScreenUartType.u8Par[5] = (uint8_t)(_u32Ex);
+
+    return;
+}
+
+/****************************************************************************** 
+* 函数名：SCREEN_SwitchBase
+* 功 能：切换基础屏显动画
+* 输 入：uint8_t _u8WrapCnt, uint32 _u32Ex
+* 输 出：void
+* 返 回：void
+*/
+void SCREEN_SwitchBase(uint8_t _u8WrapCnt, uint32_t _u32Ex)
+{
+    /* 给MAP 记录变量赋值 */
+    memcpy((uint8_t*)&s_stScreenFlow, (uint8_t*)&s_astScreenFlowMap[EM_SCREEN_FLOW6_SWITCH_BASE], sizeof(s_stScreenFlow));
+
+    /* 参数准备 */
+    s_stScreenUartType.u8ACK = SCREEN_ACK_NONE;
+    s_stScreenUartType.u8Pid = s_stScreenFlow.u8Pid;
+    s_stScreenUartType.u16Size = s_stScreenFlow.u8Size;
+
+    s_stScreenUartType.u8Par[0] = _u8WrapCnt;
+    s_stScreenUartType.u8Par[1] = (uint8_t)(_u32Ex >> 24);
+    s_stScreenUartType.u8Par[2] = (uint8_t)(_u32Ex >> 16);
+    s_stScreenUartType.u8Par[3] = (uint8_t)(_u32Ex >> 8);
+    s_stScreenUartType.u8Par[4] = (uint8_t)(_u32Ex);
+
+    return;
+}
+
+/****************************************************************************** 
+* 函数名：SCREEN_ApplyForUpdate
+* 功 能：升级动作发起
+* 输 入：uint8_t _au8Ex[15]
+* 输 出：void
+* 返 回：void
+*/
+void SCREEN_ApplyForUpdate(uint8_t _au8Ex[15])
+{
+    /* 给MAP 记录变量赋值 */
+    memcpy((uint8_t*)&s_stScreenFlow, (uint8_t*)&s_astScreenFlowMap[EM_SCREEN_FLOW7_UPDATE], sizeof(s_stScreenFlow));
+
+    /* 参数准备 */
+    s_stScreenUartType.u8ACK = SCREEN_ACK_NONE;
+    s_stScreenUartType.u8Pid = s_stScreenFlow.u8Pid;
+    s_stScreenUartType.u16Size = s_stScreenFlow.u8Size;
+
+    for(uint8_t i = 0; i < 15; i++)
+    {
+        s_stScreenUartType.u8Par[i] = _au8Ex[i];
+    }
+
+    return;
+}
+
+/****************************************************************************** 
+* 函数名：SCREEN_StartToUpdate
+* 功 能：发起升级，推送升级包
+* 输 入：uint8_t* _pu8Ex, uint16_t _u16Len
+* 输 出：void
+* 返 回：void
+*/
+void SCREEN_StartToUpdate(uint8_t* _pu8Ex, uint16_t _u16Len)
+{
+    /* 给MAP 记录变量赋值 */
+    memcpy((uint8_t*)&s_stScreenFlow, (uint8_t*)&s_astScreenFlowMap[EM_SCREEN_FLOW8_UPDATE_DATA], sizeof(s_stScreenFlow));
+
+    /* 参数准备 */
+    s_stScreenUartType.u8ACK = SCREEN_ACK_NONE;
+    s_stScreenUartType.u8Pid = s_stScreenFlow.u8Pid;
+    s_stScreenUartType.u16Size = _u16Len;
+    s_stScreenUartType.pu8Par = _pu8Ex;
+
+    return;
+}
+
+/****************************************************************************** 
+* 函数名：SCREEN_FactoryReset
+* 功 能：恢复出厂
+* 输 入：uint8_t _u8Ex
+* 输 出：void
+* 返 回：void
+*/
+void SCREEN_FactoryReset(uint8_t _u8Ex)
+{
+    /* 给MAP 记录变量赋值 */
+    memcpy((uint8_t*)&s_stScreenFlow, (uint8_t*)&s_astScreenFlowMap[EM_SCREEN_FLOW9_FACTORY_RESET], sizeof(s_stScreenFlow));
+
+    /* 参数准备 */
+    s_stScreenUartType.u8ACK = SCREEN_ACK_NONE;
+    s_stScreenUartType.u8Pid = s_stScreenFlow.u8Pid;
+    s_stScreenUartType.u16Size = s_stScreenFlow.u8Size;
+
+    s_stScreenUartType.u8Par[0] = _u8Ex;
+
+    return;
+}
+
+
+/****************************************************************************** 
+* 函数名：SCREEN_Scan
+* 功 能：屏幕协议动作扫描
+* 输 入：void
+* 输 出：void
+* 返 回：void
+*/
+void SCREEN_Scan(void)
+{
+    /* 处理数据TX */
+    (void)screen_uart_tx();
+
+    /* 处理数据RX */
+    (void)screen_uart_rx();
+
+    return;
+}
+
+#endif

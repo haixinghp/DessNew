@@ -1,0 +1,1017 @@
+/********************************************************************************************************************
+ * @file:        DRV_BLE.c
+ * @author:      gushengchi
+ * @version:     V01.00
+ * @date:        2021-08-30
+ * @Description: 蓝牙驱动功能文件
+ * @ChangeList:  01. 初版
+*********************************************************************************************************************/
+  
+/*-------------------------------------------------文件包含---------------------------------------------------------*/
+#include "DRV_BLE.h"  
+#include "Public.h"
+#include "LockConfig.h"
+#include <gap.h>
+#include <gap_adv.h>
+#include <gap_bond_le.h>
+#include <trace.h>
+#include <profile_server.h>
+#include <gap_msg.h>
+#include <app_task.h>
+#include <gap_conn_le.h>
+#include "lock_ble_service.h"
+#include "ota_service.h"
+#include "rtl876x_wdg.h"
+#include "dfu_api.h"
+#if F_BT_ANCS_CLIENT_SUPPORT
+#include <ancs_client.h>
+#include <ancs.h>
+#endif
+/*-------------------------------------------------宏定义-----------------------------------------------------------*/
+
+#ifdef BLE_ID2_AES_ENC
+#define ADMIN_MODE_ADV_NAME ("Dsmn_")
+#define NONE_REGISTERED_ADV_NAME ("dsmn_")
+#define REGISTERED_ADV_NAME ("LOCK_")
+#else
+#define OLD_APP_MODE_ADV_NAME ("REGLOCK_")
+#define OLD_GENERAL_ADV_NAME ("LOCK_")
+#endif
+/*-------------------------------------------------枚举定义---------------------------------------------------------*/
+
+
+/*-------------------------------------------------常量定义---------------------------------------------------------*/
+ 
+
+/*-------------------------------------------------全局变量定义-----------------------------------------------------*/         
+app_fifo_t    AppBleFifo;    //串口队列 
+
+T_SERVER_ID g_ota_service_id; //OTA服务ID
+bool g_switch_into_ota_pending = false; //true 切换到OTA，false不切换
+
+/*-------------------------------------------------局部变量定义-----------------------------------------------------*/
+static uint16_t   m_conn_handle  = 0;    /**< Handle of the current connection. */
+static DRV_BlePtr s_ptrBleHandler = NULL; // 蓝牙注册函数，处理其他应用 业务
+static DRV_BlePtr s_ptrBleConnectHandler = NULL; // 蓝牙连接处理回调注册函数，
+/*-------------------------------------------------函数声明---------------------------------------------------------*/
+static void DRV_BleRxHandler(uint8_t *ble_rx_data,uint16_t ble_rx_i);
+T_APP_RESULT app_gap_callback(uint8_t cb_type, void *p_cb_data);
+T_APP_RESULT app_profile_callback(T_SERVER_ID service_id, void *p_data);
+/*-------------------------------------------------函数定义---------------------------------------------------------*/
+
+
+
+
+
+
+/** @defgroup  PERIPH_APP Peripheral Application
+    * @brief This file handles BLE peripheral application routines.
+    * @{
+    */
+/*============================================================================*
+ *                              Variables
+ *============================================================================*/
+/** @addtogroup  PERIPH_SEVER_CALLBACK Profile Server Callback Event Handler
+    * @brief Handle profile server callback event
+    * @{
+    */
+
+
+/** @} */ /* End of group PERIPH_SEVER_CALLBACK */
+/** @defgroup  PERIPH_GAP_MSG GAP Message Handler
+    * @brief Handle GAP Message
+    * @{
+    */
+T_GAP_DEV_STATE gap_dev_state = {0, 0, 0, 0};                 /**< GAP device state */
+T_GAP_CONN_STATE gap_conn_state = GAP_CONN_STATE_DISCONNECTED; /**< GAP connection state */
+
+/*============================================================================*
+ *                              Functions
+ *============================================================================*/
+
+
+/** @defgroup  PERIPH_DEMO_MAIN Peripheral Main
+    * @brief Main file to initialize hardware and BT stack and start task scheduling
+    * @{
+    */
+
+/*============================================================================*
+ *                              Constants
+ *============================================================================*/
+/** @brief  Default minimum advertising interval when device is discoverable (units of 625us, 160=100ms) */
+#define DEFAULT_ADVERTISING_INTERVAL_MIN            640
+/** @brief  Default maximum advertising interval */
+#define DEFAULT_ADVERTISING_INTERVAL_MAX            640
+
+
+/*============================================================================*
+ *                              Variables
+ *============================================================================*/
+
+/** @brief  GAP - scan response data (max size = 31 bytes) */
+static const uint8_t scan_rsp_data[31] =
+{
+	0x11,
+	GAP_ADTYPE_128BIT_COMPLETE,
+	0x9E,0xCA,0xDC,0x24,0x0E,0xE5,0xA9,0xE0,0x93,0xF3,0xA3,0xB5,0x01,0x00,0x40,0x6E,
+};
+
+/*============================================================================*
+ *                              Functions
+ *============================================================================*/
+
+static uint8_t hex_to_char(uint8_t temp)
+{
+	uint8_t dst;
+	if(temp<10)
+	{
+		dst=temp+'0';
+	}
+	else
+	{
+		dst=temp-10+'a';
+	}
+	return dst;
+}
+
+
+/***************************************************************************************
+**函数名:       dsm_lock_advset
+**功能描述:     广播名设置
+**输入参数:     
+uint8_t *adv,  广播数据包
+uint8_t *advName, 广播名
+uint8_t advNameLen 广播名长度
+**输出参数:     
+uint8_t 广播长度
+**备注:         
+static uint8_t ADV_DATA[] =
+{
+    0x02, //长度
+    GAP_ADTYPE_FLAGS, //0x01
+    GAP_ADTYPE_FLAGS_GENERAL | GAP_ADTYPE_FLAGS_BREDR_NOT_SUPPORTED, //0x02+0x04= 0x06
+
+    0x08,//长度
+    GAP_ADTYPE_LOCAL_NAME_COMPLETE, //0x90
+    'B', 'L', 'E', '_', 'O', 'T', 'A' //蓝牙名称
+};
+****************************************************************************************/
+static uint8_t dsm_lock_advset(uint8_t *adv,uint8_t *advName,uint8_t advNameLen)
+{	
+	uint8_t bt_addr[6];
+	uint8_t i=0; 
+	DRV_InterGetMacAddr(bt_addr);				//获取MAC
+	uint8_t data[30]={0x02,0x01,0x06,0x0A,0x09}; //广播
+	data[3]=1+advNameLen+4;  //设备名长度
+	memcpy(&data[5],advName,advNameLen);  //改设备名
+	i=4+data[3]-4; //
+	data[i++]=hex_to_char(bt_addr[4]>>4);
+	data[i++]=hex_to_char(bt_addr[4]&0x0f);
+	data[i++]=hex_to_char(bt_addr[5]>>4);
+	data[i++]=hex_to_char(bt_addr[5]&0x0f);	
+	data[i++]=0x08; //长度
+	data[i++]=0xFF;
+	data[i++]=bt_addr[5];
+	data[i++]=bt_addr[4];
+	data[i++]=bt_addr[3];
+	data[i++]=bt_addr[2];
+	data[i++]=bt_addr[1];
+	data[i++]=bt_addr[0];
+	data[i++]=0X01; //NRF有，这个是啥不清楚
+	memcpy(adv,data,i);
+	return i;
+}
+
+
+/**
+  * @brief  Initialize peripheral and gap bond manager related parameters
+  * @return void
+  */
+void app_le_gap_init(DRV_BLE_ADV_MODE mode)
+{
+
+    /* Device name and device appearance */
+	uint8_t  device_name[GAP_DEVICE_NAME_LEN] = {0};
+    uint16_t appearance = GAP_GATT_APPEARANCE_UNKNOWN;
+    uint8_t  slave_init_mtu_req = false;
+	
+	/* add by dyh change adv */
+	uint8_t adv_data[30]={0}; 
+	uint8_t adv_data_len=0;
+#ifdef BLE_ID2_AES_ENC
+	if(ADMIN_MODE==mode)	//设置模式
+	{
+		adv_data_len=dsm_lock_advset(adv_data,(uint8_t *)ADMIN_MODE_ADV_NAME,strlen(ADMIN_MODE_ADV_NAME));
+	}
+	else if(NONE_REGISTERED==mode)  //未注册模式
+	{
+		adv_data_len=dsm_lock_advset(adv_data,(uint8_t *)NONE_REGISTERED_ADV_NAME,strlen(NONE_REGISTERED_ADV_NAME));	
+	}
+	else  //已注册一般模式
+	{
+		adv_data_len=dsm_lock_advset(adv_data,(uint8_t *)REGISTERED_ADV_NAME,strlen(REGISTERED_ADV_NAME));
+	}
+#else	
+	if(ADMIN_MODE==mode)
+	{
+		adv_data_len=dsm_lock_advset(adv_data,(uint8_t *)OLD_APP_MODE_ADV_NAME,strlen(OLD_APP_MODE_ADV_NAME));
+	}
+	else 
+	{
+		adv_data_len=dsm_lock_advset(adv_data,(uint8_t *)OLD_GENERAL_ADV_NAME,strlen(OLD_GENERAL_ADV_NAME));
+	}
+#endif	
+	memcpy(device_name,&adv_data[5],adv_data[3]-1);	
+	
+    /* Advertising parameters */
+    uint8_t  adv_evt_type = GAP_ADTYPE_ADV_IND;
+    uint8_t  adv_direct_type = GAP_REMOTE_ADDR_LE_PUBLIC;
+    uint8_t  adv_direct_addr[GAP_BD_ADDR_LEN] = {0};
+    uint8_t  adv_chann_map = GAP_ADVCHAN_ALL;
+    uint8_t  adv_filter_policy = GAP_ADV_FILTER_ANY;
+    uint16_t adv_int_min = DEFAULT_ADVERTISING_INTERVAL_MIN;
+    uint16_t adv_int_max = DEFAULT_ADVERTISING_INTERVAL_MAX;
+
+    /* GAP Bond Manager parameters */
+    uint8_t  auth_pair_mode = GAP_PAIRING_MODE_PAIRABLE;
+    uint16_t auth_flags = GAP_AUTHEN_BIT_BONDING_FLAG;
+    uint8_t  auth_io_cap = GAP_IO_CAP_NO_INPUT_NO_OUTPUT;
+    uint8_t  auth_oob = false;
+    uint8_t  auth_use_fix_passkey = false;
+    uint32_t auth_fix_passkey = 0;
+#if F_BT_ANCS_CLIENT_SUPPORT
+    uint8_t  auth_sec_req_enable = true;
+#else
+    uint8_t  auth_sec_req_enable = false;
+#endif
+    uint16_t auth_sec_req_flags = GAP_AUTHEN_BIT_BONDING_FLAG;
+
+    /* Set device name and device appearance */
+	le_set_gap_param(GAP_PARAM_DEVICE_NAME, GAP_DEVICE_NAME_LEN, device_name);
+    le_set_gap_param(GAP_PARAM_APPEARANCE, sizeof(appearance), &appearance);
+    le_set_gap_param(GAP_PARAM_SLAVE_INIT_GATT_MTU_REQ, sizeof(slave_init_mtu_req),
+                     &slave_init_mtu_req);
+
+    /* Set advertising parameters */
+    le_adv_set_param(GAP_PARAM_ADV_EVENT_TYPE, sizeof(adv_evt_type), &adv_evt_type);
+    le_adv_set_param(GAP_PARAM_ADV_DIRECT_ADDR_TYPE, sizeof(adv_direct_type), &adv_direct_type);
+    le_adv_set_param(GAP_PARAM_ADV_DIRECT_ADDR, sizeof(adv_direct_addr), adv_direct_addr);
+    le_adv_set_param(GAP_PARAM_ADV_CHANNEL_MAP, sizeof(adv_chann_map), &adv_chann_map);
+    le_adv_set_param(GAP_PARAM_ADV_FILTER_POLICY, sizeof(adv_filter_policy), &adv_filter_policy);
+    le_adv_set_param(GAP_PARAM_ADV_INTERVAL_MIN, sizeof(adv_int_min), &adv_int_min);
+    le_adv_set_param(GAP_PARAM_ADV_INTERVAL_MAX, sizeof(adv_int_max), &adv_int_max);
+	le_adv_set_param(GAP_PARAM_ADV_DATA, adv_data_len, (void *)adv_data);
+	
+   
+	
+    le_adv_set_param(GAP_PARAM_SCAN_RSP_DATA, sizeof(scan_rsp_data), (void *)scan_rsp_data);
+
+    /* Setup the GAP Bond Manager */
+    gap_set_param(GAP_PARAM_BOND_PAIRING_MODE, sizeof(auth_pair_mode), &auth_pair_mode);
+    gap_set_param(GAP_PARAM_BOND_AUTHEN_REQUIREMENTS_FLAGS, sizeof(auth_flags), &auth_flags);
+    gap_set_param(GAP_PARAM_BOND_IO_CAPABILITIES, sizeof(auth_io_cap), &auth_io_cap);
+    gap_set_param(GAP_PARAM_BOND_OOB_ENABLED, sizeof(auth_oob), &auth_oob);
+    le_bond_set_param(GAP_PARAM_BOND_FIXED_PASSKEY, sizeof(auth_fix_passkey), &auth_fix_passkey);
+    le_bond_set_param(GAP_PARAM_BOND_FIXED_PASSKEY_ENABLE, sizeof(auth_use_fix_passkey),
+                      &auth_use_fix_passkey);
+    le_bond_set_param(GAP_PARAM_BOND_SEC_REQ_ENABLE, sizeof(auth_sec_req_enable), &auth_sec_req_enable);
+    le_bond_set_param(GAP_PARAM_BOND_SEC_REQ_REQUIREMENT, sizeof(auth_sec_req_flags),
+                      &auth_sec_req_flags);
+
+    /* register gap message callback */
+    le_register_app_cb(app_gap_callback);
+}
+
+void DRV_BLE_UpdataNeme(DRV_BLE_ADV_MODE mode)
+{
+	    /* Device name and device appearance */
+    uint8_t  device_name[GAP_DEVICE_NAME_LEN] = {0};
+    uint16_t appearance = GAP_GATT_APPEARANCE_UNKNOWN;
+    uint8_t  slave_init_mtu_req = false;
+	
+	/* add by dyh change adv */
+	uint8_t adv_data[30]={0}; 
+	uint8_t adv_data_len=0;
+#ifdef BLE_ID2_AES_ENC
+	if(ADMIN_MODE==mode)	//设置模式
+	{
+		adv_data_len=dsm_lock_advset(adv_data,(uint8_t *)ADMIN_MODE_ADV_NAME,strlen(ADMIN_MODE_ADV_NAME));
+	}
+	else if(NONE_REGISTERED==mode)  //未注册模式
+	{
+		adv_data_len=dsm_lock_advset(adv_data,(uint8_t *)NONE_REGISTERED_ADV_NAME,strlen(NONE_REGISTERED_ADV_NAME));
+	}
+	else  //已注册一般模式
+	{
+		adv_data_len=dsm_lock_advset(adv_data,(uint8_t *)REGISTERED_ADV_NAME,strlen(REGISTERED_ADV_NAME));
+	}
+#else	
+	if(ADMIN_MODE==mode)
+	{
+		adv_data_len=dsm_lock_advset(adv_data,(uint8_t *)OLD_APP_MODE_ADV_NAME,strlen(OLD_APP_MODE_ADV_NAME));
+	}
+	else 
+	{
+		adv_data_len=dsm_lock_advset(adv_data,(uint8_t *)OLD_GENERAL_ADV_NAME,strlen(OLD_GENERAL_ADV_NAME));
+	}
+#endif	
+	memcpy(device_name,&adv_data[5],adv_data[3]-1);	
+    le_adv_set_param(GAP_PARAM_ADV_DATA, adv_data_len, (void *)adv_data);
+	le_set_gap_param(GAP_PARAM_DEVICE_NAME, GAP_DEVICE_NAME_LEN, device_name);
+	T_GAP_DEV_STATE state;
+    le_get_gap_param(GAP_PARAM_DEV_STATE, &state);
+    if (state.gap_adv_state == GAP_ADV_STATE_ADVERTISING)
+    {
+		
+        le_adv_update_param();
+    }
+}
+
+/**
+ * @brief  Add GATT services and register callbacks
+ * @return void
+ */
+void app_le_profile_init(void)
+{
+#if 1
+    server_init(3);
+	
+#else
+	server_init(2);
+#endif
+	lock_ble_service_add_service(app_profile_callback);	
+	g_ota_service_id = ota_add_service(app_profile_callback); //添加OTA服务
+    server_register_app_cb(app_profile_callback);
+#if F_BT_ANCS_CLIENT_SUPPORT
+    client_init(1);
+    ancs_init(APP_MAX_LINKS);
+#endif
+}
+/**
+ * @brief    Handle msg GAP_MSG_LE_DEV_STATE_CHANGE
+ * @note     All the gap device state events are pre-handled in this function.
+ *           Then the event handling function shall be called according to the new_state
+ * @param[in] new_state  New gap device state
+ * @param[in] cause GAP device state change cause
+ * @return   void
+ * 备注      设备状态改变Device state change
+ */
+void app_handle_dev_state_evt(T_GAP_DEV_STATE new_state, uint16_t cause)
+{
+    APP_PRINT_INFO3("app_handle_dev_state_evt: init state %d, adv state %d, cause 0x%x",
+                    new_state.gap_init_state, new_state.gap_adv_state, cause);
+    if (gap_dev_state.gap_init_state != new_state.gap_init_state)
+    {
+        if (new_state.gap_init_state == GAP_INIT_STATE_STACK_READY)
+        {
+            APP_PRINT_INFO0("GAP stack ready");
+            /*stack ready*/
+			#ifdef BLE_ADVERTISING
+            le_adv_start();
+			#endif
+        }
+    }
+
+    if (gap_dev_state.gap_adv_state != new_state.gap_adv_state)
+    {
+        if (new_state.gap_adv_state == GAP_ADV_STATE_IDLE)
+        {
+            if (new_state.gap_adv_sub_state == GAP_ADV_TO_IDLE_CAUSE_CONN)
+            {
+                APP_PRINT_INFO0("GAP adv stoped: because connection created");
+            }
+            else
+            {
+                APP_PRINT_INFO0("GAP adv stoped");
+            }
+        }
+        else if (new_state.gap_adv_state == GAP_ADV_STATE_ADVERTISING)
+        {
+            APP_PRINT_INFO0("GAP adv start");
+        }
+    }
+
+    gap_dev_state = new_state;
+}
+
+/**
+ * @brief    Handle msg GAP_MSG_LE_CONN_STATE_CHANGE
+ * @note     All the gap conn state events are pre-handled in this function.
+ *           Then the event handling function shall be called according to the new_state
+ * @param[in] conn_id Connection ID
+ * @param[in] new_state  New gap connection state
+ * @param[in] disc_cause Use this cause when new_state is GAP_CONN_STATE_DISCONNECTED
+ * @return   void
+ * 备注      连接状态改变
+ */
+void app_handle_conn_state_evt(uint8_t conn_id, T_GAP_CONN_STATE new_state, uint16_t disc_cause)
+{
+    APP_PRINT_INFO4("app_handle_conn_state_evt: conn_id %d old_state %d new_state %d, disc_cause 0x%x",
+                    conn_id, gap_conn_state, new_state, disc_cause);
+    switch (new_state)
+    {
+    case GAP_CONN_STATE_DISCONNECTED:
+        {
+            if ((disc_cause != (HCI_ERR | HCI_ERR_REMOTE_USER_TERMINATE))
+                && (disc_cause != (HCI_ERR | HCI_ERR_LOCAL_HOST_TERMINATE)))
+            {
+                APP_PRINT_ERROR1("app_handle_conn_state_evt: connection lost cause 0x%x", disc_cause);
+            }
+            if (g_switch_into_ota_pending)
+            {
+				DRV_InterGenerateStopOta(); //关闭OTA
+                g_switch_into_ota_pending = false;
+                dfu_switch_to_ota_mode();
+                WDG_SystemReset(RESET_ALL_EXCEPT_AON, DFU_SWITCH_TO_OTA);
+            }
+            else
+            {
+                le_adv_start();
+            }
+        }
+		my_printf("BLE_GAP_EVT_DISCONNECTED\n");
+		m_conn_handle =0;//蓝牙断开
+        break;
+
+    case GAP_CONN_STATE_CONNECTED:
+        {
+            uint16_t conn_interval;
+            uint16_t conn_latency;
+            uint16_t conn_supervision_timeout;
+            uint8_t  remote_bd[6];
+            T_GAP_REMOTE_ADDR_TYPE remote_bd_type;
+			my_printf("BLE_GAP_EVT_CONNECTED\n");
+			m_conn_handle =1; //蓝牙连接
+            le_get_conn_param(GAP_PARAM_CONN_INTERVAL, &conn_interval, conn_id);
+            le_get_conn_param(GAP_PARAM_CONN_LATENCY, &conn_latency, conn_id);
+            le_get_conn_param(GAP_PARAM_CONN_TIMEOUT, &conn_supervision_timeout, conn_id);
+            le_get_conn_addr(conn_id, remote_bd, &remote_bd_type);
+            APP_PRINT_INFO5("GAP_CONN_STATE_CONNECTED:remote_bd %s, remote_addr_type %d, conn_interval 0x%x, conn_latency 0x%x, conn_supervision_timeout 0x%x",
+                            TRACE_BDADDR(remote_bd), remote_bd_type,
+                            conn_interval, conn_latency, conn_supervision_timeout);
+			if(NULL != s_ptrBleConnectHandler)
+			{
+				s_ptrBleConnectHandler();
+			}
+        }
+        break;
+
+    default:
+        break;
+    }
+    gap_conn_state = new_state;
+}
+
+/**
+ * @brief    Handle msg GAP_MSG_LE_AUTHEN_STATE_CHANGE
+ * @note     All the gap authentication state events are pre-handled in this function.
+ *           Then the event handling function shall be called according to the new_state
+ * @param[in] conn_id Connection ID
+ * @param[in] new_state  New authentication state
+ * @param[in] cause Use this cause when new_state is GAP_AUTHEN_STATE_COMPLETE
+ * @return   void
+ * 备注      连接状态改变
+ */
+void app_handle_authen_state_evt(uint8_t conn_id, uint8_t new_state, uint16_t cause)
+{
+    APP_PRINT_INFO2("app_handle_authen_state_evt:conn_id %d, cause 0x%x", conn_id, cause);
+
+    switch (new_state)
+    {
+    case GAP_AUTHEN_STATE_STARTED:
+        {
+            APP_PRINT_INFO0("app_handle_authen_state_evt: GAP_AUTHEN_STATE_STARTED");
+        }
+        break;
+
+    case GAP_AUTHEN_STATE_COMPLETE:
+        {
+            if (cause == GAP_SUCCESS)
+            {
+#if F_BT_ANCS_CLIENT_SUPPORT
+                ancs_start_discovery(conn_id);
+#endif
+                APP_PRINT_INFO0("app_handle_authen_state_evt: GAP_AUTHEN_STATE_COMPLETE pair success");
+
+            }
+            else
+            {
+                APP_PRINT_INFO0("app_handle_authen_state_evt: GAP_AUTHEN_STATE_COMPLETE pair failed");
+            }
+        }
+        break;
+
+    default:
+        {
+            APP_PRINT_ERROR1("app_handle_authen_state_evt: unknown newstate %d", new_state);
+        }
+        break;
+    }
+}
+
+/**
+ * @brief    Handle msg GAP_MSG_LE_CONN_MTU_INFO
+ * @note     This msg is used to inform APP that exchange mtu procedure is completed.
+ * @param[in] conn_id Connection ID
+ * @param[in] mtu_size  New mtu size
+ * @return   void
+ */
+void app_handle_conn_mtu_info_evt(uint8_t conn_id, uint16_t mtu_size)
+{
+    APP_PRINT_INFO2("app_handle_conn_mtu_info_evt: conn_id %d, mtu_size %d", conn_id, mtu_size);
+}
+
+/**
+ * @brief    Handle msg GAP_MSG_LE_CONN_PARAM_UPDATE
+ * @note     All the connection parameter update change  events are pre-handled in this function.
+ * @param[in] conn_id Connection ID
+ * @param[in] status  New update state
+ * @param[in] cause Use this cause when status is GAP_CONN_PARAM_UPDATE_STATUS_FAIL
+ * @return   void
+ * 备注      连接参数改变
+ */
+void app_handle_conn_param_update_evt(uint8_t conn_id, uint8_t status, uint16_t cause)
+{
+    switch (status)
+    {
+    case GAP_CONN_PARAM_UPDATE_STATUS_SUCCESS:
+        {
+            uint16_t conn_interval;
+            uint16_t conn_slave_latency;
+            uint16_t conn_supervision_timeout;
+
+            le_get_conn_param(GAP_PARAM_CONN_INTERVAL, &conn_interval, conn_id);
+            le_get_conn_param(GAP_PARAM_CONN_LATENCY, &conn_slave_latency, conn_id);
+            le_get_conn_param(GAP_PARAM_CONN_TIMEOUT, &conn_supervision_timeout, conn_id);
+            APP_PRINT_INFO3("app_handle_conn_param_update_evt update success:conn_interval 0x%x, conn_slave_latency 0x%x, conn_supervision_timeout 0x%x",
+                            conn_interval, conn_slave_latency, conn_supervision_timeout);
+        }
+        break;
+
+    case GAP_CONN_PARAM_UPDATE_STATUS_FAIL:
+        {
+            APP_PRINT_ERROR1("app_handle_conn_param_update_evt update failed: cause 0x%x", cause);
+        }
+        break;
+
+    case GAP_CONN_PARAM_UPDATE_STATUS_PENDING:
+        {
+            APP_PRINT_INFO0("app_handle_conn_param_update_evt update pending.");
+        }
+        break;
+
+    default:
+        break;
+    }
+}
+
+/**
+ * @brief    All the BT GAP MSG are pre-handled in this function.
+ * @note     Then the event handling function shall be called according to the
+ *           subtype of T_IO_MSG
+ * @param[in] p_gap_msg Pointer to GAP msg
+ * @return   void
+ * 备注      蓝牙消息处理cese
+ */
+void app_handle_gap_msg(T_IO_MSG *p_gap_msg)
+{
+    T_LE_GAP_MSG gap_msg;
+    uint8_t conn_id;
+    memcpy(&gap_msg, &p_gap_msg->u.param, sizeof(p_gap_msg->u.param));
+
+    APP_PRINT_TRACE1("app_handle_gap_msg: subtype %d", p_gap_msg->subtype);
+    switch (p_gap_msg->subtype)
+    {
+    case GAP_MSG_LE_DEV_STATE_CHANGE:
+        {
+            app_handle_dev_state_evt(gap_msg.msg_data.gap_dev_state_change.new_state,
+                                     gap_msg.msg_data.gap_dev_state_change.cause);
+        }
+        break;
+
+    case GAP_MSG_LE_CONN_STATE_CHANGE:
+        {
+            app_handle_conn_state_evt(gap_msg.msg_data.gap_conn_state_change.conn_id,
+                                      (T_GAP_CONN_STATE)gap_msg.msg_data.gap_conn_state_change.new_state,
+                                      gap_msg.msg_data.gap_conn_state_change.disc_cause);
+        }
+        break;
+
+    case GAP_MSG_LE_CONN_MTU_INFO:
+        {
+            app_handle_conn_mtu_info_evt(gap_msg.msg_data.gap_conn_mtu_info.conn_id,
+                                         gap_msg.msg_data.gap_conn_mtu_info.mtu_size);
+        }
+        break;
+
+    case GAP_MSG_LE_CONN_PARAM_UPDATE:
+        {
+            app_handle_conn_param_update_evt(gap_msg.msg_data.gap_conn_param_update.conn_id,
+                                             gap_msg.msg_data.gap_conn_param_update.status,
+                                             gap_msg.msg_data.gap_conn_param_update.cause);
+        }
+        break;
+
+    case GAP_MSG_LE_AUTHEN_STATE_CHANGE:
+        {
+            app_handle_authen_state_evt(gap_msg.msg_data.gap_authen_state.conn_id,
+                                        gap_msg.msg_data.gap_authen_state.new_state,
+                                        gap_msg.msg_data.gap_authen_state.status);
+        }
+        break;
+
+    case GAP_MSG_LE_BOND_JUST_WORK:
+        {
+            conn_id = gap_msg.msg_data.gap_bond_just_work_conf.conn_id;
+            le_bond_just_work_confirm(conn_id, GAP_CFM_CAUSE_ACCEPT);
+            APP_PRINT_INFO0("GAP_MSG_LE_BOND_JUST_WORK");
+        }
+        break;
+
+    case GAP_MSG_LE_BOND_PASSKEY_DISPLAY:
+        {
+            uint32_t display_value = 0;
+            conn_id = gap_msg.msg_data.gap_bond_passkey_display.conn_id;
+            le_bond_get_display_key(conn_id, &display_value);
+            APP_PRINT_INFO1("GAP_MSG_LE_BOND_PASSKEY_DISPLAY:passkey %d", display_value);
+            le_bond_passkey_display_confirm(conn_id, GAP_CFM_CAUSE_ACCEPT);
+        }
+        break;
+
+    case GAP_MSG_LE_BOND_USER_CONFIRMATION:
+        {
+            uint32_t display_value = 0;
+            conn_id = gap_msg.msg_data.gap_bond_user_conf.conn_id;
+            le_bond_get_display_key(conn_id, &display_value);
+            APP_PRINT_INFO1("GAP_MSG_LE_BOND_USER_CONFIRMATION: passkey %d", display_value);
+            le_bond_user_confirm(conn_id, GAP_CFM_CAUSE_ACCEPT);
+        }
+        break;
+
+    case GAP_MSG_LE_BOND_PASSKEY_INPUT:
+        {
+            uint32_t passkey = 888888;
+            conn_id = gap_msg.msg_data.gap_bond_passkey_input.conn_id;
+            APP_PRINT_INFO1("GAP_MSG_LE_BOND_PASSKEY_INPUT: conn_id %d", conn_id);
+            le_bond_passkey_input_confirm(conn_id, passkey, GAP_CFM_CAUSE_ACCEPT);
+        }
+        break;
+
+    case GAP_MSG_LE_BOND_OOB_INPUT:
+        {
+            uint8_t oob_data[GAP_OOB_LEN] = {0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0};
+            conn_id = gap_msg.msg_data.gap_bond_oob_input.conn_id;
+            APP_PRINT_INFO0("GAP_MSG_LE_BOND_OOB_INPUT");
+            le_bond_set_param(GAP_PARAM_BOND_OOB_DATA, GAP_OOB_LEN, oob_data);
+            le_bond_oob_input_confirm(conn_id, GAP_CFM_CAUSE_ACCEPT);
+        }
+        break;
+
+    default:
+        APP_PRINT_ERROR1("app_handle_gap_msg: unknown subtype %d", p_gap_msg->subtype);
+        break;
+    }
+}
+/** @} */ /* End of group PERIPH_GAP_MSG */
+
+/** @defgroup  PERIPH_GAP_CALLBACK GAP Callback Event Handler
+    * @brief Handle GAP callback event
+    * @{
+    */
+/**
+  * @brief Callback for gap le to notify app
+  * @param[in] cb_type callback msy type @ref GAP_LE_MSG_Types.
+  * @param[in] p_cb_data point to callback data @ref T_LE_CB_DATA.
+  * @retval result @ref T_APP_RESULT
+  * 备注     GAP回调函数，可增加case  参考gap.le.h文件，
+  */
+T_APP_RESULT app_gap_callback(uint8_t cb_type, void *p_cb_data)
+{
+    T_APP_RESULT result = APP_RESULT_SUCCESS;
+    T_LE_CB_DATA *p_data = (T_LE_CB_DATA *)p_cb_data;
+
+    switch (cb_type)
+    {
+    case GAP_MSG_LE_DATA_LEN_CHANGE_INFO:
+        APP_PRINT_INFO3("GAP_MSG_LE_DATA_LEN_CHANGE_INFO: conn_id %d, tx octets 0x%x, max_tx_time 0x%x",
+                        p_data->p_le_data_len_change_info->conn_id,
+                        p_data->p_le_data_len_change_info->max_tx_octets,
+                        p_data->p_le_data_len_change_info->max_tx_time);
+        break;
+
+    case GAP_MSG_LE_MODIFY_WHITE_LIST:
+        APP_PRINT_INFO2("GAP_MSG_LE_MODIFY_WHITE_LIST: operation %d, cause 0x%x",
+                        p_data->p_le_modify_white_list_rsp->operation,
+                        p_data->p_le_modify_white_list_rsp->cause);
+        break;
+
+    default:
+        APP_PRINT_ERROR1("app_gap_callback: unhandled cb_type 0x%x", cb_type);
+        break;
+    }
+    return result;
+}
+/** @} */ /* End of group PERIPH_GAP_CALLBACK */
+
+/** @defgroup  PERIPH_SEVER_CALLBACK Profile Server Callback Event Handler
+    * @brief Handle profile server callback event
+    * @{
+    */
+/**
+    * @brief    All the BT Profile service callback events are handled in this function
+    * @note     Then the event handling function shall be called according to the
+    *           service_id
+    * @param    service_id  Profile service ID
+    * @param    p_data      Pointer to callback data
+    * @return   T_APP_RESULT, which indicates the function call is successful or not
+    * @retval   APP_RESULT_SUCCESS  Function run successfully
+    * @retval   others              Function run failed, and return number indicates the reason
+    * 备注     服务事件回调接口，
+*/
+T_APP_RESULT app_profile_callback(T_SERVER_ID service_id, void *p_data)
+{
+	
+    T_APP_RESULT app_result = APP_RESULT_SUCCESS;
+    if (service_id == SERVICE_PROFILE_GENERAL_ID)
+    {
+        T_SERVER_APP_CB_DATA *p_param = (T_SERVER_APP_CB_DATA *)p_data;
+        switch (p_param->eventId)
+        {
+        case PROFILE_EVT_SRV_REG_COMPLETE:// srv register result event.
+            my_printf("PROFILE_EVT_SRV_REG_COMPLETE: result %d",
+                            p_param->event_data.service_reg_result);
+            break;
+
+        case PROFILE_EVT_SEND_DATA_COMPLETE:
+//            my_printf("PROFILE_EVT_SEND_DATA_COMPLETE: conn_id %d, cause 0x%x, service_id %d, attrib_idx 0x%x, credits %d",
+//                            p_param->event_data.send_data_result.conn_id,
+//                            p_param->event_data.send_data_result.cause,
+//                            p_param->event_data.send_data_result.service_id,
+//                            p_param->event_data.send_data_result.attrib_idx,
+//                            p_param->event_data.send_data_result.credits);
+//            if (p_param->event_data.send_data_result.cause == GAP_SUCCESS)
+//            {
+//                my_printf("PROFILE_EVT_SEND_DATA_COMPLETE success");
+//            }
+//            else
+//            {
+//                my_printf("PROFILE_EVT_SEND_DATA_COMPLETE failed");
+//            }
+            break;
+
+        default:
+            break;
+        }
+    }
+    else  if (service_id == 1) //rx服务
+    {
+        TSIMP_CALLBACK_DATA *p_simp_cb_data = (TSIMP_CALLBACK_DATA *)p_data;
+        switch (p_simp_cb_data->msg_type)
+        {
+        case SERVICE_CALLBACK_TYPE_INDIFICATION_NOTIFICATION:  //通知类型
+            {
+                switch (p_simp_cb_data->msg_data.notification_indification_index)
+                {
+                case LOCK_NOTIFY_INDICATE_ENABLE:
+                    {
+                        my_printf("LOCK_NOTIFY_INDICATE_ENABLE");
+                    }
+                    break;
+
+                case LOCK_NOTIFY_INDICATE_DISABLE:
+                    {
+                        my_printf("LOCK_NOTIFY_INDICATE_DISABLE");
+                    }
+                    break;
+                default:
+                    break;
+                }
+            }
+            break;
+        default:
+            break;
+        }
+    }
+    else if (service_id == 2) //TX服务
+    {
+        TSIMP_CALLBACK_DATA *p_simp_cb_data = (TSIMP_CALLBACK_DATA *)p_data;
+        switch (p_simp_cb_data->msg_type)
+        {
+        case SERVICE_CALLBACK_TYPE_WRITE_CHAR_VALUE:
+            {
+                switch (p_simp_cb_data->msg_data.write.opcode)
+                {
+                case LOCK_WRITE_INFO:
+                    {
+//                        my_printf("LOCK_WRITE_INFO: write type %d, len %d", p_simp_cb_data->msg_data.write.write_type,
+//                                        p_simp_cb_data->msg_data.write.len);
+						DRV_BleRxHandler(p_simp_cb_data->msg_data.write.p_value,p_simp_cb_data->msg_data.write.len);
+                    }
+                    break;
+                default:
+                    break;
+                }
+            }
+            break;
+        default:
+            break;
+        }
+    }
+	else if (service_id == g_ota_service_id) 
+	{
+        T_OTA_CALLBACK_DATA *pOTACallbackData = (T_OTA_CALLBACK_DATA *)p_data;
+        switch (pOTACallbackData->msg_type)
+        {
+        case SERVICE_CALLBACK_TYPE_WRITE_CHAR_VALUE:
+
+            if (OTA_WRITE_CHAR_VAL == pOTACallbackData->msg_data.write.opcode &&
+                OTA_VALUE_ENTER == pOTACallbackData->msg_data.write.u.value)
+            {
+				if(true == DRV_InterGenerateOtaGet())
+				{
+					/*battery level is above 60 percent*/
+//					APP_PRINT_INFO0("Preparing switch into OTA mode\n");
+					/*prepare to enter OTA mode, before switch action, we should disconnect first.*/
+					my_printf("Preparing switch into OTA mode\n");
+					g_switch_into_ota_pending = true;
+					le_disconnect(0);
+				}
+				else
+				{;
+					my_printf("****************OTA is disable*******************\n"); //提示OTA未被允许
+				}
+                
+            }
+            else if (OTA_WRITE_IMAGE_COUNT_VAL == pOTACallbackData->msg_data.write.opcode)
+            {
+
+            }
+
+            break;
+
+        default:
+
+            break;
+        }		
+	}
+    return app_result;
+}
+
+/** @} */ /* End of group PERIPH_SEVER_CALLBACK */
+/** @} */ /* End of group PERIPH_APP */
+
+
+/***************************************************************************************
+**函数名:       DRV_BleRxHandler
+**功能描述:     蓝牙接收函数
+**输入参数:     *data  接受数据指针
+				len    接受数据总长
+**输出参数:     
+**备注:         
+****************************************************************************************/	
+static void DRV_BleRxHandler(uint8_t *ble_rx_data,uint16_t ble_rx_i)
+{
+	uint8_t ble_rx_d[255];
+	memcpy ( ble_rx_d, ble_rx_data, ble_rx_i ); //数据
+	
+    if(s_ptrBleHandler != NULL)
+    {
+        uint8_t ret = (*s_ptrBleHandler)(ble_rx_d,ble_rx_i);
+        if(ret > 0) {return;}
+    }
+	
+	if(ble_rx_i)
+	{
+		PUBLIC_PrintHex ( "app_fifo_put", ble_rx_d, ble_rx_i );
+	}
+	for ( uint8_t i = 0; i < ble_rx_i; i++ ) //数据入队列
+	{
+		app_fifo_put ( &AppBleFifo, ble_rx_d[i] );
+	}
+
+    return;
+}
+
+/***************************************************************************************
+**函数名:       ble_tx_event_handle
+**功能描述:     蓝牙发送函数
+**输入参数:     *Txdata  发送数据指针
+				TxLen    发送数据总长
+**输出参数:     
+**备注:         
+****************************************************************************************/	
+bool ble_tx_event_handle(uint8_t *Txdata , uint8_t TxLen)
+{
+	uint16_t credits=0;
+	if( m_conn_handle)
+	{
+		if(lock_ble_rx_service_send_notify(0,1,Txdata,TxLen)==true)
+		{
+			PUBLIC_PrintHex ( "ble_tx_event_handle", Txdata, TxLen );	
+			return true;
+		}
+		else //查询是否允许发送
+		{
+			le_get_gap_param(GAP_PARAM_LE_REMAIN_CREDITS, & credits);
+			my_printf("please wait send >credit=%d\n",credits);
+			return false;
+		}
+	}
+	return false;
+}
+
+/***************************************************************************************
+**函数名:       DRV_GetBleConnect
+**功能描述:     获取蓝牙连接状态
+**输入参数:     
+**输出参数:     1连接  0断开
+**备注:         
+****************************************************************************************/		
+uint8_t DRV_GetBleConnect(void)
+{
+	return m_conn_handle;
+}
+
+/***************************************************************************************
+**函数名:       DRV_ConncetCallBackReg
+**功能描述:     蓝牙连接处理回调函数注册
+**输入参数:     DRV_BlePtr p 函数指针
+**输出参数:     
+**备注:         uint8_t 0 成功
+****************************************************************************************/	
+uint8_t DRV_ConncetCallBackReg(DRV_BlePtr p)
+{
+	s_ptrBleConnectHandler = p;
+	return 0;
+}
+
+/***************************************************************************************
+**函数名:       AppBleInit
+**功能描述:     队列初始化,信道密码获取
+**输入参数:     
+**输出参数:     
+**备注:         
+****************************************************************************************/		
+void DRV_FifoInit(void)
+{    
+	static uint8_t     rx_buf[256];   // fifo buff     
+	memset(rx_buf,0 ,sizeof (rx_buf));
+	app_fifo_init(&AppBleFifo, rx_buf, sizeof (rx_buf));
+	
+}
+
+
+/*********************************************************************************************************************
+* Function Name :  DRV_BleInit()
+* Description   :  功能文件初始化
+* Para          :  无
+* Return        :  void
+*********************************************************************************************************************/
+void DRV_BleInit(DRV_BLE_ADV_MODE mode, DRV_BLE_ADV_FLAGS flags, DRV_BlePtr ptrHandler)
+{
+	static uint8_t FristInit=0;	
+	uint32_t cntTmp=0;
+	if(FristInit==0)//上电仅初始化一次
+	{
+		FristInit=1;
+		le_gap_init(APP_MAX_LINKS); 
+		gap_lib_init(); //gap库初始化
+		app_le_gap_init(mode); //广播名称
+		app_le_profile_init(); //蓝牙服务
+		DRV_FifoInit();        //接收队列
+	}
+	else
+	{
+		
+		if(1 == m_conn_handle) //如果蓝牙连接
+		{
+			le_disconnect(0); //主动断开蓝牙连接
+			my_printf("le_disconnect(0);\n");
+		}
+		cntTmp=0;
+		while(1)
+		{
+			if(0 == m_conn_handle) //蓝牙已经断开
+			{
+				my_printf("GAP_CONN_STATE_DISCONNECTED\n");
+				break; 
+			}
+			cntTmp++;
+			if(cntTmp >100000)
+			{
+				cntTmp =0;
+				break;//超时处理
+			}			
+		}
+		DRV_BLE_UpdataNeme(mode); //修改蓝牙名称
+	}
+#ifdef BLE_ADVERTISING
+    // 4db TX 开始广播
+
+#endif
+}
+
+
+/*-------------------------------------------------THE FILE END-----------------------------------------------------*/
+
+

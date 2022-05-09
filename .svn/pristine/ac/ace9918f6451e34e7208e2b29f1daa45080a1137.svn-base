@@ -1,0 +1,310 @@
+/**************************************************************************** 
+* Copyright (C), 2008-2021,德施曼机电（中国）有限公司 
+* 文件名: lock_service.c 
+* 作者：邓业豪
+* 版本：V01
+* 时间：20211220
+* 内容简述：自定义蓝牙服务
+****************************************************************************/
+
+#include <string.h>
+#include <trace.h>
+#include <gap.h>
+#include "lock_ble_service.h"
+#include "Public.h"
+#include "os_sched.h"
+#define GATT_UUID_LOCK_TX_SERVICE                  0xFFE5  //服务ID
+#define GATT_UUID_LOCK_TX_CHARACTERISTIC           0xFFE9       
+#define GATT_UUID_LOCK_RX_SERVICE                  0xFFE0  //服务ID
+#define GATT_UUID_LOCK_RX_CHARACTERISTIC           0xFFE4      
+
+
+#define LOCK_TX_BLE_SERVICE_CHAR_WRITE_INDEX       0x02    //特征索引  
+
+#define LOCK_TX_BLE_SERVICE_CHAR_NOTIFY_INDEX      0x02    //特征索引  
+#define LOCK_RX_BLE_SERVICE_CHAR_NOTIFY_CCCD_INDEX 0x03
+
+T_SERVER_ID lock_tx_service_id;     //服务器ID 初始化用
+T_SERVER_ID lock_rx_service_id; 
+
+/**<  Function pointer used to send event to application from simple profile. Initiated in simp_ble_service_add_service. */
+static P_FUN_SERVER_GENERAL_CB pfn_lock_ble_service_cb = NULL;
+
+/**< @brief  profile/service definition.  */
+const T_ATTRIB_APPL lock_tx_service_tbl[] =
+{
+    /* <<Primary Service>>, .. */
+    {
+        (ATTRIB_FLAG_VALUE_INCL | ATTRIB_FLAG_LE),  /* flags     */
+        {                                           /* type_value */
+            LO_WORD(GATT_UUID_PRIMARY_SERVICE),
+            HI_WORD(GATT_UUID_PRIMARY_SERVICE),
+            LO_WORD(GATT_UUID_LOCK_TX_SERVICE),      /* service UUID */
+            HI_WORD(GATT_UUID_LOCK_TX_SERVICE)
+        },
+        UUID_16BIT_SIZE,                            /* bValueLen     */
+        NULL,                                       /* p_value_context */
+        GATT_PERM_READ                              /* permissions  */
+    },
+    /* <<Characteristic>> demo for read */
+    {
+        ATTRIB_FLAG_VALUE_INCL,                     /* flags */
+        {                                           /* type_value */
+            LO_WORD(GATT_UUID_CHARACTERISTIC),
+            HI_WORD(GATT_UUID_CHARACTERISTIC),
+            (GATT_CHAR_PROP_WRITE | GATT_CHAR_PROP_WRITE_NO_RSP) /* characteristic properties */
+            /* characteristic UUID not needed here, is UUID of next attrib. */
+        },
+        1,                                          /* bValueLen */
+        NULL,
+        GATT_PERM_READ                              /* permissions */
+    },
+    {
+        ATTRIB_FLAG_VALUE_APPL,                     /* flags */
+        {                                           /* type_value */
+            LO_WORD(GATT_UUID_LOCK_TX_CHARACTERISTIC),
+            HI_WORD(GATT_UUID_LOCK_TX_CHARACTERISTIC)
+        },
+        0,                                          /* bValueLen */
+        NULL,
+#if SIMP_SRV_AUTHEN_EN
+        GATT_PERM_READ_AUTHEN_REQ                   /* permissions */
+#else
+        GATT_PERM_WRITE                              /* permissions */
+#endif
+    },
+};
+/**< @brief  profile/service definition.  */
+const T_ATTRIB_APPL lock_rx_service_tbl[] =
+{
+    /* <<Primary Service>>, .. */
+    {
+        (ATTRIB_FLAG_VALUE_INCL | ATTRIB_FLAG_LE),  /* flags     */
+        {                                           /* type_value */
+            LO_WORD(GATT_UUID_PRIMARY_SERVICE),
+            HI_WORD(GATT_UUID_PRIMARY_SERVICE),
+            LO_WORD(GATT_UUID_LOCK_RX_SERVICE),      /* service UUID */
+            HI_WORD(GATT_UUID_LOCK_RX_SERVICE)
+        },
+        UUID_16BIT_SIZE,                            /* bValueLen     */
+        NULL,                                       /* p_value_context */
+        GATT_PERM_READ                              /* permissions  */
+    },
+    /* <<Characteristic>> lock for notify */
+    {
+        ATTRIB_FLAG_VALUE_INCL,                     /* flags */
+        {                                           /* type_value */
+            LO_WORD(GATT_UUID_CHARACTERISTIC),
+            HI_WORD(GATT_UUID_CHARACTERISTIC),
+            (GATT_CHAR_PROP_NOTIFY)    /* characteristic properties */
+            /* characteristic UUID not needed here, is UUID of next attrib. */
+        },
+        1,                                          /* bValueLen */
+        NULL,
+        GATT_PERM_READ                              /* permissions */
+    },
+    {
+        ATTRIB_FLAG_VALUE_APPL,                     /* flags */
+        {                                           /* type_value */
+            LO_WORD(GATT_UUID_LOCK_RX_CHARACTERISTIC),
+            HI_WORD(GATT_UUID_LOCK_RX_CHARACTERISTIC)
+        },
+        0,                                          /* bValueLen */
+        NULL,
+		GATT_PERM_NONE
+    },
+	    /* client characteristic configuration */
+    {
+        ATTRIB_FLAG_VALUE_INCL | ATTRIB_FLAG_CCCD_APPL,                 /* flags */
+        {                                          /* type_value */
+            LO_WORD(GATT_UUID_CHAR_CLIENT_CONFIG),
+            HI_WORD(GATT_UUID_CHAR_CLIENT_CONFIG),
+            /* NOTE: this value has an instantiation for each client, a write to */
+            /* this attribute does not modify this default value:                */
+            LO_WORD(GATT_CLIENT_CHAR_CONFIG_DEFAULT), /* client char. config. bit field */
+            HI_WORD(GATT_CLIENT_CHAR_CONFIG_DEFAULT)
+        },
+        2,                                          /* bValueLen */
+        NULL,
+#if SIMP_SRV_AUTHEN_EN
+        (GATT_PERM_READ_AUTHEN_REQ | GATT_PERM_WRITE_AUTHEN_REQ) /* permissions */
+#else
+        (GATT_PERM_READ | GATT_PERM_WRITE)          /* permissions */
+#endif
+    },
+};
+
+
+static void lock_ble_tx_write_post_callback(uint8_t conn_id, T_SERVER_ID service_id, uint16_t attrib_index,
+                                uint16_t length, uint8_t *p_value)
+{
+//    APP_PRINT_INFO4("lock_ble_tx_write_post_callback: conn_id %d, service_id %d, attrib_index 0x%x, length %d",
+//                    conn_id, service_id, attrib_index, length);
+}
+/**
+ * @brief write characteristic data from service.
+ *
+ * @param conn_id
+ * @param service_id        ServiceID to be written.
+ * @param attrib_index      Attribute index of characteristic.
+ * @param length            length of value to be written.
+ * @param p_value           value to be written.
+ * @return Profile procedure result
+*/
+
+T_APP_RESULT lock_ble_tx_service_attr_write_cb(uint8_t conn_id, T_SERVER_ID service_id,
+                                            uint16_t attrib_index, T_WRITE_TYPE write_type, uint16_t length, uint8_t *p_value,
+                                            P_FUN_WRITE_IND_POST_PROC *p_write_ind_post_proc)
+{
+    TSIMP_CALLBACK_DATA callback_data;
+    T_APP_RESULT  cause = APP_RESULT_SUCCESS;
+    my_printf("lock_ble_tx_service_attr_write_cb write_type = 0x%x", write_type);
+    *p_write_ind_post_proc = lock_ble_tx_write_post_callback; //处理写请求之后的回调函数，可以为NULL
+    if (LOCK_TX_BLE_SERVICE_CHAR_WRITE_INDEX == attrib_index) //判断特征索引，传参到回调函数中
+    {
+        /* Make sure written value size is valid. */
+        if (p_value == NULL)
+        {
+            cause  = APP_RESULT_INVALID_VALUE_SIZE;
+        }
+        else
+        {
+            /* Notify Application. */
+            callback_data.msg_type = SERVICE_CALLBACK_TYPE_WRITE_CHAR_VALUE;
+            callback_data.conn_id  = conn_id;
+            callback_data.msg_data.write.opcode = LOCK_WRITE_INFO;
+            callback_data.msg_data.write.write_type = write_type;
+            callback_data.msg_data.write.len = length;
+            callback_data.msg_data.write.p_value = p_value;
+			//通知到app_profile_callback
+            if (pfn_lock_ble_service_cb)
+            {
+                pfn_lock_ble_service_cb(service_id, (void *)&callback_data);
+            }
+        }
+    }
+    else
+    {
+        APP_PRINT_ERROR2("lock_ble_tx_service_attr_write_cb Error: attrib_index 0x%x, length %d",
+                         attrib_index,
+                         length);
+        cause = APP_RESULT_ATTR_NOT_FOUND;
+    }
+    return cause;
+}
+
+/**
+  * @brief send notification of simple notify characteristic value.
+  *
+  * @param[in] conn_id           connection id
+  * @param[in] service_id        service ID of service.
+  * @param[in] p_value           characteristic value to notify
+  * @param[in] length            characteristic value length to notify
+  * @return notification action result
+  * @retval 1 true
+  * @retval 0 false
+  */
+
+bool lock_ble_rx_service_send_notify(uint8_t conn_id, T_SERVER_ID service_id, void *p_value,
+                                     uint16_t length)
+{
+    return server_send_data(conn_id, service_id, LOCK_TX_BLE_SERVICE_CHAR_NOTIFY_INDEX, p_value,
+                            length,
+                            GATT_PDU_TYPE_ANY);
+}
+
+
+/**
+ * @brief update CCCD bits from stack.
+ *
+ * @param conn_id           connection id.
+ * @param service_id          Service ID.
+ * @param index          Attribute index of characteristic data.
+ * @param cccbits         CCCD bits from stack.
+ * @return None
+*/
+void lock_ble_rx_service_cccd_update_cb(uint8_t conn_id, T_SERVER_ID service_id, uint16_t index,
+                                     uint16_t cccbits)
+{
+    TSIMP_CALLBACK_DATA callback_data;
+    bool is_handled = false;
+    callback_data.conn_id = conn_id;
+    callback_data.msg_type = SERVICE_CALLBACK_TYPE_INDIFICATION_NOTIFICATION;
+    my_printf("lock_ble_rx_service_cccd_update_cb: index = %d, cccbits 0x%x", index, cccbits);
+    switch (index)
+    {
+    case LOCK_RX_BLE_SERVICE_CHAR_NOTIFY_CCCD_INDEX:
+        {
+            if (cccbits & GATT_CLIENT_CHAR_CONFIG_NOTIFY)
+            {
+                // Enable Notification
+                callback_data.msg_data.notification_indification_index = LOCK_NOTIFY_INDICATE_ENABLE;
+            }
+            else
+            {
+                // Disable Notification
+                callback_data.msg_data.notification_indification_index = LOCK_NOTIFY_INDICATE_DISABLE;
+            }
+            is_handled =  true;
+        }
+        break;
+    default:
+        break;
+    }
+    /* Notify Application. */
+    if (pfn_lock_ble_service_cb && (is_handled == true))
+    {
+        pfn_lock_ble_service_cb(service_id, (void *)&callback_data);
+    }
+}
+
+/**
+ * @brief Simple ble Service Callbacks.
+*/
+const T_FUN_GATT_SERVICE_CBS lock_tx_service_cbs =
+{
+    NULL,  // Read callback function pointer
+    lock_ble_tx_service_attr_write_cb, // Write callback function pointer
+    NULL // CCCD update callback function pointer
+};
+
+const T_FUN_GATT_SERVICE_CBS lock_rx_service_cbs =
+{
+    NULL,  // Read callback function pointer
+    NULL, // Write callback function pointer
+    lock_ble_rx_service_cccd_update_cb // CCCD update callback function pointer
+};
+/**
+  * @brief Add simple BLE service to the BLE stack database.
+  *
+  * @param[in]   p_func  Callback when service attribute was read, write or cccd update.
+  * @return Service id generated by the BLE stack: @ref T_SERVER_ID.
+  * @retval 0xFF Operation failure.
+  * @retval others Service id assigned by stack.
+  *
+  */
+T_SERVER_ID lock_ble_service_add_service(void *p_func)
+{
+    if (false == server_add_service(&lock_rx_service_id,             //服务ID
+                                    (uint8_t *)lock_rx_service_tbl,  //服务属性列表
+                                    sizeof(lock_rx_service_tbl),     //长度
+                                    lock_rx_service_cbs))            //事件回调
+    {
+        APP_PRINT_ERROR0("simp_ble_service_add_service: fail");
+        lock_rx_service_id = 0xff;
+        return lock_rx_service_id;
+    }
+    if (false == server_add_service(&lock_tx_service_id,             //服务ID
+                                    (uint8_t *)lock_tx_service_tbl,  //服务属性列表
+                                    sizeof(lock_tx_service_tbl),     //长度
+                                    lock_tx_service_cbs))            //事件回调
+    {
+        APP_PRINT_ERROR0("simp_ble_service_add_service: fail");
+        lock_tx_service_id = 0xff;
+        return lock_tx_service_id;
+    }
+	
+    pfn_lock_ble_service_cb = (P_FUN_SERVER_GENERAL_CB)p_func;	
+	
+    return lock_tx_service_id;
+}

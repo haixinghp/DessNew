@@ -1,0 +1,212 @@
+/********************************************************************************************************************
+ * @file:      Scheduler.c
+ * @author:    gushengchi
+ * @version:   V01.00
+ * @date:      2021-07-26
+ * @brief:     功能验证函数
+*********************************************************************************************************************/
+  
+/*-------------------------------------------------文件包含---------------------------------------------------------*/
+#include "Scheduler.h" 
+#include "SystemInit.h"
+#include "SystemTim.h" 
+#include "Public.h"
+
+#include "..\HAL\HAL_EEPROM\HAL_EEPROM.h"
+#include "..\HAL\HAL_VOICE\HAL_Voice.h"
+#include "..\HAL\HAL_ADC\HAL_ADC.h"
+
+#include "App_Export.h"
+#include "App_LED.h"
+#include "App_Touch.h" 
+#include "App_GUI.h" 
+#include "App_Key.h" 
+#include "App_Finger.h" 
+#include "App_Screen.h" 
+#include "App_FACE.h" 
+#include "App_BLE.h" 
+#include "App_WIFI.h" 
+#include "App_NB.h" 
+/*-------------------------------------------------宏定义-----------------------------------------------------------*/
+#define SCHEDULER_TIME_10_MS     1
+#define SCHEDULER_TIME_50_MS     5
+#define SCHEDULER_TIME_100_MS    10
+#define SCHEDULER_TIME_500_MS    50
+#define SCHEDULER_TIME_1000_MS   100
+/*-------------------------------------------------枚举定义---------------------------------------------------------*/
+
+
+/*-------------------------------------------------常量定义---------------------------------------------------------*/
+
+
+/*-------------------------------------------------全局变量定义-----------------------------------------------------*/         
+
+
+/*-------------------------------------------------局部变量定义-----------------------------------------------------*/
+static uint8_t  SchedulerTim10Ms  =0; 
+static uint8_t  SchedulerTim50Ms  =0; 
+static uint8_t  SchedulerTim100Ms =0; 
+static uint8_t  SchedulerTim500Ms =0; 
+static uint8_t  SchedulerTim1000Ms=0; 
+/*-------------------------------------------------函数声明---------------------------------------------------------*/
+ 
+
+/*-------------------------------------------------函数定义---------------------------------------------------------*/
+/*********************************************************************************************************************
+* Function Name :  App_Scheduler_Tim10Ms()
+* Description   :  相关定时器
+* Para          :  无
+* Return        :  void
+*********************************************************************************************************************/
+void App_Scheduler_Tim10Ms( void )
+{
+ 	if( SchedulerTim10Ms )
+	    SchedulerTim10Ms--;
+ 	if( SchedulerTim50Ms )
+	    SchedulerTim50Ms--;
+ 	if( SchedulerTim100Ms )
+	    SchedulerTim100Ms--;
+ 	if( SchedulerTim500Ms )
+	    SchedulerTim500Ms--;
+ 	if( SchedulerTim1000Ms )
+	    SchedulerTim1000Ms--;
+}
+
+/*********************************************************************************************************************
+* Function Name :  App_Scheduler_Tim10Ms()
+* Description   :  10ms任务调度
+* Para          :  无
+* Return        :  void
+*********************************************************************************************************************/
+static void App_Scheduler_Thread10Ms( void )
+{
+ 	if( SchedulerTim10Ms )
+	    return;
+	SchedulerTim10Ms = SCHEDULER_TIME_10_MS;
+	
+  /*----机械按键扫描任务---*/
+    App_Key_ScanKeyProcess();
+	
+  /*---ADC采样任务---------*/
+    HAL_ADC_SampleProcess();	
+	
+  /*---扩展端口采集任务----*/
+    App_Export_ScanPortThread();	
+ 
+}
+
+/*********************************************************************************************************************
+* Function Name :  App_Scheduler_Thread50Ms()
+* Description   :  50ms任务调度
+* Para          :  无
+* Return        :  void
+*********************************************************************************************************************/
+static void App_Scheduler_Thread50Ms( void )
+{
+ 	if( SchedulerTim50Ms )
+	    return;
+	SchedulerTim50Ms = SCHEDULER_TIME_50_MS;
+
+   /*---触摸按键采样任务----*/
+    App_Touch_MainProcess();
+}
+
+/*********************************************************************************************************************
+* Function Name :  App_Scheduler_Thread100Ms()
+* Description   :  100ms任务调度
+* Para          :  无
+* Return        :  void
+*********************************************************************************************************************/
+static void App_Scheduler_Thread100Ms( void )
+{
+ 	if( SchedulerTim100Ms )
+	    return;
+	SchedulerTim100Ms = SCHEDULER_TIME_100_MS;
+	
+  /*---呼吸灯执行任务------*/
+	App_LED_BreathThread();  
+	
+  /*---门铃执行任务--------*/
+    HAL_Voice_BellThread();
+
+}
+
+/*********************************************************************************************************************
+* Function Name :  App_Scheduler_Thread500Ms()
+* Description   :  500ms任务调度
+* Para          :  无
+* Return        :  void
+*********************************************************************************************************************/
+static void App_Scheduler_Thread500Ms( void )
+{
+ 	if( SchedulerTim500Ms )
+	    return;
+	SchedulerTim500Ms = SCHEDULER_TIME_500_MS;
+}
+
+/*********************************************************************************************************************
+* Function Name :  App_Scheduler_Thread1000Ms()
+* Description   :  1000ms任务调度
+* Para          :  无
+* Return        :  void
+*********************************************************************************************************************/
+static void App_Scheduler_Thread1000Ms( void )
+{
+ 	if( SchedulerTim1000Ms )
+	    return;
+	SchedulerTim1000Ms = SCHEDULER_TIME_1000_MS; 
+}
+
+/*********************************************************************************************************************
+* Function Name :  App_Scheduler_ThreadRealTime()
+* Description   :  实时任务调度
+* Para          :  无
+* Return        :  void
+*********************************************************************************************************************/
+static void App_Scheduler_ThreadRealTime( void )
+{
+   /*---Voice调度任务----*/
+	HAL_Voice_PlayVoiceThread(); 
+	
+   /*---GUI调度任务------*/
+    App_GUI_MenuProcess();	
+
+   /*---指纹模组命令调度------*/
+    APP_FINGER_Scan();
+
+   /*---人脸模组任务------*/
+    #if defined FACE_FUNCTION_ON || defined IRIS_FUNCTION_ON 
+	FaceServerProcess();
+	#endif
+
+    /*--WIFI推送任务-----*/
+    App_WIFI_ScanProcess();
+	
+	/*--NB推送任务-----*/
+	#if defined NB_FUNCTION
+	App_NB_ScanProcess();
+	#endif
+}
+
+
+/*********************************************************************************************************************
+* Function Name :  App_Scheduler_Process()
+* Description   :  任务调度
+* Para          :  无
+* Return        :  void
+*********************************************************************************************************************/
+void App_Scheduler_Process( void )
+{
+    App_Scheduler_Thread10Ms();
+	App_Scheduler_Thread50Ms();
+	App_Scheduler_Thread100Ms();
+	App_Scheduler_Thread500Ms();
+	App_Scheduler_Thread1000Ms();
+	App_Scheduler_ThreadRealTime();
+	
+}
+ 
+/*-------------------------------------------------THE FILE END-----------------------------------------------------*/
+
+
+

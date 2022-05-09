@@ -1,0 +1,39 @@
+/**************************************************************************** 
+* Copyright (C), 2008-2021,德施曼机电（中国）有限公司 
+* 文件名: DRV_Interface.h
+* 作者：fanshuyu
+* 版本：V01
+* 时间：20220112
+* 内容简述：芯片层提供的基础功能API接口
+****************************************************************************/
+
+#ifndef _DRV_INTERFACE_H_
+#define _DRV_INTERFACE_H_
+#ifdef __cplusplus
+
+extern "C"
+{
+#endif
+
+#include <stdint.h>
+#include <stdarg.h>
+#include <stdio.h>
+#include <trace.h>
+
+
+#define DRV_InterPrint DBG_DIRECT  //
+
+
+void DRV_InterRandVecInit( void );    
+void DRV_InterDelayus(uint32_t _us);
+
+void DRV_InterGetMacAddr(uint8_t *p_buff);
+uint8_t DRV_InterGenerateRandVec(uint8_t *p_buff, uint8_t size);
+void DRV_InterGenerateStartOta(void);
+void DRV_InterGenerateStopOta(void);
+bool DRV_InterGenerateOtaGet(void);
+#ifdef __cplusplus
+}
+#endif
+#endif
+//.end of the file.

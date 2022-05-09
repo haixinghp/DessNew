@@ -1,0 +1,78 @@
+/*********************************************************************************************************************
+ * @file:      DRV_Uart.h
+ * @author:    gushengchi
+ * @version:   V01.00
+ * @date:      2022-01-20
+ * @brief:     uart驱动头文件
+**********************************************************************************************************************/
+
+#ifndef _DRV_UART_H_
+#define _DRV_UART_H_
+#ifdef __cplusplus
+extern "C"
+{
+#endif
+
+/*--------------------------------------------------文件包含---------------------------------------------------------*/
+#include <stdint.h>
+ 
+/*--------------------------------------------------宏定义-----------------------------------------------------------*/
+#define UART_KIND_WIFI       0
+#define UART_KIND_OTHERS     1
+
+#define DATA_5_BIT           0    //数据位5bit 
+#define DATA_6_BIT           1    //数据位6bit 
+#define DATA_7_BIT           2    //数据位7bit 
+#define DATA_8_BIT           3    //数据位8bit 
+
+#define STOP_1_BIT           0    //停止位1bit 
+#define STOP_1H5_BIT         1    //停止位1.5bit 
+#define STOP_2_BIT           2    //停止位2bit 
+
+#define PARITY_NONE          0    //无奇偶校验
+#define PARITY_ODD           1    //奇校验
+#define PARITY_EVEN          2    //偶校验
+
+#define INT_ENABLE           1    //使能
+#define INT_DISENABLE        0    //失能
+
+#define UART_BAUD_RATE_9600          1  
+#define UART_BAUD_RATE_19200         2
+#define UART_BAUD_RATE_57600         3
+#define UART_BAUD_RATE_115200        4
+/*--------------------------------------------------枚举声明---------------------------------------------------------*/
+ 
+ 
+/*--------------------------------------------------常量声明---------------------------------------------------------*/
+
+
+/*--------------------------------------------------变量声明---------------------------------------------------------*/             
+typedef struct 
+{
+	uint32_t  BaudRate;      		   //波特率
+	uint8_t   DataBit        :2;       //数据位        0: 5Bit  1：6Bit    2:7Bit  3:8Bit
+	uint8_t   StopBit		 :2;       //停止位        0: 1Bit  1: 1.5Bit  2:2Bit
+	uint8_t   ParityType	 :2;       //校验类型      0: 无校验  1:奇校验   2:偶校验
+	uint8_t   RxInerruptEn	 :1;       //接收中断使能  0: 失能    1:使能
+    uint8_t   TxInerruptEn	 :1;       //发送中断使能  0: 失能    1:使能
+	
+}UartCfg_S;
+ 
+typedef void (*PushQueueCallBack_PTR)( uint8_t para ); 
+extern PushQueueCallBack_PTR PtrPushQueue0HandlerCallBack;
+extern PushQueueCallBack_PTR PtrPushQueue1HandlerCallBack;
+
+typedef void (*PushBytesQueueCallBack_PTR)( uint8_t, uint8_t *, uint8_t ); 
+extern PushBytesQueueCallBack_PTR  PtrPushBytesQueueCallBack;
+/*--------------------------------------------------函数声明---------------------------------------------------------*/
+void DRV_Uart_ConfigInit( uint8_t uartCom, UartCfg_S *pUartCfg );
+void DRV_Uart_DeInit( uint8_t uartCom );
+void DRV_Uart_TxMessage( uint8_t uartCom, const uint8_t *p_data, uint16_t length );
+void DRV_Uart_SleepInit( void );
+#ifdef __cplusplus
+}
+#endif
+#endif
+ 
+/*-------------------------------------------------THE FILE END-----------------------------------------------------*/
+

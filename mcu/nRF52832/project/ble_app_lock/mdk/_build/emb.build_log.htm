@@ -1,0 +1,116 @@
+<html>
+<body>
+<pre>
+<h1>礦ision Build Log</h1>
+<h2>Tool Versions:</h2>
+IDE-Version: μVision V5.34.0.0
+Copyright (C) 2021 ARM Ltd and ARM Germany GmbH. All rights reserved.
+License Information: hx hx, hx, LIC=HN0AE-561VU-SB7EJ-USUJB-K2DWE-40LHT
+ 
+Tool Versions:
+Toolchain:       MDK-ARM Plus  Version: 5.34.0.0
+Toolchain Path:  C:\Keil_v5\ARM\ARMCC\Bin
+C Compiler:      Armcc.exe V5.06 update 7 (build 960)
+Assembler:       Armasm.exe V5.06 update 7 (build 960)
+Linker/Locator:  ArmLink.exe V5.06 update 7 (build 960)
+Library Manager: ArmAr.exe V5.06 update 7 (build 960)
+Hex Converter:   FromElf.exe V5.06 update 7 (build 960)
+CPU DLL:         SARMCM3.DLL V5.34.0.0
+Dialog DLL:      DCM.DLL V1.17.3.0
+Target DLL:      Segger\JL2CM3.dll V2.99.38.0
+Dialog DLL:      TCM.DLL V1.48.0.0
+ 
+<h2>Project:</h2>
+E:\Code\T1\mcu\nRF52832\project\ble_app_lock\mdk\nrf52_lock.uvprojx
+Project File Date:  04/20/2022
+
+<h2>Output:</h2>
+*** Using Compiler 'V5.06 update 7 (build 960)', folder: 'C:\Keil_v5\ARM\ARMCC\Bin'
+Build target '52832_LOCK'
+Note: source file '..\..\..\..\..\emb\ID2\md5.c' - object file renamed from '.\_build\md5.o' to '.\_build\md5_1.o'.
+compiling App_PWD.c...
+compiling App_LED.c...
+compiling App_Touch.c...
+compiling APP_CAM.c...
+..\..\..\..\..\emb\APP\APP_CAM.c(460): warning:  #111-D: statement is unreachable
+              astCamCtrl.astCamCtrl[astCamCtrl.TailPtr].Systick=5000; //唤醒5秒超时
+..\..\..\..\..\emb\APP\APP_CAM.c(614): warning:  #111-D: statement is unreachable
+      if( 0 == CaptureType)
+..\..\..\..\..\emb\APP\APP_CAM.c: 2 warnings, 0 errors
+compiling App_Key.c...
+compiling ISR.c...
+compiling App_WIFI.c...
+compiling System.c...
+compiling SystemTim.c...
+compiling Scheduler.c...
+compiling APP_BLE.c...
+compiling SystemInit.c...
+compiling Screen.c...
+compiling Face.c...
+compiling App_Screen.c...
+compiling HAL_Motor.c...
+compiling APP_FACE_PRO.c...
+compiling APP_FACE.c...
+compiling APP_SmartKey.c...
+compiling App_NB.c...
+..\..\..\..\..\emb\APP\App_NB.c(2024): warning:  #1-D: last line of file ends without a newline
+  #endif
+..\..\..\..\..\emb\APP\App_NB.c: 1 warning, 0 errors
+compiling App_Finger.c...
+..\..\..\..\..\emb\APP\App_Finger.c(41): warning:  #550-D: variable "s_u8FingerProtocalV2Cnt"  was set but never used
+  static uint8_t s_u8FingerProtocalV2Cnt = 0;     // V2版本 支持优化的，允许尝试3次
+..\..\..\..\..\emb\APP\App_Finger.c(660): warning:  #177-D: function "app_finger_ack_err"  was declared but never referenced
+  static bool app_finger_ack_err(uint8_t ack)
+..\..\..\..\..\emb\APP\App_Finger.c: 2 warnings, 0 errors
+compiling HAL_Voice.c...
+compiling Finger.c...
+compiling App_GUI.c...
+compiling DRV_Motor.c...
+..\..\..\..\..\emb\DRV\DRV_Motor\DRV_Motor.c(275): warning:  #177-D: variable "tp1"  was declared but never referenced
+  	uint8_t tp1 =0, tm1 =0;
+..\..\..\..\..\emb\DRV\DRV_Motor\DRV_Motor.c(275): warning:  #177-D: variable "tm1"  was declared but never referenced
+  	uint8_t tp1 =0, tm1 =0;
+..\..\..\..\..\emb\DRV\DRV_Motor\DRV_Motor.c(276): warning:  #177-D: variable "tp4"  was declared but never referenced
+  	uint32_t tp4;
+..\..\..\..\..\emb\DRV\DRV_Motor\DRV_Motor.c(278): warning:  #177-D: variable "actionDir"  was declared but never referenced
+  	static MOTOR_CTRL_CMD_E actionDir;
+..\..\..\..\..\emb\DRV\DRV_Motor\DRV_Motor.c: 4 warnings, 0 errors
+compiling DRV_Motor_216.c...
+compiling DRV_Motor_218.c...
+compiling DRV_AM5BA340.c...
+linking...
+Program Size: Code=144410 RO-data=4930 RW-data=816 ZI-data=35272  
+FromELF: creating hex file...
+".\_build\emb.axf" - 0 Error(s), 9 Warning(s).
+
+<h2>Software Packages used:</h2>
+
+Package Vendor: ARM
+                http://www.keil.com/pack/ARM.CMSIS.4.5.0.pack
+                ARM.CMSIS.4.5.0
+                CMSIS (Cortex Microcontroller Software Interface Standard)
+   * Component: CORE Version: 4.3.0
+
+Package Vendor: NordicSemiconductor
+                http://developer.nordicsemi.com/nRF5_SDK/pieces/nRF_DeviceFamilyPack/NordicSemiconductor.nRF_DeviceFamilyPack.8.16.0.pack
+                NordicSemiconductor.nRF_DeviceFamilyPack.8.16.0
+                Nordic Semiconductor nRF ARM devices Device Family Pack.
+   * Component: Startup Version: 8.16.0
+
+<h2>Collection of Component include folders:</h2>
+  .\RTE\_52832_LOCK
+  C:\Users\admin\AppData\Local\Arm\Packs\ARM\CMSIS\4.5.0\CMSIS\Include
+  C:\Users\admin\AppData\Local\Arm\Packs\NordicSemiconductor\nRF_DeviceFamilyPack\8.16.0\Device\Include
+
+<h2>Collection of Component Files used:</h2>
+
+   * Component: ARM::CMSIS:CORE:4.3.0
+
+   * Component: NordicSemiconductor::Device:Startup:8.16.0
+      Source file:   Device\Source\arm\arm_startup_nrf52.s
+      Include file:  Device\Include\system_nrf52.h
+      Source file:   Device\Source\system_nrf52.c
+Build Time Elapsed:  00:00:45
+</pre>
+</body>
+</html>
